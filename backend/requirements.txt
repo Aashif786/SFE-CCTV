@@ -1,0 +1,17 @@
+fastapi
+uvicorn
+pydantic
+pydantic-settings
+sqlalchemy
+alembic
+pg8000
+ultralytics
+mediapipe
+lapx
+python-multipart
+python-jose[cryptography]
+passlib[bcrypt]
+redis
+websockets
+opencv-python-headless
+numpy

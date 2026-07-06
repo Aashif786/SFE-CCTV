@@ -1,0 +1,595 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Worker Activity Monitoring Dashboard</title>
+  <style>
+    /* Reset & base */
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+      font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+    }
+    body {
+      background: #0b0e14;
+      color: #e0e5ee;
+      padding: 20px;
+      min-height: 100vh;
+    }
+
+    /* Layout */
+    .dashboard {
+      max-width: 1600px;
+      margin: 0 auto;
+    }
+
+    /* Header */
+    .header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding-bottom: 20px;
+      border-bottom: 1px solid #2a313c;
+      margin-bottom: 24px;
+      flex-wrap: wrap;
+      gap: 12px;
+    }
+    .header h1 {
+      font-size: 24px;
+      font-weight: 600;
+      letter-spacing: 0.5px;
+      background: linear-gradient(135deg, #5b9aff, #8b6eff);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+    }
+    .header-controls {
+      display: flex;
+      align-items: center;
+      gap: 20px;
+      flex-wrap: wrap;
+    }
+    .control-group {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      background: #1a212a;
+      padding: 6px 14px 6px 18px;
+      border-radius: 40px;
+      border: 1px solid #2f3a47;
+    }
+    .control-group label {
+      font-size: 13px;
+      color: #a0abb8;
+    }
+    .control-group input[type="range"] {
+      width: 100px;
+      accent-color: #5b9aff;
+      background: transparent;
+    }
+    .control-group span {
+      font-weight: 600;
+      color: #fff;
+      min-width: 30px;
+    }
+    .toggle-btn {
+      background: #2f3a47;
+      border: none;
+      color: #a0abb8;
+      padding: 6px 16px;
+      border-radius: 40px;
+      font-weight: 500;
+      font-size: 13px;
+      cursor: pointer;
+      transition: 0.2s;
+      border: 1px solid transparent;
+    }
+    .toggle-btn.active {
+      background: #1b6b3e;
+      color: #b0f0c0;
+      border-color: #2d8f5a;
+    }
+    .toggle-btn.inactive {
+      background: #6b3a3a;
+      color: #f0b0b0;
+      border-color: #8f4a4a;
+    }
+    .stats {
+      display: flex;
+      gap: 24px;
+      font-size: 14px;
+      color: #a0abb8;
+    }
+    .stats strong {
+      color: #fff;
+    }
+
+    /* Camera Grid */
+    .camera-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(340px, 1fr));
+      gap: 24px;
+      margin-bottom: 24px;
+    }
+    .camera-card {
+      background: #141b24;
+      border-radius: 16px;
+      overflow: hidden;
+      border: 1px solid #2a313c;
+      transition: 0.2s;
+    }
+    .camera-card:hover {
+      border-color: #4a5a6e;
+    }
+    .camera-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 12px 16px;
+      background: #1a212a;
+      font-size: 14px;
+      font-weight: 500;
+      border-bottom: 1px solid #2a313c;
+    }
+    .camera-header .cam-name {
+      color: #b0c0d0;
+    }
+    .camera-header .worker-count {
+      background: #2f3a47;
+      padding: 2px 12px;
+      border-radius: 30px;
+      font-size: 12px;
+    }
+
+    /* Video feed simulation */
+    .video-feed {
+      position: relative;
+      width: 100%;
+      aspect-ratio: 16 / 9;
+      background: #0f151e;
+      overflow: hidden;
+    }
+    .video-feed canvas {
+      display: block;
+      width: 100%;
+      height: 100%;
+    }
+    /* Overlay info (bounding boxes and labels) will be drawn on canvas */
+
+    /* Alert panel */
+    .alert-panel {
+      background: #141b24;
+      border-radius: 16px;
+      border: 1px solid #2a313c;
+      padding: 16px 20px;
+      margin-top: 8px;
+    }
+    .alert-panel h3 {
+      font-size: 15px;
+      font-weight: 500;
+      color: #a0abb8;
+      margin-bottom: 12px;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+    .alert-panel h3 .badge {
+      background: #c0392b;
+      color: #fff;
+      font-size: 11px;
+      padding: 0 10px;
+      border-radius: 30px;
+      line-height: 20px;
+    }
+    .alert-list {
+      max-height: 140px;
+      overflow-y: auto;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+    .alert-item {
+      display: flex;
+      justify-content: space-between;
+      font-size: 13px;
+      padding: 6px 12px;
+      background: #1f2833;
+      border-radius: 8px;
+      border-left: 4px solid #e67e22;
+      color: #d0d8e0;
+    }
+    .alert-item .time {
+      color: #7a8a9a;
+      font-size: 12px;
+    }
+    .alert-item .idle-info {
+      font-weight: 500;
+    }
+    .alert-item .idle-info .highlight {
+      color: #f1c40f;
+    }
+    .no-alerts {
+      color: #5a6a7a;
+      font-style: italic;
+      padding: 8px 0;
+    }
+
+    /* Scrollbar */
+    .alert-list::-webkit-scrollbar {
+      width: 4px;
+    }
+    .alert-list::-webkit-scrollbar-track {
+      background: #1a212a;
+    }
+    .alert-list::-webkit-scrollbar-thumb {
+      background: #3a4a5a;
+      border-radius: 10px;
+    }
+
+    /* Responsive */
+    @media (max-width: 700px) {
+      .header {
+        flex-direction: column;
+        align-items: stretch;
+      }
+      .header-controls {
+        justify-content: space-between;
+      }
+    }
+  </style>
+</head>
+<body>
+
+<div class="dashboard">
+  <!-- Header -->
+  <header class="header">
+    <h1>🛡️ Worker Activity Monitor</h1>
+    <div class="header-controls">
+      <div class="control-group">
+        <label>Idle threshold</label>
+        <input type="range" id="thresholdSlider" min="3" max="60" value="15" step="1" />
+        <span id="thresholdDisplay">15s</span>
+      </div>
+      <button id="shiftToggle" class="toggle-btn inactive">⏸️ Break mode OFF</button>
+      <div class="stats">
+        <span>👷 <strong id="totalWorkers">0</strong></span>
+        <span>⚠️ Alerts <strong id="alertCount">0</strong></span>
+      </div>
+    </div>
+  </header>
+
+  <!-- Camera Grid -->
+  <div class="camera-grid" id="cameraGrid"></div>
+
+  <!-- Alert Panel -->
+  <div class="alert-panel">
+    <h3>
+      🔔 Recent Alerts
+      <span class="badge" id="alertBadge">0</span>
+    </h3>
+    <div class="alert-list" id="alertList">
+      <div class="no-alerts">No alerts yet</div>
+    </div>
+  </div>
+</div>
+
+<script>
+  (function() {
+    // ---------- Configuration ----------
+    const CAMERAS = [
+      { id: 'cam1', name: 'Assembly Line A' },
+      { id: 'cam2', name: 'Machining Zone B' },
+      { id: 'cam3', name: 'Quality Control C' },
+      { id: 'cam4', name: 'Packaging Area D' }
+    ];
+
+    // Each worker: { id, camId, x, y, w, h, status, idleTime, color, activeCounter }
+    let workers = [];
+    let alerts = [];
+    let shiftMode = false;
+    let thresholdSeconds = 15; // default
+    let alertIdCounter = 0;
+
+    // DOM refs
+    const grid = document.getElementById('cameraGrid');
+    const alertList = document.getElementById('alertList');
+    const alertBadge = document.getElementById('alertBadge');
+    const totalWorkersSpan = document.getElementById('totalWorkers');
+    const alertCountSpan = document.getElementById('alertCount');
+    const thresholdSlider = document.getElementById('thresholdSlider');
+    const thresholdDisplay = document.getElementById('thresholdDisplay');
+    const shiftToggle = document.getElementById('shiftToggle');
+
+    // ---------- Helpers ----------
+    function random(min, max) { return Math.random() * (max - min) + min; }
+
+    function randomInt(min, max) { return Math.floor(random(min, max + 1)); }
+
+    // ---------- Generate workers for a camera ----------
+    function createWorkersForCamera(camId, count) {
+      const list = [];
+      const colors = ['#f39c12', '#e74c3c', '#2ecc71', '#3498db', '#9b59b6', '#1abc9c', '#e67e22'];
+      for (let i = 0; i < count; i++) {
+        // Random position within canvas (will be drawn later, but store normalized coords 0-1)
+        const x = random(0.1, 0.85);
+        const y = random(0.1, 0.8);
+        const w = random(0.04, 0.10);
+        const h = random(0.12, 0.22);
+        list.push({
+          id: `w${Date.now()}-${camId}-${i}`,
+          camId: camId,
+          x, y, w, h,
+          status: 'active', // 'active' or 'idle'
+          idleTime: 0, // seconds accumulated
+          color: colors[randomInt(0, colors.length - 1)],
+          activeCounter: 0 // used to occasionally switch
+        });
+      }
+      return list;
+    }
+
+    // Initialize workers per camera
+    function initWorkers() {
+      workers = [];
+      CAMERAS.forEach(cam => {
+        const count = randomInt(2, 5);
+        const newWorkers = createWorkersForCamera(cam.id, count);
+        workers.push(...newWorkers);
+      });
+      updateWorkerCount();
+    }
+
+    // ---------- Render camera cards ----------
+    function renderCameras() {
+      grid.innerHTML = '';
+      CAMERAS.forEach(cam => {
+        const card = document.createElement('div');
+        card.className = 'camera-card';
+        card.dataset.camId = cam.id;
+
+        const header = document.createElement('div');
+        header.className = 'camera-header';
+        header.innerHTML = `
+          <span class="cam-name">📹 ${cam.name}</span>
+          <span class="worker-count">${workers.filter(w => w.camId === cam.id).length} workers</span>
+        `;
+        card.appendChild(header);
+
+        const feed = document.createElement('div');
+        feed.className = 'video-feed';
+        const canvas = document.createElement('canvas');
+        canvas.width = 640;
+        canvas.height = 360;
+        canvas.dataset.camId = cam.id;
+        feed.appendChild(canvas);
+        card.appendChild(feed);
+
+        grid.appendChild(card);
+      });
+    }
+
+    // ---------- Draw one camera feed ----------
+    function drawCamera(camId) {
+      const canvas = document.querySelector(`canvas[data-cam-id="${camId}"]`);
+      if (!canvas) return;
+      const ctx = canvas.getContext('2d');
+      const W = canvas.width, H = canvas.height;
+
+      // Background gradient (simulated video)
+      const grad = ctx.createLinearGradient(0, 0, W, H);
+      grad.addColorStop(0, '#1a2a3a');
+      grad.addColorStop(0.5, '#2a3a4a');
+      grad.addColorStop(1, '#0f1a2a');
+      ctx.fillStyle = grad;
+      ctx.fillRect(0, 0, W, H);
+
+      // Draw some "floor" lines
+      ctx.strokeStyle = '#3a4a5a';
+      ctx.lineWidth = 1;
+      for (let i = 0; i < 10; i++) {
+        const y = (i / 10) * H;
+        ctx.beginPath();
+        ctx.moveTo(0, y);
+        ctx.lineTo(W, y);
+        ctx.stroke();
+      }
+
+      // Draw workers for this camera
+      const camWorkers = workers.filter(w => w.camId === camId);
+      camWorkers.forEach(w => {
+        const x = w.x * W;
+        const y = w.y * H;
+        const rectW = w.w * W;
+        const rectH = w.h * H;
+
+        // Bounding box
+        ctx.strokeStyle = w.status === 'active' ? '#2ecc71' : '#e74c3c';
+        ctx.lineWidth = 3;
+        ctx.strokeRect(x, y, rectW, rectH);
+
+        // Semi-transparent fill
+        ctx.fillStyle = w.status === 'active' ? 'rgba(46, 204, 113, 0.15)' : 'rgba(231, 76, 60, 0.20)';
+        ctx.fillRect(x, y, rectW, rectH);
+
+        // Label background
+        const label = `ID:${w.id.slice(-4)} ${w.status.toUpperCase()} ${w.status === 'idle' ? `[${Math.floor(w.idleTime)}s]` : ''}`;
+        ctx.font = 'bold 14px "Segoe UI", sans-serif';
+        const metrics = ctx.measureText(label);
+        const pad = 6;
+        const labelW = metrics.width + pad * 2;
+        const labelH = 28;
+        const labelX = x;
+        const labelY = y - labelH - 2;
+
+        ctx.fillStyle = 'rgba(0,0,0,0.75)';
+        ctx.shadowColor = 'rgba(0,0,0,0.5)';
+        ctx.shadowBlur = 10;
+        ctx.roundRect ? ctx.roundRect(labelX, labelY, labelW, labelH, 6) : ctx.rect(labelX, labelY, labelW, labelH);
+        ctx.fill();
+        ctx.shadowBlur = 0;
+
+        // Text
+        ctx.fillStyle = w.status === 'active' ? '#b0f0c0' : '#f0b0b0';
+        ctx.font = 'bold 14px "Segoe UI", sans-serif';
+        ctx.fillText(label, labelX + pad, labelY + 20);
+      });
+
+      // Camera label overlay
+      ctx.fillStyle = 'rgba(0,0,0,0.5)';
+      ctx.fillRect(8, 8, 120, 28);
+      ctx.fillStyle = '#a0b0c0';
+      ctx.font = '12px "Segoe UI", sans-serif';
+      ctx.fillText(`📹 ${camId.toUpperCase()}`, 16, 28);
+    }
+
+    // ---------- Draw all cameras ----------
+    function drawAllCameras() {
+      CAMERAS.forEach(cam => drawCamera(cam.id));
+    }
+
+    // ---------- Update worker states (simulate activity) ----------
+    function updateWorkers() {
+      const now = Date.now();
+      workers.forEach(w => {
+        // Random status change: 8% chance per second to toggle
+        if (Math.random() < 0.08) {
+          // But only if not suppressed by shift mode? We'll handle idle time separately.
+          // Toggle with some bias: 60% chance to become active, 40% idle (to have some idle)
+          const newStatus = Math.random() < 0.6 ? 'active' : 'idle';
+          w.status = newStatus;
+          if (newStatus === 'active') {
+            w.idleTime = 0; // reset idle timer when becomes active
+          }
+        }
+
+        // If shift mode is ON, force all workers active (no idle alerts)
+        if (shiftMode) {
+          w.status = 'active';
+          w.idleTime = 0;
+          return; // skip idle accumulation
+        }
+
+        // Accumulate idle time if idle
+        if (w.status === 'idle') {
+          w.idleTime += 1; // increment by 1 second per tick
+        } else {
+          w.idleTime = 0;
+        }
+
+        // Check if idle time exceeds threshold -> generate alert
+        if (w.status === 'idle' && w.idleTime >= thresholdSeconds) {
+          // Check if we already have a recent alert for this worker (avoid spamming)
+          const lastAlert = alerts.length > 0 ? alerts[alerts.length - 1] : null;
+          if (!lastAlert || lastAlert.workerId !== w.id || (now - lastAlert.timestamp) > 5000) {
+            // Generate alert
+            const alertMsg = `Worker ${w.id.slice(-4)} idle for ${Math.floor(w.idleTime)}s (threshold ${thresholdSeconds}s)`;
+            alerts.push({
+              id: alertIdCounter++,
+              workerId: w.id,
+              camId: w.camId,
+              message: alertMsg,
+              timestamp: now,
+              duration: Math.floor(w.idleTime)
+            });
+            // Keep only last 50 alerts
+            if (alerts.length > 50) alerts.shift();
+            updateAlertPanel();
+          }
+        }
+      });
+
+      // Update alert badge count (only show un-acknowledged? We'll show total in list)
+      alertBadge.textContent = alerts.length;
+      alertCountSpan.textContent = alerts.length;
+
+      // Update worker count
+      updateWorkerCount();
+    }
+
+    // ---------- UI updates ----------
+    function updateWorkerCount() {
+      totalWorkersSpan.textContent = workers.length;
+    }
+
+    function updateAlertPanel() {
+      alertList.innerHTML = '';
+      if (alerts.length === 0) {
+        alertList.innerHTML = '<div class="no-alerts">✅ No alerts</div>';
+        return;
+      }
+      // Show latest first (reverse order)
+      const reversed = [...alerts].reverse();
+      reversed.forEach(alert => {
+        const div = document.createElement('div');
+        div.className = 'alert-item';
+        const time = new Date(alert.timestamp).toLocaleTimeString();
+        div.innerHTML = `
+          <span class="idle-info">⚠️ ${alert.message}</span>
+          <span class="time">${time}</span>
+        `;
+        alertList.appendChild(div);
+      });
+    }
+
+    // ---------- Threshold slider ----------
+    thresholdSlider.addEventListener('input', function() {
+      thresholdSeconds = parseInt(this.value, 10);
+      thresholdDisplay.textContent = thresholdSeconds + 's';
+      // Reset idle timers for all workers? Optional: we could reset, but better to keep.
+      // But if threshold changes, alerts might fire differently; we keep accumulation.
+    });
+
+    // ---------- Shift toggle ----------
+    shiftToggle.addEventListener('click', function() {
+      shiftMode = !shiftMode;
+      if (shiftMode) {
+        this.className = 'toggle-btn active';
+        this.textContent = '⏸️ Break mode ON';
+        // Reset all idle timers and force active
+        workers.forEach(w => { w.status = 'active'; w.idleTime = 0; });
+        // Clear alerts? Or keep them but suppress new ones. We'll suppress new ones via updateWorkers logic.
+        // We can also clear alerts visually but keep in history.
+        // For demo, we clear alerts (since break mode suppresses)
+        alerts = [];
+        updateAlertPanel();
+      } else {
+        this.className = 'toggle-btn inactive';
+        this.textContent = '⏸️ Break mode OFF';
+      }
+    });
+
+    // ---------- Main loop ----------
+    function tick() {
+      updateWorkers();
+      drawAllCameras();
+      // update alert panel badge count
+      alertBadge.textContent = alerts.length;
+      alertCountSpan.textContent = alerts.length;
+    }
+
+    // ---------- Initialization ----------
+    function init() {
+      initWorkers();
+      renderCameras();
+      updateAlertPanel();
+      updateWorkerCount();
+      // Start loop every 1 second
+      setInterval(tick, 1000);
+      // Also draw immediately
+      setTimeout(drawAllCameras, 50);
+    }
+
+    init();
+
+    // Redraw on resize (debounced)
+    let resizeTimer;
+    window.addEventListener('resize', () => {
+      clearTimeout(resizeTimer);
+      resizeTimer = setTimeout(drawAllCameras, 200);
+    });
+
+  })();
+</script>
+</body>
+</html>

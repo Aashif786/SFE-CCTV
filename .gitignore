@@ -1,0 +1,31 @@
+# OS Files
+.DS_Store
+Thumbs.db
+
+# Python / Backend
+backend/venv/
+backend/__pycache__/
+backend/src/__pycache__/
+backend/src/db/__pycache__/
+*.py[cod]
+*$py.class
+backend/.env
+backend/models/*.task
+
+# Node / Next.js / Frontend
+frontend/node_modules/
+frontend/.next/
+frontend/out/
+frontend/build/
+frontend/.env*.local
+frontend/npm-debug.log*
+frontend/yarn-debug.log*
+frontend/yarn-error.log*
+frontend/.expo/
+frontend/dist/
+
+# IDEs
+.idea/
+.vscode/
+*.swp
+*.swo
