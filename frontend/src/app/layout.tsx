@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 import { Inter } from "next/font/google";
 import "./globals.css";
 import Link from 'next/link';
-import { Activity, LayoutDashboard, History, Settings, Bell } from 'lucide-react';
+import { Activity, LayoutDashboard, History, Settings, Bell, Fingerprint, BarChart2 } from 'lucide-react';
 
 const inter = Inter({ subsets: ["latin"] });
 
@@ -39,6 +39,14 @@ export default function RootLayout({
               <Link href="/alerts" className="flex items-center gap-3 px-4 py-3 rounded-lg text-gray-400 hover:text-white hover:bg-gray-800 transition-colors">
                 <Bell className="w-5 h-5" />
                 <span className="font-medium">Alerts</span>
+              </Link>
+              <Link href="/identity" className="flex items-center gap-3 px-4 py-3 rounded-lg text-gray-400 hover:text-white hover:bg-gray-800 transition-colors">
+                <Fingerprint className="w-5 h-5" />
+                <span className="font-medium">Identity</span>
+              </Link>
+              <Link href="/summary" className="flex items-center gap-3 px-4 py-3 rounded-lg text-gray-400 hover:text-white hover:bg-gray-800 transition-colors">
+                <BarChart2 className="w-5 h-5" />
+                <span className="font-medium">Activity Summary</span>
               </Link>
               <Link href="/settings" className="flex items-center gap-3 px-4 py-3 rounded-lg text-gray-400 hover:text-white hover:bg-gray-800 transition-colors">
                 <Settings className="w-5 h-5" />

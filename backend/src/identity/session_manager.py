@@ -1,0 +1,257 @@
+"""
+WorkerSessionManager — in-memory store + PostgreSQL persistence.
+
+Maintains the canonical mapping:  track_id  →  WorkerSession
+
+All downstream modules (activity logging, alerts) call get_by_track()
+to resolve a track ID to a named employee — they never need to know
+how the identity was obtained.
+
+Track-ID reassignment:
+  If the underlying tracker assigns a new ID to the same physical person
+  (common in multi-object trackers), call update_track(old, new).
+  The WorkerSession is updated in-place — no duplicate employee record is created.
+
+Daily Summary:
+  When a WorkerSession closes, _update_daily_summary() is called automatically.
+  It queries all ActivitySession records that overlapped the employee's on-camera
+  window (same camera_id, start_time within the worker session's time range),
+  aggregates by activity type, and upserts into EmployeeDailySummary.
+  Multiple check-ins per day accumulate correctly.
+"""
+
+from __future__ import annotations
+
+import uuid
+from datetime import datetime, timezone
+from typing import Optional
+
+from .models import WorkerSession
+from ..db.database import SessionLocal
+from ..db.models import WorkerSessionDB, ActivitySession, EmployeeDailySummary
+
+
+def _utcnow() -> datetime:
+    return datetime.now(timezone.utc).replace(tzinfo=None)
+
+
+class WorkerSessionManager:
+    """
+    In-memory session store with synchronous PostgreSQL persistence.
+
+    The in-memory dict provides O(1) lookup per frame (critical for real-time
+    pipeline). DB rows are the durable record for dashboards and reports.
+    """
+
+    def __init__(self) -> None:
+        # track_id → WorkerSession  (only ACTIVE sessions)
+        self._sessions: dict[str, WorkerSession] = {}
+        # All closed sessions for the /history endpoint
+        self._closed: list[WorkerSession] = []
+
+    # ------------------------------------------------------------------
+    # Write operations
+    # ------------------------------------------------------------------
+
+    def create_session(
+        self,
+        employee_id: str,
+        track_id: str,
+        camera_id: str,
+        correlation_delay: float,
+    ) -> WorkerSession:
+        """Create a new ACTIVE WorkerSession and persist it to the DB."""
+        session = WorkerSession(
+            session_id=str(uuid.uuid4()),
+            employee_id=employee_id,
+            current_track_id=track_id,
+            camera_id=camera_id,
+            start_time=_utcnow(),
+            status="ACTIVE",
+            correlation_delay_seconds=round(correlation_delay, 3),
+        )
+        self._sessions[track_id] = session
+        self._persist(session)
+        return session
+
+    def update_track(self, old_track_id: str, new_track_id: str) -> bool:
+        """
+        Reassign a WorkerSession to a new track ID without duplicating the employee.
+
+        Use this when the tracker changes the numeric ID for the same physical person
+        (e.g. ByteTrack track 17 → track 25 after occlusion recovery).
+
+        Returns True if the session was found and updated, False otherwise.
+        """
+        session = self._sessions.pop(old_track_id, None)
+        if session is None:
+            return False
+        session.current_track_id = new_track_id
+        self._sessions[new_track_id] = session
+        with SessionLocal() as db:
+            row = db.query(WorkerSessionDB).filter(
+                WorkerSessionDB.session_id == session.session_id
+            ).first()
+            if row:
+                row.current_track_id = new_track_id
+                db.commit()
+        return True
+
+    def close_session(self, track_id: str) -> Optional[WorkerSession]:
+        """
+        Mark the session for this track as CLOSED (person left frame).
+        Persists end_time to DB and aggregates activity time into EmployeeDailySummary.
+        """
+        session = self._sessions.pop(track_id, None)
+        if session is None:
+            return None
+        session.status = "CLOSED"
+        session.end_time = _utcnow()
+        self._closed.append(session)
+
+        with SessionLocal() as db:
+            row = db.query(WorkerSessionDB).filter(
+                WorkerSessionDB.session_id == session.session_id
+            ).first()
+            if row:
+                row.status = "CLOSED"
+                row.end_time = session.end_time
+                db.commit()
+
+        # Aggregate and persist daily summary
+        self._update_daily_summary(session)
+        return session
+
+    # ------------------------------------------------------------------
+    # Read operations
+    # ------------------------------------------------------------------
+
+    def get_by_track(self, track_id: str) -> Optional[WorkerSession]:
+        """Look up the active WorkerSession for a given track ID. O(1)."""
+        return self._sessions.get(track_id)
+
+    def get_all_active(self) -> list[WorkerSession]:
+        """Return all currently ACTIVE sessions."""
+        return list(self._sessions.values())
+
+    def get_history(self) -> list[WorkerSession]:
+        """Return all CLOSED sessions (today's server run)."""
+        return list(self._closed)
+
+    # ------------------------------------------------------------------
+    # Daily summary aggregation
+    # ------------------------------------------------------------------
+
+    def _update_daily_summary(self, session: WorkerSession) -> None:
+        """
+        Aggregate activity time for this WorkerSession and upsert into
+        EmployeeDailySummary.
+
+        Strategy:
+        - Query all CLOSED ActivitySession rows for the same camera
+          whose start_time falls within [session.start_time, session.end_time].
+        - Exclude 'no_person' activity (not meaningful on-camera time).
+        - Sum durations per activity type.
+        - Upsert into EmployeeDailySummary (increment existing row if present).
+        """
+        if session.end_time is None:
+            return
+
+        date_key = session.start_time.date()
+
+        # Activity type buckets
+        TRACKED = {"working", "idle", "walking", "using_mobile"}
+
+        with SessionLocal() as db:
+            # Fetch all completed activity blocks within this worker's on-camera window
+            act_sessions = (
+                db.query(ActivitySession)
+                .filter(
+                    ActivitySession.camera_id == session.camera_id,
+                    ActivitySession.start_time >= session.start_time,
+                    ActivitySession.start_time < session.end_time,
+                    ActivitySession.end_time.isnot(None),
+                    ActivitySession.activity != "no_person",
+                )
+                .all()
+            )
+
+            # Aggregate seconds per activity
+            agg: dict[str, float] = {k: 0.0 for k in TRACKED}
+            for a in act_sessions:
+                dur = a.duration_seconds or 0.0
+                if a.activity in TRACKED:
+                    agg[a.activity] += dur
+
+            total = sum(agg.values())
+
+            # Upsert into EmployeeDailySummary
+            summary = (
+                db.query(EmployeeDailySummary)
+                .filter(
+                    EmployeeDailySummary.employee_id == session.employee_id,
+                    EmployeeDailySummary.date == date_key,
+                )
+                .first()
+            )
+
+            if summary is None:
+                summary = EmployeeDailySummary(
+                    employee_id=session.employee_id,
+                    date=date_key,
+                    working_seconds=0.0,
+                    idle_seconds=0.0,
+                    walking_seconds=0.0,
+                    using_mobile_seconds=0.0,
+                    total_seconds=0.0,
+                    check_in_count=0,
+                    first_seen=None,
+                    last_seen=None,
+                )
+                db.add(summary)
+
+            # Accumulate (not overwrite) so multiple check-ins stack up
+            summary.working_seconds      += agg["working"]
+            summary.idle_seconds         += agg["idle"]
+            summary.walking_seconds      += agg["walking"]
+            summary.using_mobile_seconds += agg["using_mobile"]
+            summary.total_seconds        += total
+            summary.check_in_count       += 1
+
+            # Track earliest/latest appearance today
+            if summary.first_seen is None or session.start_time < summary.first_seen:
+                summary.first_seen = session.start_time
+            if summary.last_seen is None or session.end_time > summary.last_seen:
+                summary.last_seen = session.end_time
+
+            db.commit()
+
+            print(
+                f"[Identity] 📊 Daily summary updated for {session.employee_id} "
+                f"| +working={agg['working']:.1f}s  +idle={agg['idle']:.1f}s  "
+                f"+walking={agg['walking']:.1f}s  +mobile={agg['using_mobile']:.1f}s"
+            )
+
+    # ------------------------------------------------------------------
+    # Internal
+    # ------------------------------------------------------------------
+
+    def _persist(self, session: WorkerSession) -> None:
+        with SessionLocal() as db:
+            row = WorkerSessionDB(
+                session_id=session.session_id,
+                employee_id=session.employee_id,
+                current_track_id=session.current_track_id,
+                camera_id=session.camera_id,
+                start_time=session.start_time,
+                status=session.status,
+                correlation_delay_seconds=session.correlation_delay_seconds,
+            )
+            db.add(row)
+            db.commit()
+
+
+# ---------------------------------------------------------------------------
+# Module-level singleton — imported by correlation.py and api.py
+# ---------------------------------------------------------------------------
+worker_session_manager = WorkerSessionManager()

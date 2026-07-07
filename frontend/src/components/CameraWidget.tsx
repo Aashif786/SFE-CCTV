@@ -38,6 +38,9 @@ export default function CameraWidget({ cameraId, name }: { cameraId: string; nam
   const [movementScore, setMovementScore] = useState(0);
   const [confidence, setConfidence] = useState(0);
   const [idleThreshold, setIdleThreshold] = useState(10);
+  // Identity
+  const [employeeId, setEmployeeId] = useState<string | null>(null);
+  const [sessionId, setSessionId] = useState<string | null>(null);
   const wsRef = useRef<WebSocket | null>(null);
   const intervalRef = useRef<NodeJS.Timeout | null>(null);
 
@@ -83,6 +86,14 @@ export default function CameraWidget({ cameraId, name }: { cameraId: string; nam
           setConfidence(data.confidence ?? 0);
           if (data.idle_threshold_seconds !== undefined) {
             setIdleThreshold(data.idle_threshold_seconds);
+          }
+          // Identity — clear when no person, set when matched
+          if (data.identity?.employee_id) {
+            setEmployeeId(data.identity.employee_id);
+            setSessionId(data.identity.session_id ?? null);
+          } else if (act === "no_person") {
+            setEmployeeId(null);
+            setSessionId(null);
           }
         }
 
@@ -228,6 +239,12 @@ export default function CameraWidget({ cameraId, name }: { cameraId: string; nam
           <span className="text-sm font-medium text-white">{name}</span>
         </div>
         <div className="flex items-center gap-2">
+          {/* Employee badge — visible when identity is resolved */}
+          {employeeId && (
+            <span className="text-xs font-bold bg-emerald-500/20 border border-emerald-500/40 text-emerald-300 px-2 py-1 rounded-md backdrop-blur-md">
+              👤 {employeeId}
+            </span>
+          )}
           <div className={`w-2 h-2 rounded-full ${dotClass}`} />
           <span className="text-xs text-gray-300 bg-black/50 px-2 py-1 rounded-md backdrop-blur-md">
             {label}
@@ -248,6 +265,12 @@ export default function CameraWidget({ cameraId, name }: { cameraId: string; nam
             <div className="flex items-center gap-2 text-amber-400 bg-amber-500/10 px-3 py-1.5 rounded-lg backdrop-blur-md border border-amber-500/20">
               <AlertTriangle className="w-4 h-4 animate-bounce" />
               <span className="text-sm font-bold">Idle Alert: {Math.floor(idleSeconds)}s</span>
+            </div>
+          )}
+          {/* Show unidentified warning when person is in frame but not matched */}
+          {activity !== "no_person" && activity !== "connecting" && !employeeId && (
+            <div className="flex items-center gap-2 text-violet-400 bg-violet-500/10 px-3 py-1.5 rounded-lg backdrop-blur-md border border-violet-500/20">
+              <span className="text-xs">⚠ Unidentified — use Check-In panel</span>
             </div>
           )}
         </div>

@@ -24,7 +24,15 @@ from .db.database import engine, Base, get_db, SessionLocal
 from .db.models import ActivityLog, Alert, ActivitySession, WorkstationZone
 
 # ---------------------------------------------------------------------------
-# Create / migrate tables on startup
+# Identity Management module
+# ---------------------------------------------------------------------------
+from .identity.api import router as identity_router
+from .identity.correlation import correlation_engine
+from .identity.session_manager import worker_session_manager
+from .identity.models import CameraEntryEvent
+
+# ---------------------------------------------------------------------------
+# Create / migrate tables on startup (includes new identity_events, worker_sessions)
 # ---------------------------------------------------------------------------
 Base.metadata.create_all(bind=engine)
 
@@ -38,8 +46,24 @@ class DetectionConfig:
     idle_threshold_seconds: float = 10.0
     movement_sensitivity: float = 0.05      # "has movement" threshold
     confidence_threshold: float = 0.50      # min avg landmark visibility → unknown
+    # Identity correlation
+    correlation_window_seconds: float = 5.0 # max time gap for identity ↔ track match
+    identity_provider: str = "REST_SIMULATOR"
 
 config = DetectionConfig()
+SETTINGS_FILE = os.path.join(os.path.dirname(__file__), "..", "settings.json")
+
+# Load persistent settings if they exist
+if os.path.exists(SETTINGS_FILE):
+    try:
+        with open(SETTINGS_FILE, "r") as f:
+            data = json.load(f)
+            if "idle_threshold_seconds" in data: config.idle_threshold_seconds = data["idle_threshold_seconds"]
+            if "movement_sensitivity" in data: config.movement_sensitivity = data["movement_sensitivity"]
+            if "confidence_threshold" in data: config.confidence_threshold = data["confidence_threshold"]
+            print(f"Loaded persistent settings from {SETTINGS_FILE}")
+    except Exception as e:
+        print(f"Error loading settings: {e}")
 
 class SettingsPayload(BaseModel):
     idle_threshold_seconds: float
@@ -62,6 +86,9 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Register the identity management router
+app.include_router(identity_router)
 
 
 # ---------------------------------------------------------------------------
@@ -341,6 +368,9 @@ class WorkerDetector:
 # ---------------------------------------------------------------------------
 detectors: dict[str, WorkerDetector] = {}
 session_managers: dict[str, "SessionManager"] = {}
+# Track whether a person was detected in the PREVIOUS frame per camera.
+# Used to detect ENTRY (False→True) and EXIT (True→False) transitions.
+_prev_has_pose: dict[str, bool] = {}
 
 
 # ---------------------------------------------------------------------------
@@ -446,6 +476,18 @@ async def save_settings(payload: SettingsPayload):
     config.idle_threshold_seconds = payload.idle_threshold_seconds
     config.movement_sensitivity = payload.movement_sensitivity
     config.confidence_threshold = payload.confidence_threshold
+    
+    # Save to disk
+    try:
+        with open(SETTINGS_FILE, "w") as f:
+            json.dump({
+                "idle_threshold_seconds": config.idle_threshold_seconds,
+                "movement_sensitivity": config.movement_sensitivity,
+                "confidence_threshold": config.confidence_threshold,
+            }, f, indent=4)
+    except Exception as e:
+        print(f"Failed to persist settings: {e}")
+        
     print(f"⚙️  Settings: idle={config.idle_threshold_seconds}s  sens={config.movement_sensitivity}  conf={config.confidence_threshold}")
     return {
         "status": "saved",
@@ -622,6 +664,8 @@ async def websocket_endpoint(websocket: WebSocket):
                 detectors[camera_id] = WorkerDetector()
             if camera_id not in session_managers:
                 session_managers[camera_id] = SessionManager(camera_id)
+            if camera_id not in _prev_has_pose:
+                _prev_has_pose[camera_id] = False
 
             detector = detectors[camera_id]
             sm = session_managers[camera_id]
@@ -645,6 +689,36 @@ async def websocket_endpoint(websocket: WebSocket):
 
             # Classify activity using the rule engine (pass keypoints for phone detection)
             activity = classifier.classify(has_pose, confidence, movement_score, worker_pos, zone, keypoints)
+
+            # Update correlation engine window from live config
+            correlation_engine.set_window(config.correlation_window_seconds)
+
+            # ── Identity: detect person ENTRY and EXIT transitions ───────────
+            track_id = f"mediapipe-{camera_id}"  # stable synthetic ID per camera
+            # Designed for single-person MediaPipe. When a real multi-object
+            # tracker (ByteTrack, etc.) is plugged in, replace track_id with
+            # the tracker's numeric ID — no other changes required.
+            if has_pose and not _prev_has_pose[camera_id]:
+                # Person just appeared → emit CameraEntryEvent for correlation
+                camera_entry = CameraEntryEvent(
+                    track_id=track_id,
+                    timestamp=datetime.now(timezone.utc).replace(tzinfo=None),
+                    camera_id=camera_id,
+                    first_bounding_box=boxes[0] if boxes else [],
+                    first_frame_number=detector.frame_count,
+                )
+                correlation_engine.on_new_track(camera_entry)
+
+            elif not has_pose and _prev_has_pose[camera_id]:
+                # Person just disappeared → close their WorkerSession
+                closed = worker_session_manager.close_session(track_id)
+                if closed:
+                    print(f"[Identity] 🚪 Session closed for employee={closed.employee_id} track={track_id}")
+
+            _prev_has_pose[camera_id] = has_pose
+
+            # Resolve identity for WS response (None if not yet matched)
+            worker_session = worker_session_manager.get_by_track(track_id)
 
             # Update session engine
             sm.process(activity)
@@ -698,6 +772,12 @@ async def websocket_endpoint(websocket: WebSocket):
                 "keypoints": keypoints,
                 "boxes": boxes,
                 "session": sm.current_session_info(),
+                # Identity — present once employee has been matched to this track
+                "identity": {
+                    "employee_id": worker_session.employee_id if worker_session else None,
+                    "session_id": worker_session.session_id if worker_session else None,
+                    "correlation_delay": worker_session.correlation_delay_seconds if worker_session else None,
+                } if worker_session or has_pose else None,
             }
             await websocket.send_text(json.dumps(response))
 
