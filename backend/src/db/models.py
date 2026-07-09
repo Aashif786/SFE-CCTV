@@ -112,7 +112,6 @@ class EmployeeDailySummary(Base):
     working_seconds       = Column(Float, nullable=False, default=0.0)
     idle_seconds          = Column(Float, nullable=False, default=0.0)
     walking_seconds       = Column(Float, nullable=False, default=0.0)
-    using_mobile_seconds  = Column(Float, nullable=False, default=0.0)
     # Total on-camera time (sum of all tracked activities)
     total_seconds         = Column(Float, nullable=False, default=0.0)
 

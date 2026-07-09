@@ -126,6 +126,35 @@ class WorkerSessionManager:
     # Read operations
     # ------------------------------------------------------------------
 
+    def try_rebind_recent(
+        self,
+        new_track_id: str,
+        camera_id: str,
+        reference_time: datetime,
+        max_gap_seconds: float = 8.0,
+        active_track_ids: Optional[set[str]] = None,
+    ) -> Optional[WorkerSession]:
+        """
+        Look for the most-recently-closed (or absent active) session on this camera.
+        If found, re-activate it under the new track_id.
+
+        This handles the BoT-SORT first-frame ID flicker: a person enters,
+        gets Track 5, briefly loses tracking, then reappears as Track 17.
+        The session is either still ACTIVE (in grace period) or recently CLOSED,
+        and is re-bound under Track 17.
+        """
+        # 0. Check if the exact track ID is already active (tracker survived occlusion)
+        if new_track_id in self._sessions:
+            # The BoT-SORT tracker successfully recovered the person using its ReID & Spatial features.
+            # We strictly trust the tracker and preserve their existing session perfectly.
+            return self._sessions[new_track_id]
+
+        # Note: We intentionally do NOT perform blind temporal rebinding (e.g. if a track appears within
+        # X seconds of another track disappearing). Doing so aggressively stole identities from new workers
+        # (e.g. Worker A leaves, Worker B enters 2s later and gets Worker A's identity).
+        # We rely entirely on BoT-SORT's track_buffer and ReID engine to maintain identity across occlusions.
+        return None
+
     def get_by_track(self, track_id: str) -> Optional[WorkerSession]:
         """Look up the active WorkerSession for a given track ID. O(1)."""
         return self._sessions.get(track_id)
@@ -160,7 +189,7 @@ class WorkerSessionManager:
         date_key = session.start_time.date()
 
         # Activity type buckets
-        TRACKED = {"working", "idle", "walking", "using_mobile"}
+        TRACKED = {"working", "idle", "walking"}
 
         with SessionLocal() as db:
             # Fetch all completed activity blocks within this worker's on-camera window
@@ -202,7 +231,6 @@ class WorkerSessionManager:
                     working_seconds=0.0,
                     idle_seconds=0.0,
                     walking_seconds=0.0,
-                    using_mobile_seconds=0.0,
                     total_seconds=0.0,
                     check_in_count=0,
                     first_seen=None,
@@ -214,7 +242,6 @@ class WorkerSessionManager:
             summary.working_seconds      += agg["working"]
             summary.idle_seconds         += agg["idle"]
             summary.walking_seconds      += agg["walking"]
-            summary.using_mobile_seconds += agg["using_mobile"]
             summary.total_seconds        += total
             summary.check_in_count       += 1
 
@@ -229,7 +256,7 @@ class WorkerSessionManager:
             print(
                 f"[Identity] 📊 Daily summary updated for {session.employee_id} "
                 f"| +working={agg['working']:.1f}s  +idle={agg['idle']:.1f}s  "
-                f"+walking={agg['walking']:.1f}s  +mobile={agg['using_mobile']:.1f}s"
+                f"+walking={agg['walking']:.1f}s"
             )
 
     # ------------------------------------------------------------------
