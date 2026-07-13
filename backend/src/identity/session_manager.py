@@ -97,7 +97,7 @@ class WorkerSessionManager:
                 db.commit()
         return True
 
-    def close_session(self, track_id: str) -> Optional[WorkerSession]:
+    def close_session(self, track_id: str, activity_totals: dict[str, float] = None) -> Optional[WorkerSession]:
         """
         Mark the session for this track as CLOSED (person left frame).
         Persists end_time to DB and aggregates activity time into EmployeeDailySummary.
@@ -119,7 +119,7 @@ class WorkerSessionManager:
                 db.commit()
 
         # Aggregate and persist daily summary
-        self._update_daily_summary(session)
+        self._update_daily_summary(session, activity_totals)
         return session
 
     # ------------------------------------------------------------------
@@ -171,15 +171,13 @@ class WorkerSessionManager:
     # Daily summary aggregation
     # ------------------------------------------------------------------
 
-    def _update_daily_summary(self, session: WorkerSession) -> None:
+    def _update_daily_summary(self, session: WorkerSession, activity_totals: dict[str, float] = None) -> None:
         """
         Aggregate activity time for this WorkerSession and upsert into
         EmployeeDailySummary.
 
         Strategy:
-        - Query all CLOSED ActivitySession rows for the same camera
-          whose start_time falls within [session.start_time, session.end_time].
-        - Exclude 'no_person' activity (not meaningful on-camera time).
+        - Use the activity_totals passed from the real-time tracker directly.
         - Sum durations per activity type.
         - Upsert into EmployeeDailySummary (increment existing row if present).
         """
@@ -188,31 +186,15 @@ class WorkerSessionManager:
 
         date_key = session.start_time.date()
 
-        # Activity type buckets
-        TRACKED = {"working", "idle", "walking"}
+        # Aggregate seconds per activity
+        agg: dict[str, float] = {"working": 0.0, "idle": 0.0, "walking": 0.0}
+        if activity_totals:
+            for k in agg.keys():
+                agg[k] = activity_totals.get(k, 0.0)
+
+        total = sum(agg.values())
 
         with SessionLocal() as db:
-            # Fetch all completed activity blocks within this worker's on-camera window
-            act_sessions = (
-                db.query(ActivitySession)
-                .filter(
-                    ActivitySession.camera_id == session.camera_id,
-                    ActivitySession.start_time >= session.start_time,
-                    ActivitySession.start_time < session.end_time,
-                    ActivitySession.end_time.isnot(None),
-                    ActivitySession.activity != "no_person",
-                )
-                .all()
-            )
-
-            # Aggregate seconds per activity
-            agg: dict[str, float] = {k: 0.0 for k in TRACKED}
-            for a in act_sessions:
-                dur = a.duration_seconds or 0.0
-                if a.activity in TRACKED:
-                    agg[a.activity] += dur
-
-            total = sum(agg.values())
 
             # Upsert into EmployeeDailySummary
             summary = (

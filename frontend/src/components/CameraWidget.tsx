@@ -2,6 +2,7 @@
 import { useEffect, useRef, useState } from "react";
 import { Camera, AlertTriangle, Activity, Footprints, BriefcaseBusiness, Bug, Upload, UserCheck, RefreshCw, CameraOff, Maximize2, Minimize2 } from "lucide-react";
 import { useCameraWebSocket } from "../hooks/useCameraWebSocket";
+import { useCameraState } from "../context/CameraContext";
 
 // ── Activity display helpers ──────────────────────────────────────────────
 const ACTIVITY_LABEL: Record<string, string> = {
@@ -52,13 +53,24 @@ export default function CameraWidget({ cameraId, name }: { cameraId: string; nam
 
   // Debug & Check-In States
   const [cameraTrigger, setCameraTrigger] = useState(0);
-  const [showDebug, setShowDebug] = useState(false);
   const [employeeId, setEmployeeId] = useState("");
   const [entryGate, setEntryGate] = useState("Gate-A");
   const [submittingCheckIn, setSubmittingCheckIn] = useState(false);
   const [checkInStatus, setCheckInStatus] = useState<{ ok: boolean; msg: string } | null>(null);
-  const [isUsingClip, setIsUsingClip] = useState(false);
   const [isExpanded, setIsExpanded] = useState(false);
+
+  const { clipUrl, clipName, setClip, showDebug, setShowDebug } = useCameraState();
+  const [isUsingClip, setIsUsingClip] = useState(!!clipUrl);
+
+  useEffect(() => {
+    if (clipUrl && videoRef.current && !videoRef.current.src.includes(clipUrl)) {
+      videoRef.current.src = clipUrl;
+      videoRef.current.loop = true;
+      videoRef.current.muted = true;
+      videoRef.current.play().catch(err => console.error("Video play error:", err));
+      setIsUsingClip(true);
+    }
+  }, [clipUrl]);
 
   const {
     activity,
@@ -73,8 +85,8 @@ export default function CameraWidget({ cameraId, name }: { cameraId: string; nam
     cameraTrigger,
     videoRef,
     canvasRef,
+    clipUrl,
   });
-  const [clipName, setClipName] = useState<string>("");
 
   const handleClipUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -93,7 +105,37 @@ export default function CameraWidget({ cameraId, name }: { cameraId: string; nam
     videoRef.current.muted = true;
     videoRef.current.play().catch(err => console.error("Video play error:", err));
     setIsUsingClip(true);
-    setClipName(file.name);
+    setClip(url, file.name);
+  };
+
+  const handleDebugToggle = async () => {
+    const nextShowDebug = !showDebug;
+    setShowDebug(nextShowDebug);
+    
+    if (nextShowDebug && !isUsingClip) {
+      try {
+        const host = typeof window !== "undefined" ? window.location.hostname : "localhost";
+        const res = await fetch(`http://${host}:8000/api/test_clips`);
+        if (res.ok) {
+          const clips = await res.json();
+          if (Array.isArray(clips) && clips.length > 0) {
+            const firstClip = clips[0];
+            const url = `http://${host}:8000/test_clips/${firstClip}?t=${Date.now()}`;
+            
+            // Stop webcam tracks if active
+            if (videoRef.current && videoRef.current.srcObject) {
+              const stream = videoRef.current.srcObject as MediaStream;
+              stream.getTracks().forEach(t => t.stop());
+              videoRef.current.srcObject = null;
+            }
+            
+            setClip(url, firstClip);
+          }
+        }
+      } catch (err) {
+        console.error("Error auto-loading first test clip:", err);
+      }
+    }
   };
 
   const handleCheckIn = async (e: React.FormEvent) => {
@@ -150,19 +192,19 @@ export default function CameraWidget({ cameraId, name }: { cameraId: string; nam
             >
               {isExpanded ? <Minimize2 className="w-4 h-4" /> : <Maximize2 className="w-4 h-4" />}
             </button>
-            <button 
-              onClick={() => setShowDebug(!showDebug)}
-              className={`p-1.5 rounded hover:bg-gray-800 text-gray-400 hover:text-white transition-colors ${showDebug ? "bg-amber-500/20 text-amber-300 hover:text-amber-200" : "bg-gray-800"}`}
-              title="Toggle Debug Menu"
-            >
-              <Bug className="w-4 h-4" />
-            </button>
+             <button 
+               onClick={handleDebugToggle}
+               className={`p-1.5 rounded hover:bg-gray-800 text-gray-400 hover:text-white transition-colors ${showDebug ? "bg-amber-500/20 text-amber-300 hover:text-amber-200" : "bg-gray-800"}`}
+               title="Toggle Debug Menu"
+             >
+               <Bug className="w-4 h-4" />
+             </button>
           </div>
         </div>
 
         {/* Video + Canvas (Clean feed, no overlays covering it) */}
         <div className="relative bg-black border-b border-gray-800">
-          <video ref={videoRef} className="w-full h-auto block" muted playsInline />
+          <video ref={videoRef} className="w-full h-auto block" muted playsInline crossOrigin="anonymous" />
           <canvas ref={canvasRef} className="absolute top-0 left-0 w-full h-full pointer-events-none" />
         </div>
 
@@ -256,7 +298,7 @@ export default function CameraWidget({ cameraId, name }: { cameraId: string; nam
                         if (videoRef.current) {
                           videoRef.current.src = "";
                           setIsUsingClip(false);
-                          setClipName("");
+                          setClip(null, "");
                           setCameraTrigger(prev => prev + 1);
                         }
                       }}

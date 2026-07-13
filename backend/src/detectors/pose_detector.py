@@ -48,6 +48,8 @@ class WorkerDetector:
         self.prev_smoothed: dict[int, list[list[float]]] = {}
         self.idle_seconds: dict[int, float] = {}
         self.last_seen_frame: dict[int, int] = {} # track_id -> frame_number
+        self.prev_worker_pos: dict[int, tuple[float, float]] = {}
+        self.smoothed_velocities: dict[int, float] = {}
         self.EMA_ALPHA: float = 0.80  # higher = less display lag on moving workers
         self.frame_count: int = 0
         self.alert_triggered: bool = False
@@ -203,11 +205,21 @@ class WorkerDetector:
                 )
             else:
                 worker_pos = None
+                
+            velocity = 0.0
+            if worker_pos and track_id in self.prev_worker_pos:
+                inst_vel = self._dist_xy(worker_pos, self.prev_worker_pos[track_id])
+                self.smoothed_velocities[track_id] = 0.8 * self.smoothed_velocities.get(track_id, 0.0) + 0.2 * inst_vel
+                velocity = self.smoothed_velocities[track_id]
+                
+            if worker_pos:
+                self.prev_worker_pos[track_id] = worker_pos
 
             poses_out.append({
                 "track_id":       track_id,
                 "has_pose":       True,
                 "movement_score": movement_score,
+                "velocity":       velocity,
                 "confidence":     confidence,
                 "worker_pos":     worker_pos,
                 "idle_seconds":   self.idle_seconds[track_id],
@@ -222,5 +234,9 @@ class WorkerDetector:
                 self.prev_smoothed.pop(tid, None)
                 self.idle_seconds.pop(tid, None)
                 self.last_seen_frame.pop(tid, None)
+                if hasattr(self, 'prev_worker_pos'):
+                    self.prev_worker_pos.pop(tid, None)
+                if hasattr(self, 'smoothed_velocities'):
+                    self.smoothed_velocities.pop(tid, None)
 
         return poses_out

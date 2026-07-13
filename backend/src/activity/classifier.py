@@ -17,6 +17,7 @@ class ActivityClassifier:
         has_pose: bool,
         confidence: float,
         movement_score: float,
+        velocity: float,
         worker_pos: Optional[tuple[float, float]],
         zone: tuple[float, float, float, float],
         keypoints: list[tuple[float, float]] | None = None,
@@ -28,15 +29,15 @@ class ActivityClassifier:
         has_movement = movement_score > config.movement_sensitivity
         inside = self._inside_zone(worker_pos, zone) if worker_pos else True
 
-        # Rule 3 — active inside workstation
-        if has_movement and inside:
-            return "working"
-
-        # Rule 4 — active outside workstation
-        if has_movement and not inside:
+        # Rule 2 — active outside workstation or moving significantly (walking)
+        if has_movement and (not inside or velocity > 0.05):
             return "walking"
 
-        # Rule 5 — standing / sitting still
+        # Rule 3 — active inside workstation (working)
+        if has_movement and inside:
+            return "walking"
+
+        # Rule 4 — standing / sitting still (idle)
         return "idle"
 
     @staticmethod

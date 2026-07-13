@@ -68,6 +68,39 @@ app.add_middleware(
 # Register the identity management router
 app.include_router(identity_router)
 
+from fastapi.responses import FileResponse
+# Path to test_clips directory
+clips_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "test_clips")
+
+@app.get("/test_clips/{filename}")
+async def get_test_clip(filename: str):
+    filepath = os.path.join(clips_dir, filename)
+    filepath = os.path.abspath(filepath)
+    if not filepath.startswith(os.path.abspath(clips_dir)):
+        raise HTTPException(status_code=403, detail="Access denied")
+    if not os.path.exists(filepath):
+        raise HTTPException(status_code=404, detail="File not found")
+    
+    headers = {
+        "Access-Control-Allow-Origin": "*",
+        "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+        "Access-Control-Allow-Headers": "*",
+    }
+    return FileResponse(filepath, headers=headers)
+
+
+@app.get("/api/test_clips")
+async def list_test_clips():
+    if not os.path.exists(clips_dir):
+        return []
+    try:
+        files = [f for f in os.listdir(clips_dir) if f.lower().endswith(('.mp4', '.webm', '.avi', '.mov'))]
+        files.sort()
+        return files
+    except Exception as e:
+        print(f"Error listing test clips: {e}")
+        return []
+
 
 # ---------------------------------------------------------------------------
 # Zone cache — avoids a DB round-trip on every frame.
@@ -99,6 +132,10 @@ _prev_track_ids: dict[str, set[int]] = {}
 # Key: camera_id → dict[track_id → absent_frames_count]
 _track_absent_frames: dict[str, dict[int, int]] = {}
 TRACK_CLOSE_GRACE_FRAMES = 30  # ~6 seconds at 5 FPS
+
+# Multi-person per-track activity accumulators
+_track_activity_totals: dict[str, dict[str, float]] = {}
+_track_last_time: dict[str, datetime] = {}
 
 
 # ---------------------------------------------------------------------------
@@ -460,16 +497,22 @@ async def websocket_endpoint(websocket: WebSocket):
             for trk_id, frames_gone in list(absent_map.items()):
                 if frames_gone >= TRACK_CLOSE_GRACE_FRAMES:
                     absent_map.pop(trk_id, None)
-                    closed = worker_session_manager.close_session(str(trk_id))
+                    str_trk_id = str(trk_id)
+                    totals = _track_activity_totals.get(str_trk_id)
+                    closed = worker_session_manager.close_session(str_trk_id, totals)
                     if closed:
                         print(f"[Identity] 🚪 Session closed (grace expired) for employee={closed.employee_id} track={trk_id}")
+                    _track_activity_totals.pop(str_trk_id, None)
+                    _track_last_time.pop(str_trk_id, None)
 
             _prev_track_ids[camera_id] = current_track_ids
 
             # Build per-track detection list for the WS response
             detections_out = []
+            now_time = datetime.now(timezone.utc).replace(tzinfo=None)
             for p in poses:
                 trk_id = p["track_id"]
+                str_trk_id = str(trk_id)
                 
                 # Check confidence threshold to decide whether to send skeleton
                 keypoints_to_send = p["keypoints"] if p["confidence"] >= config.confidence_threshold else []
@@ -478,6 +521,7 @@ async def websocket_endpoint(websocket: WebSocket):
                     has_pose=True,
                     confidence=p["confidence"],
                     movement_score=p["movement_score"],
+                    velocity=p["velocity"],
                     worker_pos=p["worker_pos"],
                     zone=zone,
                     keypoints=p["keypoints"],
@@ -521,6 +565,17 @@ async def websocket_endpoint(websocket: WebSocket):
                         "correlation_delay": worker_session.correlation_delay_seconds if worker_session else None,
                     },
                 })
+                
+                # Accumulate per-track activity time
+                if str_trk_id not in _track_activity_totals:
+                    _track_activity_totals[str_trk_id] = {"working": 0.0, "walking": 0.0, "idle": 0.0, "no_person": 0.0}
+                
+                if str_trk_id in _track_last_time:
+                    dt = (now_time - _track_last_time[str_trk_id]).total_seconds()
+                    if dt < 2.0:  # Cap at 2s to prevent huge spikes if frame drops
+                        _track_activity_totals[str_trk_id][activity] += dt
+                
+                _track_last_time[str_trk_id] = now_time
 
             # Drive legacy SessionManager with the primary (first) person
             if detections_out:
@@ -573,9 +628,36 @@ async def websocket_endpoint(websocket: WebSocket):
         print("❌ WebSocket disconnected")
         if camera_id and camera_id in session_managers:
             session_managers[camera_id].close_on_disconnect()
-        if camera_id in _prev_track_ids:
-            _prev_track_ids[camera_id] = set()
+        if camera_id:
+            for s in worker_session_manager.get_all_active():
+                if s.camera_id == camera_id:
+                    str_trk_id = s.current_track_id
+                    totals = _track_activity_totals.get(str_trk_id)
+                    closed = worker_session_manager.close_session(str_trk_id, totals)
+                    if closed:
+                        print(f"[Identity] 🚪 Session closed (disconnect) for employee={closed.employee_id} track={str_trk_id}")
+                    _track_activity_totals.pop(str_trk_id, None)
+                    _track_last_time.pop(str_trk_id, None)
+            if camera_id in _prev_track_ids:
+                _prev_track_ids[camera_id] = set()
+            if camera_id in _track_absent_frames:
+                _track_absent_frames[camera_id] = {}
+
     except Exception as e:
         print(f"❌ Fatal WS error: {e}")
         if camera_id and camera_id in session_managers:
             session_managers[camera_id].close_on_disconnect()
+        if camera_id:
+            for s in worker_session_manager.get_all_active():
+                if s.camera_id == camera_id:
+                    str_trk_id = s.current_track_id
+                    totals = _track_activity_totals.get(str_trk_id)
+                    closed = worker_session_manager.close_session(str_trk_id, totals)
+                    if closed:
+                        print(f"[Identity] 🚪 Session closed (error) for employee={closed.employee_id} track={str_trk_id}")
+                    _track_activity_totals.pop(str_trk_id, None)
+                    _track_last_time.pop(str_trk_id, None)
+            if camera_id in _prev_track_ids:
+                _prev_track_ids[camera_id] = set()
+            if camera_id in _track_absent_frames:
+                _track_absent_frames[camera_id] = {}
