@@ -2,7 +2,7 @@
 
 import { useState } from 'react';
 import Link from 'next/link';
-import { Activity, LayoutDashboard, History, Settings, Bell, Fingerprint, BarChart2, Menu } from 'lucide-react';
+import { Activity, LayoutDashboard, History, Settings, Bell, Fingerprint, BarChart2, Menu, UserCheck } from 'lucide-react';
 import { usePathname } from 'next/navigation';
 
 export default function SidebarLayout({ children }: { children: React.ReactNode }) {
@@ -27,6 +27,10 @@ export default function SidebarLayout({ children }: { children: React.ReactNode 
             <LayoutDashboard className="w-5 h-5 shrink-0" />
             <span className="font-medium">Dashboard</span>
           </Link>
+          <Link href="/live-checkins" className={`flex items-center gap-3 px-4 py-3 rounded-lg transition-colors ${pathname === '/live-checkins' ? 'bg-gray-800 text-white' : 'text-gray-400 hover:text-white hover:bg-gray-800'}`}>
+            <UserCheck className="w-5 h-5 shrink-0" />
+            <span className="font-medium">Live Check-ins</span>
+          </Link>
           <Link href="/history" className={`flex items-center gap-3 px-4 py-3 rounded-lg transition-colors ${pathname === '/history' ? 'bg-gray-800 text-white' : 'text-gray-400 hover:text-white hover:bg-gray-800'}`}>
             <History className="w-5 h-5 shrink-0" />
             <span className="font-medium">History</span>
@@ -37,7 +41,7 @@ export default function SidebarLayout({ children }: { children: React.ReactNode 
           </Link>
           <Link href="/identity" className={`flex items-center gap-3 px-4 py-3 rounded-lg transition-colors ${pathname === '/identity' ? 'bg-gray-800 text-white' : 'text-gray-400 hover:text-white hover:bg-gray-800'}`}>
             <Fingerprint className="w-5 h-5 shrink-0" />
-            <span className="font-medium">Identity</span>
+            <span className="font-medium">Identity Simulator</span>
           </Link>
           <Link href="/summary" className={`flex items-center gap-3 px-4 py-3 rounded-lg transition-colors ${pathname === '/summary' ? 'bg-gray-800 text-white' : 'text-gray-400 hover:text-white hover:bg-gray-800'}`}>
             <BarChart2 className="w-5 h-5 shrink-0" />

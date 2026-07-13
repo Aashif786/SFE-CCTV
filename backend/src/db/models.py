@@ -62,6 +62,7 @@ class IdentityEventDB(Base):
     id = Column(Integer, primary_key=True, index=True)
     event_id = Column(String, unique=True, nullable=False, index=True)
     employee_id = Column(String, nullable=False, index=True)
+    employee_name = Column(String, nullable=True)
     event_type = Column(String, nullable=False, default="ENTRY")  # ENTRY | EXIT (future)
     timestamp = Column(DateTime, nullable=False, index=True)
     entry_gate = Column(String, nullable=False)

@@ -20,6 +20,7 @@ from sqlalchemy.orm import Session
 
 from .models import IdentityEventCreate, IdentityEvent, WorkerSession
 from .provider.rest_provider import RESTSimulatorProvider
+from .provider.hikvision_provider import HikvisionProvider
 from .correlation import correlation_engine
 from .session_manager import worker_session_manager
 from ..db.database import get_db
@@ -28,7 +29,19 @@ from ..db.models import EmployeeDailySummary
 router = APIRouter(prefix="/api/identity", tags=["identity"])
 
 # Active provider — swap this line to use RFID, NFC, MQTT, etc.
-_provider = RESTSimulatorProvider()
+# _provider = RESTSimulatorProvider()
+_provider = HikvisionProvider(callback_engine=correlation_engine, auto_start=False)
+
+@router.on_event("startup")
+def startup_provider():
+    if hasattr(_provider, "start_streams"):
+        _provider.start_streams()
+
+@router.on_event("shutdown")
+def shutdown_provider():
+    if hasattr(_provider, "stop_streams"):
+        _provider.stop_streams()
+
 
 
 # ---------------------------------------------------------------------------
@@ -194,6 +207,7 @@ def _event_to_dict(e: IdentityEvent) -> dict:
     return {
         "event_id": e.event_id,
         "employee_id": e.employee_id,
+        "employee_name": e.employee_name,
         "event_type": e.event_type,
         "timestamp": e.timestamp.isoformat(),
         "entry_gate": e.entry_gate,
@@ -216,3 +230,17 @@ def _session_to_dict(s: WorkerSession) -> dict:
         "status": s.status,
         "correlation_delay_seconds": s.correlation_delay_seconds,
     }
+
+
+@router.get("/doors", summary="Get door controller connection statuses")
+async def get_doors():
+    """
+    Returns the list of configured doors and their live stream connection statuses.
+    """
+    if hasattr(_provider, "door_statuses"):
+        return [
+            {"ip": ip, "name": info["name"], "status": info["status"], "last_error": info["last_error"]}
+            for ip, info in _provider.door_statuses.items()
+        ]
+    return []
+

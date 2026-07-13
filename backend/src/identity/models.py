@@ -43,7 +43,8 @@ class IdentityEvent(BaseModel):
     """
     event_id: str = Field(default_factory=lambda: str(uuid.uuid4()))
     employee_id: str
-    event_type: Literal["ENTRY"] = "ENTRY"
+    employee_name: Optional[str] = None
+    event_type: Literal["ENTRY", "EXIT"] = "ENTRY"
     timestamp: datetime
     entry_gate: str
     provider: str           # "REST_SIMULATOR" | "RFID" | "NFC" | "MQTT" …
