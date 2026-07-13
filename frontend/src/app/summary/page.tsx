@@ -1,6 +1,6 @@
 "use client";
 import { useEffect, useState, useCallback } from "react";
-import { Clock, RefreshCw, BarChart2 } from "lucide-react";
+import { Clock, RefreshCw, BarChart2, Trash2 } from "lucide-react";
 
 const API = "http://localhost:8000";
 
@@ -12,7 +12,6 @@ interface EmployeeDailySummary {
   working_seconds: number;
   idle_seconds: number;
   walking_seconds: number;
-  using_mobile_seconds: number;
   total_seconds: number;
   check_in_count: number;
   first_seen: string | null;
@@ -36,11 +35,88 @@ export default function ActivitySummaryPage() {
   const [dailySummaries, setDailySummaries] = useState<EmployeeDailySummary[]>([]);
   const [loading, setLoading] = useState(true);
   const [lastRefresh, setLastRefresh] = useState(new Date());
+  const [mounted, setMounted] = useState(false);
+  const [sortBy, setSortBy] = useState<string>("employee_id");
+  const [sortOrder, setSortOrder] = useState<"asc" | "desc" | "default">("default");
   
+  const handleSort = (field: string) => {
+    if (sortBy !== field) {
+      setSortBy(field);
+      setSortOrder("asc");
+    } else {
+      if (sortOrder === "asc") {
+        setSortOrder("desc");
+      } else if (sortOrder === "desc") {
+        setSortBy("employee_id");
+        setSortOrder("default");
+      } else {
+        setSortOrder("asc");
+      }
+    }
+  };
+
+  const getSortedSummaries = () => {
+    const sorted = [...dailySummaries];
+    const field = sortOrder === "default" ? "employee_id" : sortBy;
+    const order = sortOrder === "default" ? "asc" : sortOrder;
+
+    sorted.sort((a, b) => {
+      let valA = a[field as keyof EmployeeDailySummary];
+      let valB = b[field as keyof EmployeeDailySummary];
+
+      if (valA === null || valA === undefined) return order === "asc" ? 1 : -1;
+      if (valB === null || valB === undefined) return order === "asc" ? -1 : 1;
+
+      if (typeof valA === "string" && typeof valB === "string") {
+        return order === "asc" 
+          ? valA.localeCompare(valB) 
+          : valB.localeCompare(valA);
+      } else {
+        const numA = valA as number;
+        const numB = valB as number;
+        return order === "asc" ? numA - numB : numB - numA;
+      }
+    });
+    return sorted;
+  };
+
+  const renderSortIndicator = (field: string) => {
+    if (sortBy === field && sortOrder !== "default") {
+      return sortOrder === "asc" ? " ↑" : " ↓";
+    }
+    if (field === "employee_id" && sortOrder === "default") {
+      return " ↑";
+    }
+    return "";
+  };
+  
+  useEffect(() => {
+    setMounted(true);
+  }, []);
+
   // Default to today in YYYY-MM-DD
   const [selectedDate, setSelectedDate] = useState<string>(() => {
     return new Date().toISOString().split('T')[0];
   });
+
+  const handleDelete = async (employeeId: string) => {
+    if (!confirm(`Are you sure you want to delete the daily summary for ${employeeId} on ${selectedDate}?`)) {
+      return;
+    }
+    try {
+      const res = await fetch(`${API}/api/identity/employees/daily?employee_id=${employeeId}&date=${selectedDate}`, {
+        method: "DELETE",
+      });
+      if (res.ok) {
+        setDailySummaries(prev => prev.filter(sum => sum.employee_id !== employeeId));
+      } else {
+        alert("Failed to delete the summary record.");
+      }
+    } catch (err) {
+      console.error(err);
+      alert("Error deleting summary record.");
+    }
+  };
 
   const refresh = useCallback(async () => {
     try {
@@ -82,7 +158,7 @@ export default function ActivitySummaryPage() {
           >
             <RefreshCw className={`w-4 h-4 ${loading ? "animate-spin" : ""}`} />
             <span className="text-xs text-gray-600">
-              {lastRefresh.toLocaleTimeString()}
+              {mounted ? lastRefresh.toLocaleTimeString() : "--:--:--"}
             </span>
           </button>
         </div>
@@ -106,17 +182,47 @@ export default function ActivitySummaryPage() {
             <table className="w-full text-sm text-left">
               <thead className="bg-gray-800/80">
                 <tr className="text-xs text-gray-400 uppercase tracking-wider">
-                  <th className="py-4 pl-6 pr-4 font-semibold">Employee ID</th>
-                  <th className="py-4 pr-4 font-semibold">Total Time</th>
-                  <th className="py-4 pr-4 font-semibold text-emerald-400">Working</th>
-                  <th className="py-4 pr-4 font-semibold text-amber-400">Idle</th>
-                  <th className="py-4 pr-4 font-semibold text-blue-400">Walking</th>
-                  <th className="py-4 pr-4 font-semibold text-pink-400">Mobile</th>
-                  <th className="py-4 pr-6 font-semibold">Check-ins</th>
+                  <th 
+                    onClick={() => handleSort("employee_id")}
+                    className="py-4 pl-6 pr-4 font-semibold cursor-pointer select-none hover:text-white transition-colors"
+                  >
+                    Employee ID{renderSortIndicator("employee_id")}
+                  </th>
+                  <th 
+                    onClick={() => handleSort("total_seconds")}
+                    className="py-4 pr-4 font-semibold cursor-pointer select-none hover:text-white transition-colors"
+                  >
+                    Total Time{renderSortIndicator("total_seconds")}
+                  </th>
+                  <th 
+                    onClick={() => handleSort("working_seconds")}
+                    className="py-4 pr-4 font-semibold text-emerald-400 cursor-pointer select-none hover:text-emerald-300 transition-colors"
+                  >
+                    Working{renderSortIndicator("working_seconds")}
+                  </th>
+                  <th 
+                    onClick={() => handleSort("idle_seconds")}
+                    className="py-4 pr-4 font-semibold text-amber-400 cursor-pointer select-none hover:text-amber-300 transition-colors"
+                  >
+                    Idle{renderSortIndicator("idle_seconds")}
+                  </th>
+                  <th 
+                    onClick={() => handleSort("walking_seconds")}
+                    className="py-4 pr-4 font-semibold text-blue-400 cursor-pointer select-none hover:text-blue-300 transition-colors"
+                  >
+                    Walking{renderSortIndicator("walking_seconds")}
+                  </th>
+                  <th 
+                    onClick={() => handleSort("check_in_count")}
+                    className="py-4 pr-4 font-semibold cursor-pointer select-none hover:text-white transition-colors"
+                  >
+                    Check-ins{renderSortIndicator("check_in_count")}
+                  </th>
+                  <th className="py-4 pr-6 font-semibold text-right">Actions</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-800">
-                {dailySummaries.map(sum => (
+                {getSortedSummaries().map(sum => (
                   <tr key={sum.employee_id} className="hover:bg-gray-800/40 transition-colors bg-gray-900">
                     <td className="py-4 pl-6 pr-4">
                       <div className="flex items-center gap-3">
@@ -146,13 +252,17 @@ export default function ActivitySummaryPage() {
                         {formatDuration(sum.walking_seconds)}
                       </div>
                     </td>
-                    <td className="py-4 pr-4">
-                      <div className="inline-flex items-center px-2 py-1 rounded-md bg-pink-500/10 text-pink-400 font-medium border border-pink-500/20">
-                        {formatDuration(sum.using_mobile_seconds)}
-                      </div>
-                    </td>
-                    <td className="py-4 pr-6 text-gray-500 font-medium text-center">
+                    <td className="py-4 pr-4 text-gray-500 font-medium">
                       <span className="bg-gray-800 px-2 py-1 rounded-md">{sum.check_in_count}</span>
+                    </td>
+                    <td className="py-4 pr-6 text-right">
+                      <button
+                        onClick={() => handleDelete(sum.employee_id)}
+                        className="text-gray-500 hover:text-red-400 p-1.5 rounded-lg hover:bg-red-500/10 border border-transparent hover:border-red-500/20 transition-all"
+                        title="Delete Record"
+                      >
+                        <Trash2 className="w-4 h-4" />
+                      </button>
                     </td>
                   </tr>
                 ))}

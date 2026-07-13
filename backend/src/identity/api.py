@@ -147,7 +147,6 @@ async def get_employee_daily_summary(db: Session = Depends(get_db), date: Option
             "working_seconds": s.working_seconds,
             "idle_seconds": s.idle_seconds,
             "walking_seconds": s.walking_seconds,
-            "using_mobile_seconds": s.using_mobile_seconds,
             "total_seconds": s.total_seconds,
             "check_in_count": s.check_in_count,
             "first_seen": s.first_seen.isoformat() if s.first_seen else None,
@@ -155,6 +154,37 @@ async def get_employee_daily_summary(db: Session = Depends(get_db), date: Option
         }
         for s in summaries
     ]
+
+# ---------------------------------------------------------------------------
+# DELETE /api/identity/employees/daily — delete daily summary for an employee on a date
+# ---------------------------------------------------------------------------
+
+@router.delete("/employees/daily", summary="Delete employee daily summary")
+async def delete_employee_daily_summary(
+    employee_id: str,
+    date: str,
+    db: Session = Depends(get_db)
+):
+    """
+    Deletes the aggregated daily summary for a specific employee on a specific date.
+    """
+    try:
+        target_date = datetime.strptime(date, "%Y-%m-%d").date()
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid date format. Use YYYY-MM-DD")
+        
+    summary = db.query(EmployeeDailySummary).filter(
+        EmployeeDailySummary.employee_id == employee_id,
+        EmployeeDailySummary.date == target_date
+    ).first()
+    
+    if not summary:
+        raise HTTPException(status_code=404, detail="Summary not found")
+        
+    db.delete(summary)
+    db.commit()
+    return {"status": "deleted", "employee_id": employee_id, "date": date}
+
 
 # ---------------------------------------------------------------------------
 # Serialisation helpers

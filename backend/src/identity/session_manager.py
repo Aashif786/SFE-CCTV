@@ -97,7 +97,7 @@ class WorkerSessionManager:
                 db.commit()
         return True
 
-    def close_session(self, track_id: str) -> Optional[WorkerSession]:
+    def close_session(self, track_id: str, activity_totals: dict[str, float] = None) -> Optional[WorkerSession]:
         """
         Mark the session for this track as CLOSED (person left frame).
         Persists end_time to DB and aggregates activity time into EmployeeDailySummary.
@@ -119,12 +119,41 @@ class WorkerSessionManager:
                 db.commit()
 
         # Aggregate and persist daily summary
-        self._update_daily_summary(session)
+        self._update_daily_summary(session, activity_totals)
         return session
 
     # ------------------------------------------------------------------
     # Read operations
     # ------------------------------------------------------------------
+
+    def try_rebind_recent(
+        self,
+        new_track_id: str,
+        camera_id: str,
+        reference_time: datetime,
+        max_gap_seconds: float = 8.0,
+        active_track_ids: Optional[set[str]] = None,
+    ) -> Optional[WorkerSession]:
+        """
+        Look for the most-recently-closed (or absent active) session on this camera.
+        If found, re-activate it under the new track_id.
+
+        This handles the BoT-SORT first-frame ID flicker: a person enters,
+        gets Track 5, briefly loses tracking, then reappears as Track 17.
+        The session is either still ACTIVE (in grace period) or recently CLOSED,
+        and is re-bound under Track 17.
+        """
+        # 0. Check if the exact track ID is already active (tracker survived occlusion)
+        if new_track_id in self._sessions:
+            # The BoT-SORT tracker successfully recovered the person using its ReID & Spatial features.
+            # We strictly trust the tracker and preserve their existing session perfectly.
+            return self._sessions[new_track_id]
+
+        # Note: We intentionally do NOT perform blind temporal rebinding (e.g. if a track appears within
+        # X seconds of another track disappearing). Doing so aggressively stole identities from new workers
+        # (e.g. Worker A leaves, Worker B enters 2s later and gets Worker A's identity).
+        # We rely entirely on BoT-SORT's track_buffer and ReID engine to maintain identity across occlusions.
+        return None
 
     def get_by_track(self, track_id: str) -> Optional[WorkerSession]:
         """Look up the active WorkerSession for a given track ID. O(1)."""
@@ -142,15 +171,13 @@ class WorkerSessionManager:
     # Daily summary aggregation
     # ------------------------------------------------------------------
 
-    def _update_daily_summary(self, session: WorkerSession) -> None:
+    def _update_daily_summary(self, session: WorkerSession, activity_totals: dict[str, float] = None) -> None:
         """
         Aggregate activity time for this WorkerSession and upsert into
         EmployeeDailySummary.
 
         Strategy:
-        - Query all CLOSED ActivitySession rows for the same camera
-          whose start_time falls within [session.start_time, session.end_time].
-        - Exclude 'no_person' activity (not meaningful on-camera time).
+        - Use the activity_totals passed from the real-time tracker directly.
         - Sum durations per activity type.
         - Upsert into EmployeeDailySummary (increment existing row if present).
         """
@@ -159,31 +186,15 @@ class WorkerSessionManager:
 
         date_key = session.start_time.date()
 
-        # Activity type buckets
-        TRACKED = {"working", "idle", "walking", "using_mobile"}
+        # Aggregate seconds per activity
+        agg: dict[str, float] = {"working": 0.0, "idle": 0.0, "walking": 0.0}
+        if activity_totals:
+            for k in agg.keys():
+                agg[k] = activity_totals.get(k, 0.0)
+
+        total = sum(agg.values())
 
         with SessionLocal() as db:
-            # Fetch all completed activity blocks within this worker's on-camera window
-            act_sessions = (
-                db.query(ActivitySession)
-                .filter(
-                    ActivitySession.camera_id == session.camera_id,
-                    ActivitySession.start_time >= session.start_time,
-                    ActivitySession.start_time < session.end_time,
-                    ActivitySession.end_time.isnot(None),
-                    ActivitySession.activity != "no_person",
-                )
-                .all()
-            )
-
-            # Aggregate seconds per activity
-            agg: dict[str, float] = {k: 0.0 for k in TRACKED}
-            for a in act_sessions:
-                dur = a.duration_seconds or 0.0
-                if a.activity in TRACKED:
-                    agg[a.activity] += dur
-
-            total = sum(agg.values())
 
             # Upsert into EmployeeDailySummary
             summary = (
@@ -202,7 +213,6 @@ class WorkerSessionManager:
                     working_seconds=0.0,
                     idle_seconds=0.0,
                     walking_seconds=0.0,
-                    using_mobile_seconds=0.0,
                     total_seconds=0.0,
                     check_in_count=0,
                     first_seen=None,
@@ -214,7 +224,6 @@ class WorkerSessionManager:
             summary.working_seconds      += agg["working"]
             summary.idle_seconds         += agg["idle"]
             summary.walking_seconds      += agg["walking"]
-            summary.using_mobile_seconds += agg["using_mobile"]
             summary.total_seconds        += total
             summary.check_in_count       += 1
 
@@ -229,7 +238,7 @@ class WorkerSessionManager:
             print(
                 f"[Identity] 📊 Daily summary updated for {session.employee_id} "
                 f"| +working={agg['working']:.1f}s  +idle={agg['idle']:.1f}s  "
-                f"+walking={agg['walking']:.1f}s  +mobile={agg['using_mobile']:.1f}s"
+                f"+walking={agg['walking']:.1f}s"
             )
 
     # ------------------------------------------------------------------

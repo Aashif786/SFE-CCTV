@@ -1,5 +1,5 @@
 {
     "idle_threshold_seconds": 5.0,
-    "movement_sensitivity": 0.1471,
+    "movement_sensitivity": 0.1268,
     "confidence_threshold": 0.5
 }

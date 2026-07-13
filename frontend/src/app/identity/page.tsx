@@ -77,6 +77,11 @@ export default function IdentityPage() {
   const [tab, setTab] = useState<"pending" | "history">("pending");
   const [loading, setLoading] = useState(true);
   const [lastRefresh, setLastRefresh] = useState(new Date());
+  const [mounted, setMounted] = useState(false);
+
+  useEffect(() => {
+    setMounted(true);
+  }, []);
 
   // ── Fetch data ────────────────────────────────────────────────────────
 
@@ -148,7 +153,7 @@ export default function IdentityPage() {
         >
           <RefreshCw className="w-4 h-4" />
           <span className="text-xs text-gray-600">
-            {lastRefresh.toLocaleTimeString()}
+            {mounted ? lastRefresh.toLocaleTimeString() : "--:--:--"}
           </span>
         </button>
       </div>
