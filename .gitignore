@@ -32,3 +32,5 @@ frontend/dist/
 
 #Misc
 dump/
+backend/*.pt
+test_clips/

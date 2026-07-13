@@ -1,13 +1,14 @@
 "use client";
 import { useEffect, useRef, useState } from "react";
-import { Camera, AlertTriangle, Activity, Footprints, BriefcaseBusiness } from "lucide-react";
+import { Camera, AlertTriangle, Activity, Footprints, BriefcaseBusiness, Bug, Upload, UserCheck, RefreshCw, CameraOff, Maximize2, Minimize2 } from "lucide-react";
+import { useCameraWebSocket } from "../hooks/useCameraWebSocket";
+import { useCameraState } from "../context/CameraContext";
 
 // ── Activity display helpers ──────────────────────────────────────────────
 const ACTIVITY_LABEL: Record<string, string> = {
   working:       "Working",
   walking:       "Walking",
   idle:          "Idle",
-  using_mobile:  "📱 On Phone",
   no_person:     "No Person",
   unknown:       "Unknown",
 };
@@ -16,7 +17,6 @@ const ACTIVITY_COLOUR: Record<string, string> = {
   working:       "#10b981",  // emerald
   walking:       "#3b82f6",  // blue
   idle:          "#f59e0b",  // amber
-  using_mobile:  "#ec4899",  // pink
   no_person:     "#6b7280",  // gray
   unknown:       "#8b5cf6",  // violet
 };
@@ -25,268 +25,337 @@ const ACTIVITY_DOT: Record<string, string> = {
   working:       "bg-emerald-500 animate-pulse",
   walking:       "bg-blue-500 animate-pulse",
   idle:          "bg-amber-500",
-  using_mobile:  "bg-pink-500 animate-pulse",
   no_person:     "bg-gray-500",
   unknown:       "bg-violet-500",
 };
 
+// ── Per-track detection shape ────────────────────────────────────────────
+interface Detection {
+  track_id: number;
+  activity: string;
+  activity_colour: string;
+  movement_score: number;
+  confidence: number;
+  idle_seconds: number;
+  worker_position: [number, number] | null;
+  keypoints: [number, number][];
+  box: [number, number, number, number]; // normalized 0.0–1.0 [x1, y1, x2, y2]
+  identity: {
+    employee_id: string | null;
+    session_id: string | null;
+    correlation_delay: number | null;
+  };
+}
+
 export default function CameraWidget({ cameraId, name }: { cameraId: string; name: string }) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
-  const [activity, setActivity] = useState("connecting");
-  const [idleSeconds, setIdleSeconds] = useState(0);
-  const [movementScore, setMovementScore] = useState(0);
-  const [confidence, setConfidence] = useState(0);
-  const [idleThreshold, setIdleThreshold] = useState(10);
-  // Identity
-  const [employeeId, setEmployeeId] = useState<string | null>(null);
-  const [sessionId, setSessionId] = useState<string | null>(null);
-  const wsRef = useRef<WebSocket | null>(null);
-  const intervalRef = useRef<NodeJS.Timeout | null>(null);
+
+  // Debug & Check-In States
+  const [cameraTrigger, setCameraTrigger] = useState(0);
+  const [employeeId, setEmployeeId] = useState("");
+  const [entryGate, setEntryGate] = useState("Gate-A");
+  const [submittingCheckIn, setSubmittingCheckIn] = useState(false);
+  const [checkInStatus, setCheckInStatus] = useState<{ ok: boolean; msg: string } | null>(null);
+  const [isExpanded, setIsExpanded] = useState(false);
+
+  const { clipUrl, clipName, setClip, showDebug, setShowDebug } = useCameraState();
+  const [isUsingClip, setIsUsingClip] = useState(!!clipUrl);
 
   useEffect(() => {
-    let isMounted = true;
-    let stream: MediaStream | null = null;
+    if (clipUrl && videoRef.current && !videoRef.current.src.includes(clipUrl)) {
+      videoRef.current.src = clipUrl;
+      videoRef.current.loop = true;
+      videoRef.current.muted = true;
+      videoRef.current.play().catch(err => console.error("Video play error:", err));
+      setIsUsingClip(true);
+    }
+  }, [clipUrl]);
 
-    async function startCamera() {
+  const {
+    activity,
+    idleSeconds,
+    movementScore,
+    confidence,
+    idleThreshold,
+    detections,
+    fps,
+  } = useCameraWebSocket({
+    cameraId,
+    cameraTrigger,
+    videoRef,
+    canvasRef,
+    clipUrl,
+  });
+
+  const handleClipUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file || !videoRef.current) return;
+    
+    // Stop webcam tracks if active
+    if (videoRef.current.srcObject) {
+      const stream = videoRef.current.srcObject as MediaStream;
+      stream.getTracks().forEach(t => t.stop());
+      videoRef.current.srcObject = null;
+    }
+    
+    const url = URL.createObjectURL(file);
+    videoRef.current.src = url;
+    videoRef.current.loop = true;
+    videoRef.current.muted = true;
+    videoRef.current.play().catch(err => console.error("Video play error:", err));
+    setIsUsingClip(true);
+    setClip(url, file.name);
+  };
+
+  const handleDebugToggle = async () => {
+    const nextShowDebug = !showDebug;
+    setShowDebug(nextShowDebug);
+    
+    if (nextShowDebug && !isUsingClip) {
       try {
-        stream = await navigator.mediaDevices.getUserMedia({
-          video: { width: 640, height: 480, facingMode: "user" },
-        });
-        if (!isMounted) { stream.getTracks().forEach((t) => t.stop()); return; }
-        if (videoRef.current) {
-          videoRef.current.srcObject = stream;
-          await videoRef.current.play();
+        const host = typeof window !== "undefined" ? window.location.hostname : "localhost";
+        const res = await fetch(`http://${host}:8000/api/test_clips`);
+        if (res.ok) {
+          const clips = await res.json();
+          if (Array.isArray(clips) && clips.length > 0) {
+            const firstClip = clips[0];
+            const url = `http://${host}:8000/test_clips/${firstClip}?t=${Date.now()}`;
+            
+            // Stop webcam tracks if active
+            if (videoRef.current && videoRef.current.srcObject) {
+              const stream = videoRef.current.srcObject as MediaStream;
+              stream.getTracks().forEach(t => t.stop());
+              videoRef.current.srcObject = null;
+            }
+            
+            setClip(url, firstClip);
+          }
         }
-      } catch (err: any) {
-        if (err?.name !== "AbortError") {
-          console.error("Camera error:", err);
-          setActivity("offline");
-        }
+      } catch (err) {
+        console.error("Error auto-loading first test clip:", err);
       }
     }
+  };
 
-    startCamera();
+  const handleCheckIn = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!employeeId.trim()) return;
+    setSubmittingCheckIn(true);
+    setCheckInStatus(null);
+    try {
+      const host = typeof window !== "undefined" ? window.location.hostname : "localhost";
+      const res = await fetch(`http://${host}:8000/api/identity/entry`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ employeeId: employeeId.trim(), entryGate }),
+      });
+      if (!res.ok) throw new Error(`Server returned ${res.status}`);
+      const data = await res.json();
+      setCheckInStatus({ ok: true, msg: `✅ ${data.employee_id} queued` });
+      setEmployeeId("");
+    } catch (err: any) {
+      setCheckInStatus({ ok: false, msg: `❌ ${err.message}` });
+    } finally {
+      setSubmittingCheckIn(false);
+      setTimeout(() => setCheckInStatus(null), 4000);
+    }
+  };
 
-    const ws = new WebSocket("ws://localhost:8000/ws");
-    wsRef.current = ws;
 
-    ws.onopen = () => { if (isMounted) setActivity("connected"); };
 
-    ws.onmessage = (event) => {
-      if (!isMounted) return;
-      try {
-        const data = JSON.parse(event.data);
-        const act: string = data.activity ?? data.status ?? "unknown";
-
-        if (isMounted) {
-          setActivity(act);
-          setIdleSeconds(data.idle_seconds ?? 0);
-          setMovementScore(data.movement_score ?? 0);
-          setConfidence(data.confidence ?? 0);
-          if (data.idle_threshold_seconds !== undefined) {
-            setIdleThreshold(data.idle_threshold_seconds);
-          }
-          // Identity — clear when no person, set when matched
-          if (data.identity?.employee_id) {
-            setEmployeeId(data.identity.employee_id);
-            setSessionId(data.identity.session_id ?? null);
-          } else if (act === "no_person") {
-            setEmployeeId(null);
-            setSessionId(null);
-          }
-        }
-
-        const canvas = canvasRef.current;
-        const video  = videoRef.current;
-        if (!canvas || !video) return;
-
-        const ctx = canvas.getContext("2d");
-        if (!ctx) return;
-
-        const rect = video.getBoundingClientRect();
-        canvas.width  = rect.width;
-        canvas.height = rect.height;
-        ctx.clearRect(0, 0, canvas.width, canvas.height);
-
-        const colour = ACTIVITY_COLOUR[act] ?? "#6b7280";
-
-        // ── Draw workstation zone boundary ──────────────────────────────
-        if (data.zone && data.zone.length === 4) {
-          const [zx1, zy1, zx2, zy2] = data.zone;
-          const px = zx1 * canvas.width;
-          const py = zy1 * canvas.height;
-          const pw = (zx2 - zx1) * canvas.width;
-          const ph = (zy2 - zy1) * canvas.height;
-          // Only draw when the zone isn't full-frame
-          if (zx1 > 0.001 || zy1 > 0.001 || zx2 < 0.999 || zy2 < 0.999) {
-            ctx.strokeStyle = "rgba(251,191,36,0.6)";  // amber dashed
-            ctx.lineWidth = 2;
-            ctx.setLineDash([8, 6]);
-            ctx.strokeRect(px, py, pw, ph);
-            ctx.setLineDash([]);
-            ctx.fillStyle = "rgba(251,191,36,0.08)";
-            ctx.fillRect(px, py, pw, ph);
-            ctx.fillStyle = "rgba(251,191,36,0.85)";
-            ctx.font = "11px Arial";
-            ctx.fillText("Workstation", px + 6, py + 16);
-          }
-        }
-
-        // ── Bounding box ─────────────────────────────────────────────────
-        if (data.boxes?.length > 0) {
-          data.boxes.forEach((box: number[]) => {
-            ctx.strokeStyle = colour;
-            ctx.lineWidth = 3;
-            ctx.strokeRect(box[0], box[1], box[2] - box[0], box[3] - box[1]);
-            // Label pill
-            const label = ACTIVITY_LABEL[act] ?? act;
-            const pillW = ctx.measureText(label).width + 24;
-            ctx.fillStyle = colour;
-            ctx.fillRect(box[0], box[1] - 26, pillW, 26);
-            ctx.fillStyle = "#ffffff";
-            ctx.font = "bold 13px Arial";
-            ctx.fillText(label, box[0] + 8, box[1] - 8);
-          });
-        }
-
-        // ── Skeleton ─────────────────────────────────────────────────────
-        if (data.keypoints?.length > 0) {
-          const pts = (data.keypoints as [number, number][]).map(([px, py]) => [
-            px * canvas.width,
-            py * canvas.height,
-          ]);
-
-          const connections = [
-            [11,12],[11,13],[13,15],[12,14],[14,16],
-            [11,23],[12,24],[23,25],[25,27],[24,26],[26,28],
-          ];
-
-          ctx.strokeStyle = colour;
-          ctx.lineWidth = 2;
-          connections.forEach(([i1, i2]) => {
-            if (pts[i1] && pts[i2]) {
-              ctx.beginPath();
-              ctx.moveTo(pts[i1][0], pts[i1][1]);
-              ctx.lineTo(pts[i2][0], pts[i2][1]);
-              ctx.stroke();
-            }
-          });
-
-          ctx.fillStyle = colour;
-          pts.forEach((p) => {
-            ctx.beginPath();
-            ctx.arc(p[0], p[1], 4, 0, 2 * Math.PI);
-            ctx.fill();
-          });
-        }
-
-        // ── Hip-centre position dot ───────────────────────────────────────
-        if (data.worker_position && data.worker_position.length === 2) {
-          const [hx, hy] = data.worker_position as [number, number];
-          ctx.beginPath();
-          ctx.arc(hx * canvas.width, hy * canvas.height, 7, 0, 2 * Math.PI);
-          ctx.fillStyle = "rgba(255,255,255,0.9)";
-          ctx.fill();
-          ctx.strokeStyle = colour;
-          ctx.lineWidth = 2;
-          ctx.stroke();
-        }
-      } catch (e) {
-        console.error("WS message error", e);
-      }
-    };
-
-    ws.onclose = () => { if (isMounted) setActivity("disconnected"); };
-
-    const sendFrame = () => {
-      if (!isMounted) return;
-      if (wsRef.current?.readyState !== WebSocket.OPEN) return;
-      const video = videoRef.current;
-      if (!video || !video.srcObject) return;
-      const c = document.createElement("canvas");
-      c.width = 640; c.height = 480;
-      const cx = c.getContext("2d");
-      if (!cx) return;
-      cx.drawImage(video, 0, 0, 640, 480);
-      const imageData = c.toDataURL("image/jpeg", 0.7).split(",")[1];
-      wsRef.current?.send(JSON.stringify({ image: imageData, camera_id: cameraId }));
-    };
-
-    intervalRef.current = setInterval(sendFrame, 200); // 5 FPS
-
-    return () => {
-      isMounted = false;
-      if (wsRef.current) { wsRef.current.close(); wsRef.current = null; }
-      if (intervalRef.current) clearInterval(intervalRef.current);
-      if (stream) stream.getTracks().forEach((t) => t.stop());
-      if (videoRef.current) videoRef.current.srcObject = null;
-    };
-  }, [cameraId]);
-
-  const isIdleAlert = (activity === "idle" || activity === "using_mobile") && idleSeconds > idleThreshold;
+  const isIdleAlert = activity === "idle" && idleSeconds > idleThreshold;
   const dotClass = ACTIVITY_DOT[activity] ?? "bg-gray-500";
   const label = ACTIVITY_LABEL[activity] ?? activity;
 
   return (
-    <div className={`relative bg-gray-900 rounded-xl overflow-hidden border transition-all duration-300
-      ${isIdleAlert ? "border-amber-500 shadow-[0_0_15px_rgba(245,158,11,0.4)]" : "border-gray-800"}`}>
-
-      {/* Header */}
-      <div className="absolute top-0 left-0 w-full p-3 flex justify-between items-center bg-gradient-to-b from-black/80 to-transparent z-10">
-        <div className="flex items-center gap-2">
-          <Camera className="w-4 h-4 text-gray-300" />
-          <span className="text-sm font-medium text-white">{name}</span>
+    <div className={isExpanded 
+      ? "fixed inset-0 z-50 bg-gray-950/95 flex flex-col justify-center items-center p-4 backdrop-blur-md overflow-y-auto"
+      : `relative bg-gray-900 rounded-xl overflow-hidden border transition-all duration-300 ${
+          isIdleAlert ? "border-amber-500 shadow-[0_0_15px_rgba(245,158,11,0.4)]" : "border-gray-800"
+        }`
+    }>
+      <div className={isExpanded ? "w-full max-w-5xl bg-gray-900 rounded-xl border border-gray-800 p-4 space-y-4 shadow-2xl relative my-auto" : "w-full flex flex-col"}>
+        
+        {/* Header */}
+        <div className="p-3 flex justify-between items-center bg-gray-800/40 border-b border-gray-800 rounded-t-xl">
+          <div className="flex items-center gap-2">
+            <Camera className="w-4 h-4 text-emerald-400" />
+            <span className="text-sm font-semibold text-white">{name}</span>
+          </div>
+          <div className="flex items-center gap-2">
+            {/* Expand / Minimize Toggle Button */}
+            <button 
+              onClick={() => setIsExpanded(!isExpanded)}
+              className="p-1.5 rounded bg-gray-800 hover:bg-gray-700 text-gray-300 hover:text-white transition-colors"
+              title={isExpanded ? "Minimize View" : "Expand View"}
+            >
+              {isExpanded ? <Minimize2 className="w-4 h-4" /> : <Maximize2 className="w-4 h-4" />}
+            </button>
+             <button 
+               onClick={handleDebugToggle}
+               className={`p-1.5 rounded hover:bg-gray-800 text-gray-400 hover:text-white transition-colors ${showDebug ? "bg-amber-500/20 text-amber-300 hover:text-amber-200" : "bg-gray-800"}`}
+               title="Toggle Debug Menu"
+             >
+               <Bug className="w-4 h-4" />
+             </button>
+          </div>
         </div>
-        <div className="flex items-center gap-2">
-          {/* Employee badge — visible when identity is resolved */}
-          {employeeId && (
-            <span className="text-xs font-bold bg-emerald-500/20 border border-emerald-500/40 text-emerald-300 px-2 py-1 rounded-md backdrop-blur-md">
-              👤 {employeeId}
-            </span>
+
+        {/* Video + Canvas (Clean feed, no overlays covering it) */}
+        <div className="relative bg-black border-b border-gray-800">
+          <video ref={videoRef} className="w-full h-auto block" muted playsInline crossOrigin="anonymous" />
+          <canvas ref={canvasRef} className="absolute top-0 left-0 w-full h-full pointer-events-none" />
+        </div>
+
+        {/* Footer (Moved outside the video frame) */}
+        <div className="p-3 bg-gray-900/80 rounded-b-xl flex flex-col gap-3">
+          {/* Status & Activity Indicators */}
+          <div className="flex flex-wrap items-center justify-between gap-2 border-b border-gray-800/60 pb-2">
+            <div className="flex items-center gap-2">
+              <div className={`w-2.5 h-2.5 rounded-full ${dotClass}`} />
+              <span className="text-xs font-semibold text-gray-200 bg-gray-800 px-2.5 py-1 rounded-md">
+                {label} {activity === "idle" && `(${Math.floor(idleSeconds)}s)`}
+              </span>
+            </div>
+            <div className="flex items-center gap-2">
+              {detections.length > 0 && (
+                <span className="text-xs font-bold bg-emerald-500/20 border border-emerald-500/40 text-emerald-300 px-2 py-1 rounded-md">
+                  👥 {detections.length} Detected
+                </span>
+              )}
+            </div>
+          </div>
+
+          {/* Metric Details */}
+          <div className="flex items-center justify-between text-[11px] text-gray-400">
+            <div>FPS: <span className="text-gray-200 font-medium">{fps > 0 ? fps.toFixed(1) : "—"}</span></div>
+            <div>mvmt: <span className="text-gray-200 font-medium">{movementScore.toFixed(4)}</span></div>
+            <div>conf: <span className="text-gray-200 font-medium">{(confidence * 100).toFixed(0)}%</span></div>
+            <div className="flex items-center gap-1 text-emerald-400">
+              <Activity className="w-3 h-3 text-emerald-500 animate-pulse" />
+              <span>Active Tracking</span>
+            </div>
+          </div>
+
+          {/* Active Employee Badges */}
+          {detections.length > 0 && (
+            <div className="flex flex-wrap gap-1.5 pt-1">
+              {detections.map((det) => (
+                <span key={det.track_id}
+                  className="text-xs font-bold px-2 py-1 rounded-md border"
+                  style={{ color: det.activity_colour, borderColor: det.activity_colour + "40", background: det.activity_colour + "15" }}
+                >
+                  {det.identity.employee_id
+                    ? `👤 ${det.identity.employee_id}`
+                    : `❓ Track-${det.track_id}`}
+                </span>
+              ))}
+            </div>
           )}
-          <div className={`w-2 h-2 rounded-full ${dotClass}`} />
-          <span className="text-xs text-gray-300 bg-black/50 px-2 py-1 rounded-md backdrop-blur-md">
-            {label}
-          </span>
-        </div>
-      </div>
 
-      {/* Video + Canvas */}
-      <div className="relative aspect-video bg-black">
-        <video ref={videoRef} className="w-full h-full object-cover" muted playsInline />
-        <canvas ref={canvasRef} className="absolute top-0 left-0 w-full h-full pointer-events-none" />
-      </div>
-
-      {/* Footer */}
-      <div className="absolute bottom-0 left-0 w-full p-3 bg-gradient-to-t from-black/90 to-transparent z-10 flex justify-between items-end">
-        <div className="space-y-1">
+          {/* Idle Alert Bar */}
           {isIdleAlert && (
-            <div className="flex items-center gap-2 text-amber-400 bg-amber-500/10 px-3 py-1.5 rounded-lg backdrop-blur-md border border-amber-500/20">
-              <AlertTriangle className="w-4 h-4 animate-bounce" />
-              <span className="text-sm font-bold">Idle Alert: {Math.floor(idleSeconds)}s</span>
-            </div>
-          )}
-          {/* Show unidentified warning when person is in frame but not matched */}
-          {activity !== "no_person" && activity !== "connecting" && !employeeId && (
-            <div className="flex items-center gap-2 text-violet-400 bg-violet-500/10 px-3 py-1.5 rounded-lg backdrop-blur-md border border-violet-500/20">
-              <span className="text-xs">⚠ Unidentified — use Check-In panel</span>
+            <div className="flex items-center gap-2 text-amber-400 bg-amber-500/10 px-3 py-2 rounded-lg border border-amber-500/20 w-full animate-pulse">
+              <AlertTriangle className="w-4 h-4 text-amber-500" />
+              <span className="text-xs font-bold">Idle Alert: Track idle for {Math.floor(idleSeconds)}s</span>
             </div>
           )}
         </div>
-        <div className="flex flex-col items-end gap-1">
-          <div className="text-xs text-gray-400">FPS: ~5</div>
-          <div className="text-xs text-gray-500">
-            mvmt: <span className="text-gray-300">{movementScore.toFixed(4)}</span>
+
+        {/* Debug Menu */}
+        {showDebug && (
+          <div className="border-t border-gray-800 bg-gray-950 p-4 space-y-4 text-gray-300 relative z-20 rounded-b-xl">
+            <div className="flex items-center justify-between border-b border-gray-800 pb-2">
+              <h4 className="text-xs font-bold uppercase tracking-wider text-amber-500 flex items-center gap-1.5">
+                <Bug className="w-3.5 h-3.5" /> Debug Menu
+              </h4>
+              {isUsingClip && (
+                <span className="text-[10px] bg-amber-500/10 text-amber-400 px-1.5 py-0.5 rounded border border-amber-500/20 truncate max-w-[150px]">
+                  Clip: {clipName}
+                </span>
+              )}
+            </div>
+
+            <div className="grid grid-cols-1 gap-4">
+              {/* Row 1: Clip Upload */}
+              <div className="space-y-2">
+                <h5 className="text-xs font-semibold text-gray-400 flex items-center gap-1">
+                  <Upload className="w-3 h-3" /> Test Video Clip
+                </h5>
+                <div className="flex flex-col gap-2">
+                  {!isUsingClip ? (
+                    <label className="flex flex-col items-center justify-center h-20 border border-dashed border-gray-800 hover:border-gray-700 rounded-lg cursor-pointer hover:bg-gray-900/50 transition-all">
+                      <div className="flex flex-col items-center justify-center pt-3 pb-3">
+                        <Upload className="w-6 h-6 text-gray-500 mb-1" />
+                        <p className="text-[11px] text-gray-500">Upload MP4 clip</p>
+                      </div>
+                      <input type="file" accept="video/*" className="hidden" onChange={handleClipUpload} />
+                    </label>
+                  ) : (
+                    <button
+                      onClick={() => {
+                        if (videoRef.current) {
+                          videoRef.current.src = "";
+                          setIsUsingClip(false);
+                          setClip(null, "");
+                          setCameraTrigger(prev => prev + 1);
+                        }
+                      }}
+                      className="flex items-center justify-center gap-1.5 py-2 px-3 bg-red-950/40 hover:bg-red-900/40 text-red-400 hover:text-red-300 border border-red-900/30 rounded-lg text-xs font-medium transition-all"
+                    >
+                      <CameraOff className="w-3.5 h-3.5" />
+                      Reset to Webcam
+                    </button>
+                  )}
+                </div>
+              </div>
+
+              {/* Row 2: Worker Check-In */}
+              <div className="space-y-2">
+                <h5 className="text-xs font-semibold text-gray-400 flex items-center gap-1">
+                  <UserCheck className="w-3 h-3" /> Worker Check-In
+                </h5>
+                <form onSubmit={handleCheckIn} className="space-y-2">
+                  <div className="flex gap-2">
+                    <input
+                      type="text"
+                      placeholder="EMP ID (e.g. EMP001)"
+                      value={employeeId}
+                      onChange={e => setEmployeeId(e.target.value)}
+                      required
+                      className="flex-1 bg-gray-900 border border-gray-800 rounded px-2.5 py-1.5 text-xs text-white placeholder-gray-600 focus:outline-none focus:border-amber-500"
+                    />
+                    <select
+                      value={entryGate}
+                      onChange={e => setEntryGate(e.target.value)}
+                      className="bg-gray-900 border border-gray-800 rounded px-2 py-1.5 text-xs text-white focus:outline-none focus:border-amber-500"
+                    >
+                      {["Gate-A", "Gate-B", "Gate-C", "Gate-D"].map(g => (
+                        <option key={g} value={g}>{g}</option>
+                      ))}
+                    </select>
+                  </div>
+                  <button
+                    type="submit"
+                    disabled={submittingCheckIn || !employeeId.trim()}
+                    className="w-full flex items-center justify-center gap-1 py-1.5 bg-amber-600 hover:bg-amber-500 disabled:opacity-50 disabled:cursor-not-allowed text-white font-medium text-xs rounded transition-all"
+                  >
+                    {submittingCheckIn ? <RefreshCw className="w-3 h-3 animate-spin" /> : <UserCheck className="w-3 h-3" />}
+                    Register & Match
+                  </button>
+                </form>
+                {checkInStatus && (
+                  <div className={`p-1.5 rounded text-[10px] border text-center ${
+                    checkInStatus.ok ? "bg-emerald-500/10 border-emerald-500/20 text-emerald-400" : "bg-red-500/10 border-red-500/20 text-red-400"
+                  }`}>
+                    {checkInStatus.msg}
+                  </div>
+                )}
+              </div>
+            </div>
           </div>
-          <div className="text-xs text-gray-500">
-            conf: <span className="text-gray-300">{(confidence * 100).toFixed(0)}%</span>
-          </div>
-          <div className="flex items-center gap-1.5 text-xs text-emerald-400">
-            <Activity className="w-3 h-3" />
-            <span>AI Processing</span>
-          </div>
-        </div>
+        )}
       </div>
     </div>
   );

@@ -1,0 +1,18 @@
+# Custom BoT-SORT tracker configuration for SFE-CCTV
+tracker_type: botsort
+track_high_thresh: 0.30  # First-stage match threshold
+track_low_thresh: 0.1    # Second-stage threshold for low-score matches
+new_track_thresh: 0.50   # Start a new track if no match >= this
+track_buffer: 120        # Frames to keep lost tracks alive (survive ~24s at 5fps)
+match_thresh: 0.8        # Association similarity threshold (IoU/cost)
+fuse_score: True         # Fuse detection score with motion/IoU for matching
+
+# Static Camera GMC Optimization
+gmc_method: none         # CCTV is static, disable global motion compensation to save CPU/GPU
+
+# ReID (Appearance Feature Matching)
+with_reid: True
+model: yolo26m-reid.onnx
+proximity_thresh: 0.0    # Allow ReID matching even with 0% spatial IoU (post-occlusion/crossing recovery)
+appearance_thresh: 0.75  # Stricter appearance similarity threshold to prevent worker identity swaps
+

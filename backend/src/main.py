@@ -9,19 +9,18 @@ from fastapi.middleware.cors import CORSMiddleware
 from datetime import datetime, timezone
 from typing import Optional
 
-# --- MediaPipe Tasks API (v0.10+) ---
-import mediapipe as mp
-from mediapipe.tasks.python import BaseOptions
-from mediapipe.tasks.python.vision import (
-    PoseLandmarker,
-    PoseLandmarkerOptions,
-    RunningMode,
-)
+# --- Ultralytics YOLO ---
+from ultralytics import YOLO
+import torch
 
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 from .db.database import engine, Base, get_db, SessionLocal
 from .db.models import ActivityLog, Alert, ActivitySession, WorkstationZone
+
+from .config import config, SETTINGS_FILE, SettingsPayload
+from .detectors.pose_detector import WorkerDetector
+from .activity.classifier import classifier
 
 # ---------------------------------------------------------------------------
 # Identity Management module
@@ -36,39 +35,18 @@ from .identity.models import CameraEntryEvent
 # ---------------------------------------------------------------------------
 Base.metadata.create_all(bind=engine)
 
-MODEL_PATH = os.path.join(os.path.dirname(__file__), "..", "models", "pose_landmarker.task")
+# Close any stale active worker sessions left over from previous runs
+with SessionLocal() as db:
+    from .db.models import WorkerSessionDB
+    from datetime import datetime, timezone
+    stale_sessions = db.query(WorkerSessionDB).filter(WorkerSessionDB.status == "ACTIVE").all()
+    if stale_sessions:
+        print(f"[Startup] Found {len(stale_sessions)} stale active sessions. Closing them...")
+        for s in stale_sessions:
+            s.status = "CLOSED"
+            s.end_time = datetime.now(timezone.utc).replace(tzinfo=None)
+        db.commit()
 
-
-# ---------------------------------------------------------------------------
-# Live Detection Configuration
-# ---------------------------------------------------------------------------
-class DetectionConfig:
-    idle_threshold_seconds: float = 10.0
-    movement_sensitivity: float = 0.05      # "has movement" threshold
-    confidence_threshold: float = 0.50      # min avg landmark visibility → unknown
-    # Identity correlation
-    correlation_window_seconds: float = 5.0 # max time gap for identity ↔ track match
-    identity_provider: str = "REST_SIMULATOR"
-
-config = DetectionConfig()
-SETTINGS_FILE = os.path.join(os.path.dirname(__file__), "..", "settings.json")
-
-# Load persistent settings if they exist
-if os.path.exists(SETTINGS_FILE):
-    try:
-        with open(SETTINGS_FILE, "r") as f:
-            data = json.load(f)
-            if "idle_threshold_seconds" in data: config.idle_threshold_seconds = data["idle_threshold_seconds"]
-            if "movement_sensitivity" in data: config.movement_sensitivity = data["movement_sensitivity"]
-            if "confidence_threshold" in data: config.confidence_threshold = data["confidence_threshold"]
-            print(f"Loaded persistent settings from {SETTINGS_FILE}")
-    except Exception as e:
-        print(f"Error loading settings: {e}")
-
-class SettingsPayload(BaseModel):
-    idle_threshold_seconds: float
-    movement_sensitivity: float
-    confidence_threshold: float = Field(default=0.50)
 
 class ZonePayload(BaseModel):
     x_min: float = Field(ge=0.0, le=1.0)
@@ -90,277 +68,56 @@ app.add_middleware(
 # Register the identity management router
 app.include_router(identity_router)
 
+from fastapi.responses import FileResponse
+# Path to test_clips directory
+clips_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "test_clips")
+
+@app.get("/test_clips/{filename}")
+async def get_test_clip(filename: str):
+    filepath = os.path.join(clips_dir, filename)
+    filepath = os.path.abspath(filepath)
+    if not filepath.startswith(os.path.abspath(clips_dir)):
+        raise HTTPException(status_code=403, detail="Access denied")
+    if not os.path.exists(filepath):
+        raise HTTPException(status_code=404, detail="File not found")
+    
+    headers = {
+        "Access-Control-Allow-Origin": "*",
+        "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+        "Access-Control-Allow-Headers": "*",
+    }
+    return FileResponse(filepath, headers=headers)
+
+
+@app.get("/api/test_clips")
+async def list_test_clips():
+    if not os.path.exists(clips_dir):
+        return []
+    try:
+        files = [f for f in os.listdir(clips_dir) if f.lower().endswith(('.mp4', '.webm', '.avi', '.mov'))]
+        files.sort()
+        return files
+    except Exception as e:
+        print(f"Error listing test clips: {e}")
+        return []
+
 
 # ---------------------------------------------------------------------------
-# ActivityClassifier — rule-based engine
+# Zone cache — avoids a DB round-trip on every frame.
+# Invalidated explicitly by POST /api/zones and DELETE /api/zones endpoints.
 # ---------------------------------------------------------------------------
-# Worker position is derived from the hip-centre landmark (midpoint of 23 & 24).
-# This is the most stable landmark for position tracking (doesn't wave around).
-HIP_L, HIP_R = 23, 24
-
-# Joints tracked for movement score: Nose, L-Wrist, R-Wrist, L-Ankle, R-Ankle
-TRACKED_JOINTS = [0, 15, 16, 27, 28]
-
-# Joints used for confidence (visibility): shoulders, hips, wrists
-VISIBILITY_JOINTS = [11, 12, 23, 24, 15, 16]
-
-# ---------------------------------------------------------------------------
-# Phone-use gesture thresholds (in normalised frame coordinates, 0–1)
-# ---------------------------------------------------------------------------
-# Wrist-to-ear Euclidean distance below this → phone-call pose
-PHONE_EAR_DIST      = 0.22
-# Vertical distance of wrist from nose below this → wrist raised to face
-PHONE_FACE_Y_MARGIN = 0.22
-# Horizontal distance of wrist from nose below this → wrist near face, not extended
-PHONE_FACE_X_MARGIN = 0.25
-# Phone heuristic only fires when movement is below this multiplier × sensitivity
-# (avoids false positives when hands pass face during active work)
-PHONE_MOVEMENT_MULT = 3.0
-
-# Landmark indices for phone detection
-NOSE = 0
-L_EAR, R_EAR     = 7,  8
-L_WRIST, R_WRIST = 15, 16
-L_PINKY, R_PINKY = 17, 18
-L_INDEX, R_INDEX = 19, 20
-L_THUMB, R_THUMB = 21, 22
+_zone_cache: dict[str, tuple[float, float, float, float]] = {}
 
 
-class ActivityClassifier:
-    """
-    Stateless rule engine.  Call classify() once per frame.
-
-    Rules (evaluated top-to-bottom, first match wins):
-      1. no pose detected                                         → no_person
-      2. wrist near face/ear AND low movement                    → using_mobile  ← NEW
-      3. movement_score > threshold AND inside zone              → working
-      4. movement_score > threshold AND outside zone             → walking
-      5. movement_score ≤ threshold (inside or out)              → idle
-    """
-
-    def classify(
-        self,
-        has_pose: bool,
-        confidence: float,
-        movement_score: float,
-        worker_pos: Optional[tuple[float, float]],
-        zone: tuple[float, float, float, float],
-        keypoints: list[tuple[float, float]] | None = None,
-    ) -> str:
-        # Rule 1 — no body
-        if not has_pose:
-            return "no_person"
-
-        # Rule 2 — phone use (checked before movement-based rules)
-        if keypoints and self._detect_phone(keypoints, movement_score):
-            return "using_mobile"
-
-        has_movement = movement_score > config.movement_sensitivity
-        inside = self._inside_zone(worker_pos, zone) if worker_pos else True
-
-        # Rule 3 — active inside workstation
-        if has_movement and inside:
-            return "working"
-
-        # Rule 4 — active outside workstation
-        if has_movement and not inside:
-            return "walking"
-
-        # Rule 5 — standing / sitting still
-        return "idle"
-
-    @staticmethod
-    def _detect_phone(
-        kp: list[tuple[float, float]],
-        movement_score: float,
-    ) -> bool:
-        """
-        Heuristic: at least one hand landmark (wrist/fingers) is raised to face/ear level AND
-        the overall movement is low (the worker is relatively still).
-
-        Phone-call pose:   hand close to the ear on the same side.
-        Screen-view pose:  hand raised near nose height, not extended sideways.
-        """
-        if len(kp) <= max(NOSE, L_EAR, R_EAR, L_WRIST, R_WRIST, L_PINKY, R_PINKY, L_INDEX, R_INDEX, L_THUMB, R_THUMB):
-            return False
-
-        # Phone only triggers when the person is fairly still
-        phone_movement_limit = config.movement_sensitivity * PHONE_MOVEMENT_MULT
-        if movement_score > phone_movement_limit:
-            return False
-
-        nose   = kp[NOSE]
-        l_ear  = kp[L_EAR]
-        r_ear  = kp[R_EAR]
-
-        # Use wrist, pinky, index, and thumb points
-        l_hand_pts = [kp[L_WRIST], kp[L_PINKY], kp[L_INDEX], kp[L_THUMB]]
-        r_hand_pts = [kp[R_WRIST], kp[R_PINKY], kp[R_INDEX], kp[R_THUMB]]
-
-        def dist(a: tuple, b: tuple) -> float:
-            return math.sqrt((a[0]-b[0])**2 + (a[1]-b[1])**2)
-
-        # --- Phone-call pose: any hand point near same-side ear ---
-        for pt in l_hand_pts:
-            if dist(pt, l_ear) < PHONE_EAR_DIST:
-                return True
-        for pt in r_hand_pts:
-            if dist(pt, r_ear) < PHONE_EAR_DIST:
-                return True
-
-        # --- Screen-view pose: any hand point near nose level, not too wide ---
-        for pt in l_hand_pts + r_hand_pts:
-            dy = abs(pt[1] - nose[1])
-            dx = abs(pt[0] - nose[0])
-            if dy < PHONE_FACE_Y_MARGIN and dx < PHONE_FACE_X_MARGIN:
-                return True
-
-        return False
-
-    @staticmethod
-    def _inside_zone(pos: tuple[float, float], zone: tuple[float, float, float, float]) -> bool:
-        x, y = pos
-        x_min, y_min, x_max, y_max = zone
-        return x_min <= x <= x_max and y_min <= y <= y_max
-
-
-# Singleton classifier (stateless, safe to share)
-classifier = ActivityClassifier()
-
-
-def _get_zone_for_camera(camera_id: str) -> tuple[float, float, float, float]:
-    """Fetch workstation zone from DB; return full-frame default if not set."""
+def _get_zone_cached(camera_id: str) -> tuple[float, float, float, float]:
+    """Return workstation zone from in-memory cache; populate from DB on miss."""
+    if camera_id in _zone_cache:
+        return _zone_cache[camera_id]
     with SessionLocal() as db:
         row = db.query(WorkstationZone).filter(WorkstationZone.camera_id == camera_id).first()
-        if row:
-            return (row.x_min, row.y_min, row.x_max, row.y_max)
-    return (0.0, 0.0, 1.0, 1.0)  # full-frame default
-
-
-# ---------------------------------------------------------------------------
-# WorkerDetector — MediaPipe pose estimation + EMA smoothing
-# ---------------------------------------------------------------------------
-class WorkerDetector:
-    """Detects worker pose using MediaPipe Tasks PoseLandmarker (v0.10+)."""
-
-    CONNECTIONS = [
-        (11, 12), (11, 13), (13, 15), (12, 14), (14, 16),
-        (11, 23), (12, 24), (23, 25), (25, 27), (24, 26), (26, 28),
-    ]
-
-    def __init__(self):
-        options = PoseLandmarkerOptions(
-            base_options=BaseOptions(model_asset_path=MODEL_PATH),
-            running_mode=RunningMode.IMAGE,
-            num_poses=1,
-            min_pose_detection_confidence=0.5,
-            min_pose_presence_confidence=0.5,
-            min_tracking_confidence=0.5,
-        )
-        self.landmarker = PoseLandmarker.create_from_options(options)
-        self.idle_seconds: float = 0.0
-        self.smoothed: list[list[float]] | None = None
-        self.prev_smoothed: list[list[float]] | None = None
-        self.EMA_ALPHA: float = 0.15
-        self.frame_count: int = 0
-        self.alert_triggered: bool = False
-
-    @staticmethod
-    def _dist_xy(a: list[float], b: list[float]) -> float:
-        return math.sqrt((a[0] - b[0]) ** 2 + (a[1] - b[1]) ** 2)
-
-    def update(self, frame: np.ndarray):
-        """
-        Process one BGR frame.
-
-        Returns:
-            has_pose      (bool)
-            movement_score (float)   — EMA-smoothed joint displacement sum
-            confidence    (float)    — avg visibility of key landmarks [0–1]
-            worker_pos    (tuple|None) — normalised (x, y) of hip centre
-            idle_seconds  (float)
-            keypoints     (list)     — 33 normalised (x, y) pairs
-            boxes         (list)     — [[x1, y1, x2, y2]] pixel coords
-        """
-        self.frame_count += 1
-        h, w, _ = frame.shape
-
-        rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-        mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb)
-        result = self.landmarker.detect(mp_image)
-
-        # ── No person ────────────────────────────────────────────────────────
-        if not result.pose_landmarks or len(result.pose_landmarks) == 0:
-            self.idle_seconds = 0.0
-            self.smoothed = None
-            self.prev_smoothed = None
-            return False, 0.0, 0.0, None, 0.0, [], []
-
-        landmarks = result.pose_landmarks[0]
-        raw = [[lm.x, lm.y] for lm in landmarks]
-
-        # ── Confidence: average visibility of key joints ─────────────────────
-        vis_scores = [
-            landmarks[i].visibility
-            for i in VISIBILITY_JOINTS
-            if i < len(landmarks) and landmarks[i].visibility is not None
-        ]
-        confidence = float(np.mean(vis_scores)) if vis_scores else 0.0
-
-        # ── EMA smoothing ────────────────────────────────────────────────────
-        if self.smoothed is None:
-            self.smoothed = [pt[:] for pt in raw]
-        else:
-            a = self.EMA_ALPHA
-            self.smoothed = [
-                [a * r[0] + (1 - a) * s[0],
-                 a * r[1] + (1 - a) * s[1]]
-                for r, s in zip(raw, self.smoothed)
-            ]
-        smoothed = self.smoothed
-
-        # ── Movement score ───────────────────────────────────────────────────
-        if self.prev_smoothed is not None:
-            movement_score = 0.0
-            for i in TRACKED_JOINTS:
-                if i < len(smoothed) and i < len(self.prev_smoothed):
-                    d = self._dist_xy(smoothed[i], self.prev_smoothed[i])
-                    # Ignore minor jitter below 0.008 normalized coordinates
-                    if d > 0.008:
-                        movement_score += d
-        else:
-            movement_score = 0.0
-
-        # ── Idle accumulator ─────────────────────────────────────────────────
-        if movement_score > config.movement_sensitivity:
-            self.idle_seconds = 0.0
-        else:
-            self.idle_seconds += 0.2  # ~0.2 s per frame at 5 fps
-
-        self.prev_smoothed = smoothed
-
-        # ── Derived outputs ──────────────────────────────────────────────────
-        keypoints = [(s[0], s[1]) for s in smoothed]
-
-        xs = [s[0] for s in smoothed]
-        ys = [s[1] for s in smoothed]
-        box = [
-            max(0, int(min(xs) * w) - 20),
-            max(0, int(min(ys) * h) - 20),
-            min(w, int(max(xs) * w) + 20),
-            min(h, int(max(ys) * h) + 20),
-        ]
-
-        # Hip centre (landmark 23 + 24) in normalised coords
-        if HIP_L < len(smoothed) and HIP_R < len(smoothed):
-            worker_pos: Optional[tuple[float, float]] = (
-                (smoothed[HIP_L][0] + smoothed[HIP_R][0]) / 2,
-                (smoothed[HIP_L][1] + smoothed[HIP_R][1]) / 2,
-            )
-        else:
-            worker_pos = None
-
-        return True, movement_score, confidence, worker_pos, self.idle_seconds, keypoints, [box]
+        zone = (row.x_min, row.y_min, row.x_max, row.y_max) if row else (0.0, 0.0, 1.0, 1.0)
+    _zone_cache[camera_id] = zone
+    return zone
 
 
 # ---------------------------------------------------------------------------
@@ -369,8 +126,16 @@ class WorkerDetector:
 detectors: dict[str, WorkerDetector] = {}
 session_managers: dict[str, "SessionManager"] = {}
 # Track whether a person was detected in the PREVIOUS frame per camera.
-# Used to detect ENTRY (False→True) and EXIT (True→False) transitions.
-_prev_has_pose: dict[str, bool] = {}
+# Key: camera_id → set of currently active track_ids from previous frame.
+_prev_track_ids: dict[str, set[int]] = {}
+# Track consecutive frames of track absence per camera to support grace period before session close.
+# Key: camera_id → dict[track_id → absent_frames_count]
+_track_absent_frames: dict[str, dict[int, int]] = {}
+TRACK_CLOSE_GRACE_FRAMES = 30  # ~6 seconds at 5 FPS
+
+# Multi-person per-track activity accumulators
+_track_activity_totals: dict[str, dict[str, float]] = {}
+_track_last_time: dict[str, datetime] = {}
 
 
 # ---------------------------------------------------------------------------
@@ -488,6 +253,8 @@ async def save_settings(payload: SettingsPayload):
     except Exception as e:
         print(f"Failed to persist settings: {e}")
         
+    # Apply correlation window immediately (no longer applied per-frame)
+    correlation_engine.set_window(config.correlation_window_seconds)
     print(f"⚙️  Settings: idle={config.idle_threshold_seconds}s  sens={config.movement_sensitivity}  conf={config.confidence_threshold}")
     return {
         "status": "saved",
@@ -520,6 +287,7 @@ async def set_zone(camera_id: str, payload: ZonePayload, db: Session = Depends(g
         row = WorkstationZone(camera_id=camera_id, x_min=payload.x_min, y_min=payload.y_min, x_max=payload.x_max, y_max=payload.y_max)
         db.add(row)
     db.commit()
+    _zone_cache.pop(camera_id, None)  # invalidate cache so next frame picks up new zone
     print(f"🗺️  Zone updated for {camera_id}: ({payload.x_min},{payload.y_min}) → ({payload.x_max},{payload.y_max})")
     return {"status": "saved", "camera_id": camera_id, "x_min": payload.x_min, "y_min": payload.y_min, "x_max": payload.x_max, "y_max": payload.y_max}
 
@@ -530,6 +298,7 @@ async def delete_zone(camera_id: str, db: Session = Depends(get_db)):
     if row:
         db.delete(row)
         db.commit()
+    _zone_cache.pop(camera_id, None)  # invalidate cache
     return {"status": "deleted", "camera_id": camera_id}
 
 
@@ -642,7 +411,6 @@ ACTIVITY_COLOUR: dict[str, str] = {
     "walking":   "#3b82f6",   # blue
     "idle":      "#f59e0b",   # amber
     "no_person": "#6b7280",   # gray
-    "using_mobile": "#ec4899",  # pink
 }
 
 
@@ -664,8 +432,10 @@ async def websocket_endpoint(websocket: WebSocket):
                 detectors[camera_id] = WorkerDetector()
             if camera_id not in session_managers:
                 session_managers[camera_id] = SessionManager(camera_id)
-            if camera_id not in _prev_has_pose:
-                _prev_has_pose[camera_id] = False
+            if camera_id not in _prev_track_ids:
+                _prev_track_ids[camera_id] = set()
+            if camera_id not in _track_absent_frames:
+                _track_absent_frames[camera_id] = {}
 
             detector = detectors[camera_id]
             sm = session_managers[camera_id]
@@ -676,108 +446,181 @@ async def websocket_endpoint(websocket: WebSocket):
             frame = cv2.imdecode(np_arr, cv2.IMREAD_COLOR)
             if frame is None:
                 continue
+            h, w, _ = frame.shape
 
-            # Run pose detection
+            # Run multi-pose detection + native YOLO tracking
             try:
-                has_pose, movement_score, confidence, worker_pos, idle_sec, keypoints, boxes = detector.update(frame)
+                poses = detector.update(frame)
             except Exception as det_err:
                 print(f"⚠️  Detector error: {det_err}")
-                has_pose, movement_score, confidence, worker_pos, idle_sec, keypoints, boxes = False, 0.0, 0.0, None, 0.0, [], []
+                poses = []
 
-            # Load workstation zone (cheap — uses in-process SessionLocal)
-            zone = _get_zone_for_camera(camera_id)
+            # Load workstation zone from cache (DB only on first access or after zone update)
+            zone = _get_zone_cached(camera_id)
 
-            # Classify activity using the rule engine (pass keypoints for phone detection)
-            activity = classifier.classify(has_pose, confidence, movement_score, worker_pos, zone, keypoints)
+            current_track_ids: set[int] = {p["track_id"] for p in poses}
+            current_track_ids_str: set[str] = {str(t) for t in current_track_ids}
+            prev_ids = _prev_track_ids[camera_id]
 
-            # Update correlation engine window from live config
-            correlation_engine.set_window(config.correlation_window_seconds)
+            # Detect newly entered tracks → notify correlation engine
+            for p in poses:
+                trk_id = p["track_id"]
+                if trk_id not in prev_ids:
+                    camera_entry = CameraEntryEvent(
+                        track_id=str(trk_id),
+                        timestamp=datetime.now(timezone.utc).replace(tzinfo=None),
+                        camera_id=camera_id,
+                        first_bounding_box=[
+                            int(round(p["box"][0] * w)),
+                            int(round(p["box"][1] * h)),
+                            int(round(p["box"][2] * w)),
+                            int(round(p["box"][3] * h)),
+                        ],
+                        first_frame_number=detector.frame_count,
+                    )
+                    correlation_engine.on_new_track(camera_entry, active_track_ids=current_track_ids_str)
 
-            # ── Identity: detect person ENTRY and EXIT transitions ───────────
-            track_id = f"mediapipe-{camera_id}"  # stable synthetic ID per camera
-            # Designed for single-person MediaPipe. When a real multi-object
-            # tracker (ByteTrack, etc.) is plugged in, replace track_id with
-            # the tracker's numeric ID — no other changes required.
-            if has_pose and not _prev_has_pose[camera_id]:
-                # Person just appeared → emit CameraEntryEvent for correlation
-                camera_entry = CameraEntryEvent(
-                    track_id=track_id,
-                    timestamp=datetime.now(timezone.utc).replace(tzinfo=None),
-                    camera_id=camera_id,
-                    first_bounding_box=boxes[0] if boxes else [],
-                    first_frame_number=detector.frame_count,
+            # Detect departed tracks → manage close grace period
+            if camera_id not in _track_absent_frames:
+                _track_absent_frames[camera_id] = {}
+            absent_map = _track_absent_frames[camera_id]
+
+            # 1. Increment absent frame counters for tracks no longer present
+            for trk_id in prev_ids - current_track_ids:
+                absent_map[trk_id] = absent_map.get(trk_id, 0) + 1
+
+            # 2. Reset absent counter if a track is present in this frame
+            for trk_id in current_track_ids:
+                absent_map.pop(trk_id, None)
+
+            # 3. Close sessions only if grace period has expired
+            for trk_id, frames_gone in list(absent_map.items()):
+                if frames_gone >= TRACK_CLOSE_GRACE_FRAMES:
+                    absent_map.pop(trk_id, None)
+                    str_trk_id = str(trk_id)
+                    totals = _track_activity_totals.get(str_trk_id)
+                    closed = worker_session_manager.close_session(str_trk_id, totals)
+                    if closed:
+                        print(f"[Identity] 🚪 Session closed (grace expired) for employee={closed.employee_id} track={trk_id}")
+                    _track_activity_totals.pop(str_trk_id, None)
+                    _track_last_time.pop(str_trk_id, None)
+
+            _prev_track_ids[camera_id] = current_track_ids
+
+            # Build per-track detection list for the WS response
+            detections_out = []
+            now_time = datetime.now(timezone.utc).replace(tzinfo=None)
+            for p in poses:
+                trk_id = p["track_id"]
+                str_trk_id = str(trk_id)
+                
+                # Check confidence threshold to decide whether to send skeleton
+                keypoints_to_send = p["keypoints"] if p["confidence"] >= config.confidence_threshold else []
+
+                activity = classifier.classify(
+                    has_pose=True,
+                    confidence=p["confidence"],
+                    movement_score=p["movement_score"],
+                    velocity=p["velocity"],
+                    worker_pos=p["worker_pos"],
+                    zone=zone,
+                    keypoints=p["keypoints"],
                 )
-                correlation_engine.on_new_track(camera_entry)
 
-            elif not has_pose and _prev_has_pose[camera_id]:
-                # Person just disappeared → close their WorkerSession
-                closed = worker_session_manager.close_session(track_id)
-                if closed:
-                    print(f"[Identity] 🚪 Session closed for employee={closed.employee_id} track={track_id}")
+                idle_sec = p["idle_seconds"]
 
-            _prev_has_pose[camera_id] = has_pose
+                # Idle alert per track
+                if activity == "idle" and idle_sec >= config.idle_threshold_seconds and not detector.alert_triggered:
+                    with SessionLocal() as db:
+                        db.add(Alert(
+                            message=f"Worker (track {trk_id}) idle for {round(idle_sec)}s on {camera_id}",
+                            resolved=False,
+                        ))
+                        db.commit()
+                    detector.alert_triggered = True
+                elif activity in ("working", "walking", "no_person"):
+                    detector.alert_triggered = False
 
-            # Resolve identity for WS response (None if not yet matched)
-            worker_session = worker_session_manager.get_by_track(track_id)
+                # Resolve identity for this track
+                worker_session = worker_session_manager.get_by_track(str(trk_id))
 
-            # Update session engine
-            sm.process(activity)
+                detections_out.append({
+                    "track_id":        trk_id,
+                    "activity":        activity,
+                    "activity_colour": ACTIVITY_COLOUR.get(activity, "#6b7280"),
+                    "movement_score":  round(p["movement_score"], 5),
+                    "confidence":      round(p["confidence"], 3),
+                    "idle_seconds":    round(idle_sec, 1),
+                    "worker_position": list(p["worker_pos"]) if p["worker_pos"] else None,
+                    "keypoints":       keypoints_to_send,
+                    "box":             [
+                        round(float(p["box"][0]), 5),
+                        round(float(p["box"][1]), 5),
+                        round(float(p["box"][2]), 5),
+                        round(float(p["box"][3]), 5)
+                    ],
+                    "identity": {
+                        "employee_id":       worker_session.employee_id if worker_session else None,
+                        "session_id":        worker_session.session_id if worker_session else None,
+                        "correlation_delay": worker_session.correlation_delay_seconds if worker_session else None,
+                    },
+                })
+                
+                # Accumulate per-track activity time
+                if str_trk_id not in _track_activity_totals:
+                    _track_activity_totals[str_trk_id] = {"working": 0.0, "walking": 0.0, "idle": 0.0, "no_person": 0.0}
+                
+                if str_trk_id in _track_last_time:
+                    dt = (now_time - _track_last_time[str_trk_id]).total_seconds()
+                    if dt < 2.0:  # Cap at 2s to prevent huge spikes if frame drops
+                        _track_activity_totals[str_trk_id][activity] += dt
+                
+                _track_last_time[str_trk_id] = now_time
 
-            # Persist ActivityLog snapshot every 25 frames (~5 s at 5 fps)
-            if detector.frame_count % 25 == 0:
-                # Map back to a legacy "status" string for backwards compat
+            # Drive legacy SessionManager with the primary (first) person
+            if detections_out:
+                sm.process(detections_out[0]["activity"])
+            else:
+                sm.process("no_person")
+
+            # ActivityLog snapshot every 25 frames
+            if detector.frame_count % 25 == 0 and detections_out:
+                p = detections_out[0]
                 legacy_status = {
                     "working":      "active",
                     "walking":      "active",
-                    "using_mobile": "idle",     # treat phone as idle for legacy compat
                     "idle":         "idle",
                     "no_person":    "no_person",
-                }.get(activity, "unknown")
-
+                }.get(p["activity"], "unknown")
                 with SessionLocal() as db:
                     db.add(ActivityLog(
                         status=legacy_status,
-                        activity=activity,
-                        idle_seconds=idle_sec,
-                        movement_score=round(movement_score, 5),
-                        confidence=round(confidence, 3),
+                        activity=p["activity"],
+                        idle_seconds=p["idle_seconds"],
+                        movement_score=p["movement_score"],
+                        confidence=p["confidence"],
                     ))
                     db.commit()
-
-            # Idle alert (fires when worker has been idle/unknown long enough)
-            if activity == "idle" and idle_sec >= config.idle_threshold_seconds and not detector.alert_triggered:
-                with SessionLocal() as db:
-                    db.add(Alert(
-                        message=f"Worker idle for {round(idle_sec)}s on {camera_id}",
-                        resolved=False,
-                    ))
-                    db.commit()
-                detector.alert_triggered = True
-            elif activity in ("working", "walking", "no_person"):
-                detector.alert_triggered = False
 
             response = {
                 "timestamp": datetime.utcnow().isoformat(),
-                # Legacy field — kept so existing frontend still works
-                "status": activity,
-                # New rich fields
-                "activity": activity,
-                "activity_colour": ACTIVITY_COLOUR.get(activity, "#6b7280"),
-                "movement_score": round(movement_score, 5),
-                "confidence": round(confidence, 3),
-                "idle_seconds": round(idle_sec, 1),
+                # Legacy single-person fields (still valid for 1-person scenes)
+                "status":   detections_out[0]["activity"] if detections_out else "no_person",
+                "activity": detections_out[0]["activity"] if detections_out else "no_person",
+                "activity_colour": detections_out[0]["activity_colour"] if detections_out else "#6b7280",
+                "movement_score":  detections_out[0]["movement_score"] if detections_out else 0.0,
+                "confidence":      detections_out[0]["confidence"] if detections_out else 0.0,
+                "idle_seconds":    detections_out[0]["idle_seconds"] if detections_out else 0.0,
                 "idle_threshold_seconds": config.idle_threshold_seconds,
-                "worker_position": list(worker_pos) if worker_pos else None,
                 "zone": list(zone),
-                "keypoints": keypoints,
-                "boxes": boxes,
                 "session": sm.current_session_info(),
-                # Identity — present once employee has been matched to this track
-                "identity": {
-                    "employee_id": worker_session.employee_id if worker_session else None,
-                    "session_id": worker_session.session_id if worker_session else None,
-                    "correlation_delay": worker_session.correlation_delay_seconds if worker_session else None,
-                } if worker_session or has_pose else None,
+                "worker_position": detections_out[0]["worker_position"] if detections_out else None,
+                "keypoints":       detections_out[0]["keypoints"] if detections_out else [],
+                "boxes":           [d["box"] for d in detections_out],
+                "identity":        detections_out[0]["identity"] if detections_out else None,
+                # Multi-person: full tracked list
+                "detections":      detections_out,
+                "detection_count": len(detections_out),
             }
             await websocket.send_text(json.dumps(response))
 
@@ -785,7 +628,36 @@ async def websocket_endpoint(websocket: WebSocket):
         print("❌ WebSocket disconnected")
         if camera_id and camera_id in session_managers:
             session_managers[camera_id].close_on_disconnect()
+        if camera_id:
+            for s in worker_session_manager.get_all_active():
+                if s.camera_id == camera_id:
+                    str_trk_id = s.current_track_id
+                    totals = _track_activity_totals.get(str_trk_id)
+                    closed = worker_session_manager.close_session(str_trk_id, totals)
+                    if closed:
+                        print(f"[Identity] 🚪 Session closed (disconnect) for employee={closed.employee_id} track={str_trk_id}")
+                    _track_activity_totals.pop(str_trk_id, None)
+                    _track_last_time.pop(str_trk_id, None)
+            if camera_id in _prev_track_ids:
+                _prev_track_ids[camera_id] = set()
+            if camera_id in _track_absent_frames:
+                _track_absent_frames[camera_id] = {}
+
     except Exception as e:
         print(f"❌ Fatal WS error: {e}")
         if camera_id and camera_id in session_managers:
             session_managers[camera_id].close_on_disconnect()
+        if camera_id:
+            for s in worker_session_manager.get_all_active():
+                if s.camera_id == camera_id:
+                    str_trk_id = s.current_track_id
+                    totals = _track_activity_totals.get(str_trk_id)
+                    closed = worker_session_manager.close_session(str_trk_id, totals)
+                    if closed:
+                        print(f"[Identity] 🚪 Session closed (error) for employee={closed.employee_id} track={str_trk_id}")
+                    _track_activity_totals.pop(str_trk_id, None)
+                    _track_last_time.pop(str_trk_id, None)
+            if camera_id in _prev_track_ids:
+                _prev_track_ids[camera_id] = set()
+            if camera_id in _track_absent_frames:
+                _track_absent_frames[camera_id] = {}
