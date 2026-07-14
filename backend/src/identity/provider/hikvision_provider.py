@@ -75,6 +75,7 @@ class HikvisionProvider(IdentityEventProvider):
             return
 
         self.is_running = True
+        self.door_statuses = {}
         for door_cfg in doors:
             ip = door_cfg.get("ip")
             name = door_cfg.get("name", f"Door-{ip}")

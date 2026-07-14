@@ -25,6 +25,7 @@ from .correlation import correlation_engine
 from .session_manager import worker_session_manager
 from ..db.database import get_db
 from ..db.models import EmployeeDailySummary
+from ..config import env_settings
 
 router = APIRouter(prefix="/api/identity", tags=["identity"])
 
@@ -243,4 +244,51 @@ async def get_doors():
             for ip, info in _provider.door_statuses.items()
         ]
     return []
+
+
+import os
+import json
+from pydantic import BaseModel, Field
+from typing import List
+
+class DoorConfigItem(BaseModel):
+    ip: str
+    name: str
+    username: str = "admin"
+    password: str = ""
+
+@router.get("/doors/config", summary="Get doors configurations")
+async def get_doors_config():
+    """
+    Returns the list of configured doors (including credentials).
+    """
+    return env_settings.hikvision_doors
+
+@router.post("/doors/config", summary="Save doors configurations")
+async def save_doors_config(payload: List[DoorConfigItem]):
+    """
+    Saves a new list of doors configurations to doors.json, reloads the environment configuration,
+    and restarts the provider streams to apply the changes immediately.
+    """
+    doors_list = [item.dict() for item in payload]
+    doors_file = os.path.join(os.path.dirname(__file__), "..", "..", "doors.json")
+    try:
+        with open(doors_file, "w", encoding="utf-8") as f:
+            json.dump(doors_list, f, indent=2)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to write doors.json: {e}")
+
+    # Reload the configuration in memory
+    env_settings.reload_doors()
+
+    # Restart streams to apply changes
+    if hasattr(_provider, "stop_streams") and hasattr(_provider, "start_streams"):
+        try:
+            _provider.stop_streams()
+            _provider.start_streams()
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"Error restarting streams: {e}")
+
+    return {"status": "success", "doors": env_settings.hikvision_doors}
+
 

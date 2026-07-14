@@ -38,11 +38,24 @@ def _load_env_file(filepath: str) -> Dict[str, str]:
 
 class EnvSettings:
     def __init__(self):
+        self.reload_doors()
+
+    def reload_doors(self):
         env_path = os.path.join(os.path.dirname(__file__), "..", ".env")
         env_vars = _load_env_file(env_path)
 
         self.hikvision_username = env_vars.get("HIKVISION_USERNAME") or os.environ.get("HIKVISION_USERNAME") or "admin"
         self.hikvision_password = env_vars.get("HIKVISION_PASSWORD") or os.environ.get("HIKVISION_PASSWORD") or ""
+
+        # First, try to load from backend/doors.json
+        doors_file = os.path.join(os.path.dirname(__file__), "..", "doors.json")
+        if os.path.exists(doors_file):
+            try:
+                with open(doors_file, "r", encoding="utf-8") as f:
+                    self.hikvision_doors = json.load(f)
+                return
+            except Exception as e:
+                print(f"[Config] Error reading doors.json: {e}")
 
         doors_raw = env_vars.get("HIKVISION_DOORS") or os.environ.get("HIKVISION_DOORS") or ""
         self.hikvision_doors = []
