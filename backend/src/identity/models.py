@@ -29,6 +29,7 @@ class IdentityEventCreate(BaseModel):
     employee_id: str = Field(alias="employeeId")
     entry_gate: str = Field(alias="entryGate")
     timestamp: Optional[datetime] = Field(default=None)
+    event_type: Literal["ENTRY", "EXIT"] = Field(default="ENTRY", alias="eventType")
 
 
 # ---------------------------------------------------------------------------

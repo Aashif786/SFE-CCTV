@@ -53,15 +53,26 @@ class HikvisionProvider(IdentityEventProvider):
         """
         from ..models import IdentityEvent
         import uuid
+        is_exit = payload.event_type == "EXIT"
+        corr_status = "MATCHED" if is_exit else "WAITING_FOR_TRACK"
+        
         event = IdentityEvent(
             event_id=str(uuid.uuid4()),
-            employee_id=payload.employeeId,
-            event_type="ENTRY",
-            timestamp=payload.timestamp or datetime.now(timezone.utc),
-            entry_gate=payload.entryGate,
+            employee_id=payload.employee_id,
+            event_type=payload.event_type,
+            timestamp=payload.timestamp or datetime.now(timezone.utc).replace(tzinfo=None),
+            entry_gate=payload.entry_gate,
             provider=self.PROVIDER_NAME,
-            correlation_status="WAITING_FOR_TRACK"
+            correlation_status=corr_status
         )
+        
+        if is_exit:
+            try:
+                from ..session_manager import worker_session_manager
+                worker_session_manager.close_sessions_for_employee(payload.employee_id)
+            except Exception as e:
+                logger.error(f"Error closing sessions on simulated EXIT: {e}")
+                
         return event
 
     def start_streams(self):
