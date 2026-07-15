@@ -31,6 +31,12 @@ from .identity.session_manager import worker_session_manager
 from .identity.models import CameraEntryEvent
 
 # ---------------------------------------------------------------------------
+# Camera Management module
+# ---------------------------------------------------------------------------
+from .cameras.api import router as cameras_router, seed_cameras
+from .cameras.stream_manager import stream_manager
+
+# ---------------------------------------------------------------------------
 # Create / migrate tables on startup (includes new identity_events, worker_sessions)
 # ---------------------------------------------------------------------------
 Base.metadata.create_all(bind=engine)
@@ -67,6 +73,22 @@ app.add_middleware(
 
 # Register the identity management router
 app.include_router(identity_router)
+
+# Register the camera management router
+app.include_router(cameras_router)
+
+
+@app.on_event("startup")
+def startup_cameras():
+    """Seed demo cameras on first run, then start all enabled streams."""
+    seed_cameras()
+    stream_manager.start_all_enabled()
+
+
+@app.on_event("shutdown")
+def shutdown_cameras():
+    """Stop all camera streams on server shutdown."""
+    stream_manager.stop_all()
 
 from fastapi.responses import FileResponse
 # Path to test_clips directory

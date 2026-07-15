@@ -10,3 +10,4 @@ python-multipart
 websockets
 opencv-python-headless
 numpy
+cryptography

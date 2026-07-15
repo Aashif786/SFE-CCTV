@@ -47,6 +47,14 @@ class EnvSettings:
         self.hikvision_username = env_vars.get("HIKVISION_USERNAME") or os.environ.get("HIKVISION_USERNAME") or "admin"
         self.hikvision_password = env_vars.get("HIKVISION_PASSWORD") or os.environ.get("HIKVISION_PASSWORD") or ""
 
+        # Camera streaming configuration
+        self.default_rtsp_port = int(env_vars.get("DEFAULT_RTSP_PORT") or os.environ.get("DEFAULT_RTSP_PORT", "554"))
+        self.stream_reconnect_interval = int(env_vars.get("STREAM_RECONNECT_INTERVAL") or os.environ.get("STREAM_RECONNECT_INTERVAL", "5"))
+        self.stream_timeout = int(env_vars.get("STREAM_TIMEOUT") or os.environ.get("STREAM_TIMEOUT", "30"))
+        self.frame_buffer_size = int(env_vars.get("FRAME_BUFFER_SIZE") or os.environ.get("FRAME_BUFFER_SIZE", "5"))
+        self.max_cameras = int(env_vars.get("MAX_CAMERAS") or os.environ.get("MAX_CAMERAS", "50"))
+        self.default_stream_transport = env_vars.get("DEFAULT_STREAM_TRANSPORT") or os.environ.get("DEFAULT_STREAM_TRANSPORT", "tcp")
+
         # First, try to load from backend/doors.json
         doors_file = os.path.join(os.path.dirname(__file__), "..", "doors.json")
         if os.path.exists(doors_file):

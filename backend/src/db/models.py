@@ -2,6 +2,39 @@ from sqlalchemy import Column, Integer, String, Float, DateTime, Boolean, Unique
 from datetime import datetime
 from .database import Base
 
+
+class Camera(Base):
+    """
+    Camera configuration model.
+
+    Each row represents a physical RTSP camera. Credentials are stored
+    encrypted (Fernet) — the plain RTSP URL is built dynamically on the
+    backend only.  Location fields (building, floor, zone, door_name)
+    support future RFID-to-camera correlation.
+    """
+    __tablename__ = "cameras"
+
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String, nullable=False)
+    description = Column(String, nullable=True)
+    location = Column(String, nullable=True)
+    building = Column(String, nullable=True)
+    floor = Column(String, nullable=True)
+    zone = Column(String, nullable=True)
+    door_name = Column(String, nullable=True)
+    ip_address = Column(String, nullable=False)
+    rtsp_port = Column(Integer, default=554)
+    stream_path = Column(String, default="/Streaming/Channels/101")
+    username = Column(String, nullable=False)
+    encrypted_password = Column(String, nullable=False)
+    camera_brand = Column(String, nullable=True, default="Hikvision")
+    stream_type = Column(String, default="Main")          # Main / Sub
+    enabled = Column(Boolean, default=True)
+    recording_enabled = Column(Boolean, default=False)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
 class ActivityLog(Base):
     __tablename__ = "activity_logs"
 

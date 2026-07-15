@@ -4,7 +4,8 @@ import { useState } from 'react';
 import Link from 'next/link';
 import {
   LayoutDashboard, History, Settings, Bell,
-  Fingerprint, BarChart2, Menu, UserCheck, Sun, Moon, DoorClosed, Wifi
+  Fingerprint, BarChart2, Menu, UserCheck, Sun, Moon, DoorClosed, Wifi,
+  Video, SlidersHorizontal
 } from 'lucide-react';
 import { usePathname } from 'next/navigation';
 import { useTheme } from '@/context/ThemeContext';
@@ -15,14 +16,16 @@ export default function SidebarLayout({ children }: { children: React.ReactNode 
   const { theme, toggleTheme } = useTheme();
 
   const navLinks = [
-    { href: "/",              icon: LayoutDashboard, label: "Dashboard" },
-    { href: "/live-checkins", icon: UserCheck,       label: "Live Check-ins" },
-    { href: "/doors",         icon: DoorClosed,      label: "Door Configs" },
-    { href: "/history",       icon: History,         label: "History" },
-    { href: "/alerts",        icon: Bell,            label: "Alerts" },
-    { href: "/sessions",      icon: Wifi,            label: "Session Monitor" },
-    { href: "/summary",       icon: BarChart2,       label: "Activity Summary" },
-    { href: "/settings",      icon: Settings,        label: "Settings" },
+    { href: "/",                    icon: LayoutDashboard,    label: "Dashboard" },
+    { href: "/live-cameras",        icon: Video,              label: "Live Cameras" },
+    { href: "/camera-management",   icon: SlidersHorizontal,  label: "Camera Management" },
+    { href: "/live-checkins",       icon: UserCheck,          label: "Live Check-ins" },
+    { href: "/doors",               icon: DoorClosed,         label: "Door Configs" },
+    { href: "/history",             icon: History,            label: "History" },
+    { href: "/alerts",              icon: Bell,               label: "Alerts" },
+    { href: "/sessions",            icon: Wifi,               label: "Session Monitor" },
+    { href: "/summary",             icon: BarChart2,          label: "Activity Summary" },
+    { href: "/settings",            icon: Settings,           label: "Settings" },
   ];
 
   return (
