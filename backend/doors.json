@@ -1,0 +1,32 @@
+[
+  {
+    "ip": "192.168.1.231",
+    "name": "main Door",
+    "username": "admin",
+    "password": ""
+  },
+  {
+    "ip": "192.168.1.232",
+    "name": "Door 01 out",
+    "username": "admin",
+    "password": ""
+  },
+  {
+    "ip": "192.168.1.233",
+    "name": "Door 01 IN",
+    "username": "admin",
+    "password": ""
+  },
+  {
+    "ip": "192.168.1.234",
+    "name": "Door Exit IN",
+    "username": "admin",
+    "password": ""
+  },
+  {
+    "ip": "192.168.1.235",
+    "name": "Door Exit OUT",
+    "username": "admin",
+    "password": ""
+  }
+]

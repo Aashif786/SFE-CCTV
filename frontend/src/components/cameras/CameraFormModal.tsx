@@ -24,6 +24,7 @@ interface CameraFormModalProps {
   onClose: () => void;
   onSaved: () => void;
   camera?: CameraInfo | null;     // null = create mode, object = edit mode
+  initialValues?: Partial<CameraFormData> | null; // prefilled form values for create mode
 }
 
 // ---------------------------------------------------------------------------
@@ -61,6 +62,7 @@ export default function CameraFormModal({
   onClose,
   onSaved,
   camera,
+  initialValues,
 }: CameraFormModalProps) {
   const isEdit = !!camera;
   const { createCamera, updateCamera, testConnection } = useCameraActions();
@@ -72,7 +74,7 @@ export default function CameraFormModal({
   const [error, setError] = useState<string | null>(null);
   const [showPassword, setShowPassword] = useState(false);
 
-  // Populate form for edit mode
+  // Populate form for edit mode or create mode with initial values
   useEffect(() => {
     if (isOpen) {
       if (camera) {
@@ -94,6 +96,11 @@ export default function CameraFormModal({
           enabled: camera.enabled,
           recording_enabled: camera.recording_enabled,
         });
+      } else if (initialValues) {
+        setForm({
+          ...EMPTY_FORM,
+          ...initialValues,
+        });
       } else {
         setForm(EMPTY_FORM);
       }
@@ -101,7 +108,7 @@ export default function CameraFormModal({
       setError(null);
       setShowPassword(false);
     }
-  }, [isOpen, camera]);
+  }, [isOpen, camera, initialValues]);
 
   // ── Handlers ──────────────────────────────────────────────────────────
 

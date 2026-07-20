@@ -5,7 +5,7 @@ import Link from 'next/link';
 import {
   LayoutDashboard, History, Settings, Bell,
   Fingerprint, BarChart2, Menu, UserCheck, Sun, Moon, DoorClosed, Wifi,
-  Video, SlidersHorizontal
+  Video, SlidersHorizontal, Radar
 } from 'lucide-react';
 import { usePathname } from 'next/navigation';
 import { useTheme } from '@/context/ThemeContext';
@@ -26,6 +26,10 @@ export default function SidebarLayout({ children }: { children: React.ReactNode 
     { href: "/sessions",            icon: Wifi,               label: "Session Monitor" },
     { href: "/summary",             icon: BarChart2,          label: "Activity Summary" },
     { href: "/settings",            icon: Settings,           label: "Settings" },
+  ];
+
+  const miscLinks = [
+    { href: "/tools",               icon: Radar,              label: "Network Scanner" },
   ];
 
   return (
@@ -73,6 +77,30 @@ export default function SidebarLayout({ children }: { children: React.ReactNode 
               </Link>
             );
           })}
+
+          {/* Miscellaneous Section */}
+          <div className="pt-4 mt-3 border-t border-[hsl(var(--border))]">
+            <p className="px-4 pb-2 text-[10px] font-bold uppercase tracking-widest text-[hsl(var(--text-muted))]">
+              Miscellaneous
+            </p>
+            {miscLinks.map(({ href, icon: Icon, label }) => {
+              const isActive = pathname === href;
+              return (
+                <Link
+                  key={href}
+                  href={href}
+                  className={`flex items-center gap-3 px-4 py-3 rounded-lg transition-all duration-150 ${
+                    isActive
+                      ? 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 font-semibold border border-emerald-500/20'
+                      : 'text-[hsl(var(--text-secondary))] hover:text-[hsl(var(--text-primary))] hover:bg-[hsl(var(--bg-table-head))]'
+                  }`}
+                >
+                  <Icon className="w-5 h-5 shrink-0" />
+                  <span className="font-medium">{label}</span>
+                </Link>
+              );
+            })}
+          </div>
         </nav>
 
         {/* Footer Status */}

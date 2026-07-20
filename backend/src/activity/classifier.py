@@ -30,12 +30,13 @@ class ActivityClassifier:
         inside = self._inside_zone(worker_pos, zone) if worker_pos else True
 
         # Rule 2 — active outside workstation or moving significantly (walking)
-        if has_movement and (not inside or velocity > 0.05):
+        velocity_threshold = getattr(config, "classifier_velocity_threshold", 0.05)
+        if has_movement and (not inside or velocity > velocity_threshold):
             return "walking"
 
         # Rule 3 — active inside workstation (working)
         if has_movement and inside:
-            return "walking"
+            return "working"
 
         # Rule 4 — standing / sitting still (idle)
         return "idle"

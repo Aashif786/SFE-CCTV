@@ -39,9 +39,11 @@ class WorkerDetector:
     }
 
     def __init__(self):
-        self.model = YOLO("yolo11m-pose.pt")
         self.device = "cuda" if torch.cuda.is_available() else "cpu"
+        target_model = getattr(config, "yolo_model", "yolo11m-pose.pt")
+        self.model = YOLO(target_model)
         self.model.to(self.device)
+        self.model_name = target_model
         
         # Per-track EMA smoothing state — keyed by track_id
         self.smoothed: dict[int, list[list[float]]] = {}
@@ -50,7 +52,7 @@ class WorkerDetector:
         self.last_seen_frame: dict[int, int] = {} # track_id -> frame_number
         self.prev_worker_pos: dict[int, tuple[float, float]] = {}
         self.smoothed_velocities: dict[int, float] = {}
-        self.EMA_ALPHA: float = 0.80  # higher = less display lag on moving workers
+        self.EMA_ALPHA: float = getattr(config, "ema_alpha", 0.80)
         self.frame_count: int = 0
         self.alert_triggered: bool = False
 
@@ -65,6 +67,17 @@ class WorkerDetector:
         self.frame_count += 1
         h, w, _ = frame.shape
 
+        # Dynamic reload YOLO model
+        target_model = getattr(config, "yolo_model", "yolo11m-pose.pt")
+        if not hasattr(self, "model_name") or self.model_name != target_model:
+            print(f"[WorkerDetector] Reloading YOLO model: {getattr(self, 'model_name', 'None')} -> {target_model}")
+            self.model = YOLO(target_model)
+            self.model.to(self.device)
+            self.model_name = target_model
+
+        # Dynamic EMA_ALPHA
+        self.EMA_ALPHA = getattr(config, "ema_alpha", 0.80)
+
         # Use YOLO's built-in robust tracking (BoT-SORT)
         # imgsz=960 gives ~35% lower inference latency vs 1280 with minimal accuracy loss at CCTV distances.
         tracker_config = os.path.join(os.path.dirname(__file__), "..", "..", "custom_tracker.yaml")
@@ -72,9 +85,10 @@ class WorkerDetector:
             frame,
             persist=True,
             verbose=False,
-            conf=0.30,
-            iou=0.90,
-            imgsz=960,
+            device=self.device,
+            conf=getattr(config, "yolo_conf", 0.30),
+            iou=getattr(config, "yolo_iou", 0.90),
+            imgsz=getattr(config, "yolo_imgsz", 960),
             tracker=tracker_config
         )
 
@@ -102,14 +116,14 @@ class WorkerDetector:
             # ── Convert YOLO to MediaPipe 33-point format with keypoint confidence thresholding ──
             raw = [[0.0, 0.0] for _ in range(33)]
             for yolo_idx, mp_idx in self.YOLO_TO_MP.items():
-                if conf[yolo_idx] >= 0.35:
+                if conf[yolo_idx] >= getattr(config, "yolo_conf", 0.30):
                     raw[mp_idx] = [float(xyn[yolo_idx][0]), float(xyn[yolo_idx][1])]
                 else:
                     raw[mp_idx] = [0.0, 0.0]
             
             # Map fingers to wrist for phone detection compatibility
-            l_wrist_valid = (conf[9] >= 0.35)
-            r_wrist_valid = (conf[10] >= 0.35)
+            l_wrist_valid = (conf[9] >= getattr(config, "yolo_conf", 0.30))
+            r_wrist_valid = (conf[10] >= getattr(config, "yolo_conf", 0.30))
 
             for f_idx in [17, 19, 21]: # L pinky, index, thumb -> L wrist
                 if l_wrist_valid:

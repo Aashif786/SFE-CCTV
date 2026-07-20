@@ -157,6 +157,23 @@ class StreamManager:
             self._streams.clear()
         print("[StreamManager] ⏹ All streams stopped")
 
+    def restart_all_active(self) -> None:
+        """Restarts all active streams to apply new global settings immediately."""
+        with self._global_lock:
+            active_ids = list(self._streams.keys())
+        
+        if not active_ids:
+            return
+
+        print(f"[StreamManager] Restarting {len(active_ids)} active stream(s) to apply updated configurations...")
+        for cid in active_ids:
+            cs = self._streams.get(cid)
+            if cs:
+                rtsp_url = cs.rtsp_url
+                self.stop_stream(cid)
+                time.sleep(0.1)
+                self.start_stream(cid, rtsp_url)
+
     # -- frame access --------------------------------------------------------
 
     def get_frame(self, camera_id: int) -> Optional[np.ndarray]:
@@ -231,11 +248,11 @@ class StreamManager:
 
     def _grab_loop(self, cs: CameraStream) -> None:
         """Background thread: open RTSP, grab frames, auto-reconnect."""
-        reconnect_interval = getattr(env_settings, "stream_reconnect_interval", 5)
-        timeout = getattr(env_settings, "stream_timeout", 30)
-        transport = getattr(env_settings, "default_stream_transport", "tcp")
-
         while not cs._stop_event.is_set():
+            reconnect_interval = getattr(env_settings, "stream_reconnect_interval", 5)
+            timeout = getattr(env_settings, "stream_timeout", 30)
+            transport = getattr(env_settings, "default_stream_transport", "tcp")
+            
             cap = None
             try:
                 cs.state = StreamState.STARTING if cs.reconnect_count == 0 else StreamState.RECONNECTING

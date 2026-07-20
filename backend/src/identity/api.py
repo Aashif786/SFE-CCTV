@@ -25,23 +25,66 @@ from .correlation import correlation_engine
 from .session_manager import worker_session_manager
 from ..db.database import get_db
 from ..db.models import EmployeeDailySummary
-from ..config import env_settings
+from ..config import env_settings, config
 
 router = APIRouter(prefix="/api/identity", tags=["identity"])
 
-# Active provider — swap this line to use RFID, NFC, MQTT, etc.
-# _provider = RESTSimulatorProvider()
-_provider = HikvisionProvider(callback_engine=correlation_engine, auto_start=False)
+class DynamicProviderProxy:
+    def __init__(self):
+        self._current_provider = None
+        self._provider_name = None
+        self._is_started = False
+        self.reload_provider()
+
+    def reload_provider(self):
+        target_name = getattr(config, "identity_provider", "REST_SIMULATOR")
+        if self._provider_name == target_name and self._current_provider is not None:
+            return
+
+        print(f"[DynamicProviderProxy] Swapping provider: {self._provider_name} -> {target_name}")
+
+        was_started = self._is_started
+        if was_started:
+            self.stop_streams()
+
+        self._provider_name = target_name
+        if target_name == "HIKVISION_ISAPI":
+            self._current_provider = HikvisionProvider(callback_engine=correlation_engine, auto_start=False)
+        else:
+            self._current_provider = RESTSimulatorProvider()
+
+        if was_started:
+            self.start_streams()
+
+    @property
+    def door_statuses(self):
+        if hasattr(self._current_provider, "door_statuses"):
+            return self._current_provider.door_statuses
+        return {}
+
+    def start_streams(self):
+        self._is_started = True
+        if hasattr(self._current_provider, "start_streams"):
+            self._current_provider.start_streams()
+
+    def stop_streams(self):
+        self._is_started = False
+        if hasattr(self._current_provider, "stop_streams"):
+            self._current_provider.stop_streams()
+
+    def receive_event(self, payload):
+        return self._current_provider.receive_event(payload)
+
+_provider = DynamicProviderProxy()
 
 @router.on_event("startup")
 def startup_provider():
-    if hasattr(_provider, "start_streams"):
-        _provider.start_streams()
+    _provider.start_streams()
 
 @router.on_event("shutdown")
 def shutdown_provider():
-    if hasattr(_provider, "stop_streams"):
-        _provider.stop_streams()
+    _provider.stop_streams()
+
 
 
 
@@ -269,6 +312,7 @@ async def save_doors_config(payload: List[DoorConfigItem]):
     """
     Saves a new list of doors configurations to doors.json, reloads the environment configuration,
     and restarts the provider streams to apply the changes immediately.
+    Automatically switches to HIKVISION_ISAPI provider when doors are configured.
     """
     doors_list = [item.dict() for item in payload]
     doors_file = os.path.join(os.path.dirname(__file__), "..", "..", "doors.json")
@@ -281,13 +325,31 @@ async def save_doors_config(payload: List[DoorConfigItem]):
     # Reload the configuration in memory
     env_settings.reload_doors()
 
-    # Restart streams to apply changes
-    if hasattr(_provider, "stop_streams") and hasattr(_provider, "start_streams"):
+    # Auto-switch provider to HIKVISION_ISAPI when doors are configured,
+    # and back to REST_SIMULATOR when all doors are removed.
+    target_provider = "HIKVISION_ISAPI" if len(doors_list) > 0 else "REST_SIMULATOR"
+    if config.identity_provider != target_provider:
+        config.identity_provider = target_provider
+        # Persist the provider change to settings.json
+        settings_file = os.path.join(os.path.dirname(__file__), "..", "..", "settings.json")
         try:
-            _provider.stop_streams()
-            _provider.start_streams()
+            existing = {}
+            if os.path.exists(settings_file):
+                with open(settings_file, "r", encoding="utf-8") as f:
+                    existing = json.load(f)
+            existing["identity_provider"] = target_provider
+            with open(settings_file, "w", encoding="utf-8") as f:
+                json.dump(existing, f, indent=4)
         except Exception as e:
-            raise HTTPException(status_code=500, detail=f"Error restarting streams: {e}")
+            print(f"[doors/config] Warning: failed to persist identity_provider to settings.json: {e}")
+
+    # Reload provider (swaps to Hikvision if needed) and restart streams
+    try:
+        _provider.reload_provider()
+        _provider.stop_streams()
+        _provider.start_streams()
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error restarting streams: {e}")
 
     return {"status": "success", "doors": env_settings.hikvision_doors}
 

@@ -1,0 +1,25 @@
+# CALVISION Backend Pinned Python Dependencies
+# Locked for reproducible Nix & Docker builds
+
+fastapi==0.138.2
+uvicorn==0.49.0
+pydantic==2.13.4
+pydantic-settings==2.14.2
+sqlalchemy==2.0.51
+alembic==1.18.5
+pg8000==1.31.5
+ultralytics==8.4.84
+python-multipart==0.0.32
+websockets==16.0
+opencv-python-headless==4.13.0.92
+numpy==2.5.0
+cryptography==49.0.0
+torch==2.12.1
+torchvision==0.27.1
+scipy==1.18.0
+filterpy==1.4.5
+lapx==0.9.4
+pillow==12.2.0
+requests==2.34.2
+pyyaml==6.0.3
+python-dotenv==1.2.2
