@@ -37,14 +37,20 @@ if (-not (Get-Command "docker" -ErrorAction SilentlyContinue)) {
     Write-Host "⚠️  Warning: Docker not found. Assuming database is managed externally." -ForegroundColor Yellow
 } else {
     Write-Host "🐳 Starting database..." -ForegroundColor Yellow
-    if (Test-Path "docker-compose.yml") {
-        docker compose up -d db
-    } elseif (Test-Path "backend\docker-compose.yml") {
-        Push-Location backend
-        try {
+    $ExistingContainer = docker ps -a --format '{{.Names}}' | Select-String -Pattern "^worker_monitor_db$"
+    if ($ExistingContainer) {
+        Write-Host "🐳 Starting existing worker_monitor_db container..." -ForegroundColor Yellow
+        docker start worker_monitor_db
+    } else {
+        if (Test-Path "docker-compose.yml") {
             docker compose up -d db
-        } finally {
-            Pop-Location
+        } elseif (Test-Path "backend\docker-compose.yml") {
+            Push-Location backend
+            try {
+                docker compose up -d db
+            } finally {
+                Pop-Location
+            }
         }
     }
 }

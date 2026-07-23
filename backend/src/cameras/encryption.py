@@ -16,22 +16,23 @@ import base64
 from cryptography.fernet import Fernet
 
 # ---------------------------------------------------------------------------
-# Resolve the .env file path (backend/.env)
+# Resolve the .env file path (backend/.env and root .env)
 # ---------------------------------------------------------------------------
 _ENV_PATH = os.path.join(os.path.dirname(__file__), "..", "..", ".env")
+_ROOT_ENV_PATH = os.path.join(os.path.dirname(__file__), "..", "..", "..", ".env")
 
 
 def _read_key_from_env() -> str | None:
     """Read CAMERA_ENCRYPTION_KEY from the .env file (simple parser)."""
-    if not os.path.exists(_ENV_PATH):
-        return None
-    with open(_ENV_PATH, "r", encoding="utf-8") as f:
-        for line in f:
-            line = line.strip()
-            if line.startswith("CAMERA_ENCRYPTION_KEY="):
-                val = line.split("=", 1)[1].strip().strip("'\"")
-                if val:
-                    return val
+    for path in [_ROOT_ENV_PATH, _ENV_PATH]:
+        if os.path.exists(path):
+            with open(path, "r", encoding="utf-8") as f:
+                for line in f:
+                    line = line.strip()
+                    if line.startswith("CAMERA_ENCRYPTION_KEY="):
+                        val = line.split("=", 1)[1].strip().strip("'\"")
+                        if val:
+                            return val
     return None
 
 
@@ -41,12 +42,13 @@ def _ensure_key() -> str:
     if key:
         return key
 
-    # Generate a fresh Fernet key and append it to .env
+    # Generate a fresh Fernet key and append it to the appropriate .env
     key = Fernet.generate_key().decode()
-    with open(_ENV_PATH, "a", encoding="utf-8") as f:
+    target_path = _ROOT_ENV_PATH if os.path.exists(_ROOT_ENV_PATH) else _ENV_PATH
+    with open(target_path, "a", encoding="utf-8") as f:
         f.write(f"\n# Auto-generated encryption key for camera passwords\n")
         f.write(f"CAMERA_ENCRYPTION_KEY={key}\n")
-    print(f"[Cameras] Generated new CAMERA_ENCRYPTION_KEY and saved to .env")
+    print(f"[Cameras] Generated new CAMERA_ENCRYPTION_KEY and saved to {target_path}")
     return key
 
 
@@ -66,4 +68,8 @@ def encrypt_password(plain: str) -> str:
 
 def decrypt_password(token: str) -> str:
     """Decrypt a Fernet token back to the plaintext password."""
-    return _fernet.decrypt(token.encode()).decode()
+    try:
+        return _fernet.decrypt(token.encode()).decode()
+    except Exception as e:
+        print(f"[Cameras] Decryption failed (possibly due to key mismatch): {e}. Returning empty string.")
+        return ""

@@ -1,7 +1,7 @@
 #!/bin/bash
 
 echo "========================================="
-echo "   Starting CALVISION (Nix Environment)  "
+echo "   Starting CALVISION                    "
 echo "========================================="
 
 # 1. Validate configuration
@@ -11,28 +11,56 @@ if [ ! -f .env ] && [ ! -f backend/.env ]; then
     exit 1
 fi
 
+# 2. Determine if Nix is available and functional
+USE_NIX=true
+if ! command -v nix &> /dev/null || ! nix --version &> /dev/null; then
+    echo "⚠️  Warning: Nix is not available or is broken on this host. Using standard runtime..."
+    USE_NIX=false
+fi
+
 # 2. Start PostgreSQL
 if ! command -v docker &> /dev/null; then
     echo "⚠️  Warning: Docker not found. Assuming database is managed externally."
 else
     echo "🐳 Starting database..."
-    if [ -f "docker-compose.yml" ]; then
-        docker compose up -d db || docker-compose up -d db
-    elif [ -f "backend/docker-compose.yml" ]; then
-        cd backend && (docker compose up -d db || docker-compose up -d db) && cd ..
+    # Check if a container with the same name already exists
+    if docker ps -a --format '{{.Names}}' | grep -q "^worker_monitor_db$"; then
+        echo "🐳 Starting existing worker_monitor_db container..."
+        docker start worker_monitor_db || true
+    else
+        if [ -f "docker-compose.yml" ]; then
+            docker compose up -d db || docker-compose up -d db || true
+        elif [ -f "backend/docker-compose.yml" ]; then
+            cd backend && (docker compose up -d db || docker compose up -d db || true) && cd ..
+        fi
     fi
 fi
 
-# 3. Start services
+# 4. Start services
 echo "🚀 Starting backend and frontend in the background..."
 
-# Run backend
-nix run .#backend &
-BACKEND_PID=$!
+if [ "$USE_NIX" = true ]; then
+    # Run via Nix
+    nix run .#backend &
+    BACKEND_PID=$!
 
-# Run frontend
-nix run .#frontend &
-FRONTEND_PID=$!
+    nix run .#frontend &
+    FRONTEND_PID=$!
+else
+    # Run via standard Python venv and npm
+    if [ ! -f "backend/venv/bin/uvicorn" ]; then
+        echo "❌ Error: Python virtual environment uvicorn not found. Please run ./install.sh"
+        exit 1
+    fi
+    
+    # Run backend from the backend folder to ensure src package is found
+    (cd backend && PYTHONPATH="src:$PYTHONPATH" venv/bin/uvicorn src.main:app --host 0.0.0.0 --port 8000 --reload) &
+    BACKEND_PID=$!
+
+    # Run frontend
+    (cd frontend && npm run dev) &
+    FRONTEND_PID=$!
+fi
 
 # Handle graceful shutdown
 cleanup() {
