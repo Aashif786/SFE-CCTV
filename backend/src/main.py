@@ -22,9 +22,11 @@ from .api.settings import router as settings_router
 from .api.zones import router as zones_router
 from .api.stats import router as stats_router
 from .api.tools import router as tools_router
+from .api.resources import router as resources_router
 
-# WebSocket handler
+# WebSocket handlers
 from .ws.handler import websocket_endpoint
+from .ws.ai_stream import camera_ai_endpoint
 
 # ---------------------------------------------------------------------------
 # Create / migrate tables on startup
@@ -62,9 +64,11 @@ app.include_router(settings_router)
 app.include_router(zones_router)
 app.include_router(stats_router)
 app.include_router(tools_router)
+app.include_router(resources_router)
 
-# Register WebSocket endpoint
+# Register WebSocket endpoints
 app.websocket("/ws")(websocket_endpoint)
+app.websocket("/ws/camera/{camera_id}")(camera_ai_endpoint)
 
 
 # ---------------------------------------------------------------------------

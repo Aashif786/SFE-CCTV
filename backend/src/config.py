@@ -184,7 +184,7 @@ class SettingsPayload(BaseModel):
     tracker_match_thresh: float = Field(default=0.8)
     tracker_fuse_score: bool = Field(default=True)
     tracker_gmc_method: str = Field(default="none")
-    tracker_with_reid: bool = Field(default=True)
+    tracker_with_reid: bool = Field(default=False)
     tracker_proximity_thresh: float = Field(default=0.0)
     tracker_appearance_thresh: float = Field(default=0.75)
 

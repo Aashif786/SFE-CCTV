@@ -39,7 +39,15 @@ class WorkerDetector:
     }
 
     def __init__(self):
-        self.device = "cuda" if torch.cuda.is_available() else "cpu"
+        if torch.cuda.is_available():
+            self.device_id = 0
+            self.device = "cuda:0"
+            torch.backends.cudnn.benchmark = True
+        else:
+            self.device_id = "cpu"
+            self.device = "cpu"
+            torch.set_num_threads(4)
+
         target_model = getattr(config, "yolo_model", "yolo11m-pose.pt")
         self.model = YOLO(target_model)
         self.model.to(self.device)
@@ -78,17 +86,17 @@ class WorkerDetector:
         # Dynamic EMA_ALPHA
         self.EMA_ALPHA = getattr(config, "ema_alpha", 0.80)
 
-        # Use YOLO's built-in robust tracking (BoT-SORT)
-        # imgsz=960 gives ~35% lower inference latency vs 1280 with minimal accuracy loss at CCTV distances.
+        # Use YOLO's built-in robust tracking (BoT-SORT / ByteTrack)
+        # imgsz=640 gives fast 60+ FPS inference latency on CUDA GPUs
         tracker_config = os.path.join(os.path.dirname(__file__), "..", "..", "custom_tracker.yaml")
         results = self.model.track(
             frame,
             persist=True,
             verbose=False,
-            device=self.device,
+            device=self.device_id,
             conf=getattr(config, "yolo_conf", 0.30),
             iou=getattr(config, "yolo_iou", 0.90),
-            imgsz=getattr(config, "yolo_imgsz", 960),
+            imgsz=getattr(config, "yolo_imgsz", 640),
             tracker=tracker_config
         )
 

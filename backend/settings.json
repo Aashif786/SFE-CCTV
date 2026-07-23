@@ -16,7 +16,7 @@
     "tracker_match_thresh": 0.8,
     "tracker_fuse_score": true,
     "tracker_gmc_method": "none",
-    "tracker_with_reid": true,
+    "tracker_with_reid": false,
     "tracker_proximity_thresh": 0.0,
     "tracker_appearance_thresh": 0.75,
     "classifier_velocity_threshold": 0.05,

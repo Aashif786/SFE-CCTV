@@ -1,23 +1,9 @@
 """
-RTSP Stream Manager — shared frame buffer architecture.
+RTSP Stream Manager — shared frame buffer & pre-encoded JPEG architecture.
 
 Opens each RTSP stream **once** in a dedicated background thread and keeps
-the latest N frames in a ``collections.deque``.  All consumers (live
-dashboard MJPEG, future AI pipelines, recording, snapshots) read from the
-buffer instead of opening additional RTSP connections.
-
-Usage
------
-    from .stream_manager import stream_manager
-
-    stream_manager.start_stream(camera_id=1, rtsp_url="rtsp://…")
-    frame = stream_manager.get_frame(1)          # latest numpy frame
-    status = stream_manager.get_status(1)        # dict with fps, state …
-    stream_manager.stop_stream(1)
-
-For the MJPEG endpoint, use ``stream_manager.mjpeg_generator(camera_id)``
-which yields ``(b"--frame\\r\\nContent-Type: image/jpeg\\r\\n…", jpeg_bytes)``
-pairs suitable for ``StreamingResponse``.
+the latest N frames in a ``collections.deque`` alongside pre-encoded JPEG bytes.
+All consumers read from the shared buffer with zero CPU re-encoding overhead.
 """
 
 from __future__ import annotations
@@ -63,6 +49,7 @@ class CameraStream:
     fps: float = 0.0
     last_frame_time: Optional[datetime] = None
     reconnect_count: int = 0
+    _latest_jpeg: Optional[bytes] = field(default=None, repr=False)
     # Internal
     _thread: Optional[threading.Thread] = field(default=None, repr=False)
     _stop_event: threading.Event = field(default_factory=threading.Event, repr=False)
@@ -124,7 +111,7 @@ class StreamManager:
 
     def restart_stream(self, camera_id: int, rtsp_url: str) -> None:
         self.stop_stream(camera_id)
-        time.sleep(0.3)
+        time.sleep(0.2)
         self.start_stream(camera_id, rtsp_url)
 
     def start_all_enabled(self) -> None:
@@ -165,7 +152,7 @@ class StreamManager:
         if not active_ids:
             return
 
-        print(f"[StreamManager] Restarting {len(active_ids)} active stream(s) to apply updated configurations...")
+        print(f"[StreamManager] Restarting {len(active_ids)} active stream(s)...")
         for cid in active_ids:
             cs = self._streams.get(cid)
             if cs:
@@ -186,18 +173,23 @@ class StreamManager:
                 return cs._buffer[-1]
         return None
 
-    def get_jpeg(self, camera_id: int, quality: int = 80) -> Optional[bytes]:
-        """Return the latest frame as JPEG bytes."""
-        frame = self.get_frame(camera_id)
-        if frame is None:
+    def get_jpeg(self, camera_id: int, quality: int = 75) -> Optional[bytes]:
+        """Return pre-encoded JPEG bytes with zero CPU re-encoding overhead."""
+        cs = self._streams.get(camera_id)
+        if not cs:
             return None
-        ok, buf = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, quality])
-        return buf.tobytes() if ok else None
+        with cs._lock:
+            if cs._latest_jpeg:
+                return cs._latest_jpeg
+            if cs._buffer:
+                frame = cs._buffer[-1]
+                ok, buf = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, quality])
+                return buf.tobytes() if ok else None
+        return None
 
     def mjpeg_generator(self, camera_id: int, fps_limit: float = 15.0):
         """
-        Yields MJPEG multipart chunks.  Designed to be consumed by
-        ``StreamingResponse(content=…, media_type="multipart/x-mixed-replace;boundary=frame")``.
+        Yields MJPEG multipart chunks with zero CPU re-encoding overhead.
         """
         interval = 1.0 / fps_limit if fps_limit > 0 else 0.066
         while True:
@@ -208,7 +200,6 @@ class StreamManager:
                     b"Content-Type: image/jpeg\r\n\r\n" + jpeg + b"\r\n"
                 )
             else:
-                # No frame yet — yield a tiny placeholder (1x1 black pixel JPEG)
                 yield (
                     b"--frame\r\n"
                     b"Content-Type: image/jpeg\r\n\r\n" + _BLACK_JPEG + b"\r\n"
@@ -247,7 +238,7 @@ class StreamManager:
             cs._thread.join(timeout=3)
 
     def _grab_loop(self, cs: CameraStream) -> None:
-        """Background thread: open RTSP, grab frames, auto-reconnect."""
+        """Background thread: open RTSP, grab frames, encode JPEG once, auto-reconnect."""
         while not cs._stop_event.is_set():
             reconnect_interval = getattr(env_settings, "stream_reconnect_interval", 5)
             timeout = getattr(env_settings, "stream_timeout", 30)
@@ -258,11 +249,9 @@ class StreamManager:
                 cs.state = StreamState.STARTING if cs.reconnect_count == 0 else StreamState.RECONNECTING
                 cs.error_message = ""
 
-                # Set FFMPEG options for RTSP
                 cap = cv2.VideoCapture(cs.rtsp_url, cv2.CAP_FFMPEG)
                 cap.set(cv2.CAP_PROP_OPEN_TIMEOUT_MSEC, timeout * 1000)
                 cap.set(cv2.CAP_PROP_READ_TIMEOUT_MSEC, timeout * 1000)
-                # Prefer TCP transport (more reliable for RTSP)
                 if transport == "tcp":
                     cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*"H264"))
 
@@ -285,12 +274,19 @@ class StreamManager:
 
                     consecutive_failures = 0
                     now = time.monotonic()
+
+                    # Pre-encode JPEG once in background thread
+                    ok, buf = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, 75])
+                    jpeg_bytes = buf.tobytes() if ok else None
+
                     with cs._lock:
                         cs._buffer.append(frame)
                         cs._frame_times.append(now)
+                        if jpeg_bytes:
+                            cs._latest_jpeg = jpeg_bytes
+
                     cs.last_frame_time = datetime.now(timezone.utc)
 
-                    # FPS calculation (over sliding window)
                     if len(cs._frame_times) >= 2:
                         dt = cs._frame_times[-1] - cs._frame_times[0]
                         if dt > 0:
@@ -311,7 +307,6 @@ class StreamManager:
                 if cap is not None:
                     cap.release()
 
-            # Reconnect delay
             if not cs._stop_event.is_set():
                 cs.reconnect_count += 1
                 cs._stop_event.wait(timeout=reconnect_interval)
@@ -322,6 +317,5 @@ class StreamManager:
 # ---------------------------------------------------------------------------
 stream_manager = StreamManager()
 
-
-# A minimal 1×1 black JPEG used as placeholder when no frame is available
+# Placeholder black frame
 _BLACK_JPEG: bytes = cv2.imencode(".jpg", np.zeros((1, 1, 3), dtype=np.uint8))[1].tobytes()

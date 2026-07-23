@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useRef, useCallback } from "react";
+import { useState, useRef, useCallback, useEffect } from "react";
 import {
   Maximize2,
   Minimize2,
@@ -49,26 +49,49 @@ export default function CameraTile({ camera, onRefresh, onOpenSettings }: Camera
   const [showInfo, setShowInfo] = useState(false);
   const [restarting, setRestarting] = useState(false);
   const [imgError, setImgError] = useState(false);
-  const [imgLoaded, setImgLoaded] = useState(false);
+  const [streamKey, setStreamKey] = useState(() => Date.now());
   const imgRef = useRef<HTMLImageElement>(null);
   const { restartStream, getStreamUrl, getSnapshotUrl } = useCameraActions();
 
   const isOnline = camera.status === "ONLINE";
   const statusCfg = STATUS_CONFIG[camera.status] || STATUS_CONFIG.STOPPED;
+  const streamUrl = getStreamUrl(camera.id);
+
+  // ── Manage MJPEG stream src & clean up HTTP connections on unmount ───
+  useEffect(() => {
+    const img = imgRef.current;
+    if (!img) return;
+
+    if (isOnline) {
+      setImgError(false);
+      img.src = `${streamUrl}?t=${streamKey}`;
+    } else {
+      img.src = "";
+      img.removeAttribute("src");
+    }
+
+    return () => {
+      // CRITICAL: Close persistent HTTP/1.1 MJPEG stream to avoid browser connection limit exhaustion
+      if (img) {
+        img.src = "";
+        img.removeAttribute("src");
+      }
+    };
+  }, [streamUrl, streamKey, isOnline, isExpanded]);
 
   // ── Handlers ──────────────────────────────────────────────────────────
 
   const handleRestart = useCallback(async () => {
     setRestarting(true);
     setImgError(false);
-    setImgLoaded(false);
+    setStreamKey(Date.now());
     try {
       await restartStream(camera.id);
       onRefresh?.();
     } catch (e) {
       console.error("Restart failed:", e);
     } finally {
-      setTimeout(() => setRestarting(false), 2000);
+      setTimeout(() => setRestarting(false), 1500);
     }
   }, [camera.id, restartStream, onRefresh]);
 
@@ -85,8 +108,6 @@ export default function CameraTile({ camera, onRefresh, onOpenSettings }: Camera
 
   const handleFullscreen = useCallback(() => setIsExpanded((v) => !v), []);
 
-  const streamUrl = getStreamUrl(camera.id);
-
   // ── Render ────────────────────────────────────────────────────────────
 
   const tileContent = (
@@ -94,7 +115,7 @@ export default function CameraTile({ camera, onRefresh, onOpenSettings }: Camera
       className={
         isExpanded
           ? "w-full max-w-6xl bg-[hsl(var(--bg-card))] rounded-xl border border-[hsl(var(--border))] shadow-2xl relative my-auto overflow-hidden"
-          : `relative bg-[hsl(var(--bg-card))] rounded-xl overflow-hidden border transition-all duration-300
+          : `relative bg-[hsl(var(--bg-card))] rounded-xl overflow-hidden border transition-shadow transition-colors duration-200
              ${camera.status === "OFFLINE" || camera.status === "ERROR" || camera.status === "AUTH_FAILED"
                ? "border-red-500/30"
                : "border-[hsl(var(--border))]"
@@ -136,7 +157,7 @@ export default function CameraTile({ camera, onRefresh, onOpenSettings }: Camera
             onClick={handleRestart}
             disabled={restarting}
             className="p-1 rounded text-[hsl(var(--text-muted))] hover:text-[hsl(var(--text-primary))] hover:bg-[hsl(var(--bg-table-head))] transition-colors disabled:opacity-50"
-            title="Reconnect"
+            title="Reconnect Stream"
           >
             <RefreshCw className={`w-3.5 h-3.5 ${restarting ? "animate-spin" : ""}`} />
           </button>
@@ -161,36 +182,26 @@ export default function CameraTile({ camera, onRefresh, onOpenSettings }: Camera
 
       {/* ── Video Area ───────────────────────────────────────────── */}
       <div className={`relative bg-black ${isExpanded ? "aspect-video" : "aspect-video"}`}>
-        {isOnline || camera.status === "STARTING" || camera.status === "RECONNECTING" ? (
-          <>
-            {/* Skeleton loader while image is loading */}
-            {!imgLoaded && !imgError && (
-              <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 z-10">
-                <div className="absolute inset-0 bg-gradient-to-br from-gray-800 to-gray-900 animate-pulse" />
-                <Loader2 className="w-8 h-8 text-emerald-500/60 animate-spin relative z-10" />
-                <span className="text-xs text-gray-400 relative z-10">
-                  {camera.status === "STARTING" ? "Starting stream…" : camera.status === "RECONNECTING" ? "Reconnecting…" : "Loading stream…"}
-                </span>
-              </div>
-            )}
-            {/* MJPEG stream via <img> */}
-            <img
-              ref={imgRef}
-              src={`${streamUrl}?t=${Date.now()}`}
-              alt={camera.name}
-              className={`w-full h-full object-cover transition-opacity duration-500 ${imgLoaded ? "opacity-100" : "opacity-0"}`}
-              onLoad={() => { setImgLoaded(true); setImgError(false); }}
-              onError={() => { setImgError(true); setImgLoaded(false); }}
-            />
-          </>
+        {isOnline && !imgError ? (
+          /* MJPEG stream via <img> */
+          <img
+            ref={imgRef}
+            alt={camera.name}
+            className="w-full h-full object-cover block"
+            onError={() => setImgError(true)}
+          />
         ) : (
-          /* Offline / Error overlay */
+          /* Offline / Error / Connecting overlay */
           <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 bg-gradient-to-br from-gray-900 to-gray-950">
             <div className="w-14 h-14 rounded-full bg-red-500/10 flex items-center justify-center">
               <CameraOff className="w-7 h-7 text-red-500/70" />
             </div>
             <span className={`text-sm font-medium ${statusCfg.color}`}>
-              {statusCfg.label}
+              {camera.status === "STARTING"
+                ? "Starting stream…"
+                : camera.status === "RECONNECTING"
+                ? "Reconnecting…"
+                : statusCfg.label}
             </span>
             {camera.error_message && (
               <span className="text-[11px] text-gray-500 max-w-[200px] text-center leading-tight">
@@ -211,8 +222,8 @@ export default function CameraTile({ camera, onRefresh, onOpenSettings }: Camera
         )}
 
         {/* Live indicator badge */}
-        {isOnline && imgLoaded && (
-          <div className="absolute top-2 left-2 flex items-center gap-1.5 bg-black/60 backdrop-blur-sm px-2 py-1 rounded-md">
+        {isOnline && !imgError && (
+          <div className="absolute top-2 left-2 flex items-center gap-1.5 bg-black/60 backdrop-blur-sm px-2 py-1 rounded-md z-10">
             <div className="w-1.5 h-1.5 rounded-full bg-red-500 animate-pulse" />
             <span className="text-[10px] font-bold text-white tracking-wider">LIVE</span>
           </div>

@@ -28,5 +28,11 @@
     "name": "Door Exit OUT",
     "username": "admin",
     "password": ""
+  },
+  {
+    "ip": "192.168.1.236",
+    "name": "Server",
+    "username": "admin",
+    "password": "Caldim@2025"
   }
 ]
