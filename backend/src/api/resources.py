@@ -122,7 +122,7 @@ def _resource_sampler_loop():
                 mem = round(psutil.virtual_memory().percent, 1)
 
             # Disk
-            disk = shutil.disk_usage("/")
+            disk = shutil.disk_usage(os.path.abspath(os.sep))
             disk_pct = round((disk.used / disk.total) * 100, 1)
 
             # GPU

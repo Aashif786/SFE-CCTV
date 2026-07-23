@@ -10,6 +10,8 @@ backend/src/db/__pycache__/
 *.py[cod]
 *$py.class
 backend/.env
+.env
+backend/start_legacy.sh
 backend/models/*.task
 
 # Node / Next.js / Frontend

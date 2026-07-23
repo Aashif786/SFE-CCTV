@@ -42,7 +42,11 @@ class EnvSettings:
 
     def reload_doors(self):
         env_path = os.path.join(os.path.dirname(__file__), "..", ".env")
+        root_env_path = os.path.join(os.path.dirname(__file__), "..", "..", ".env")
+        
         env_vars = _load_env_file(env_path)
+        if not env_vars:
+            env_vars = _load_env_file(root_env_path)
 
         # First load from settings.json if available
         settings_path = os.path.join(os.path.dirname(__file__), "..", "settings.json")

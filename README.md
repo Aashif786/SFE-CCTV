@@ -264,45 +264,32 @@ run-frontend  # Starts Next.js frontend
 ## Running the System
 
 ### Prerequisites
-- Python 3.10+ & Node.js 20+ (or Nix)
 - Docker (for PostgreSQL only)
 - *NVIDIA GPU with CUDA support (Recommended for YOLO inference)*
+- **Linux:** [Nix](https://nixos.org/download/) package manager
+- **Windows:** Python 3.10+ and Node.js 20+
 
-### Step 1: Start PostgreSQL Database
+### Setup and Start (Linux)
+The Linux environment relies natively on Nix for 100% reproducible execution.
 ```bash
-docker-compose up -d
+# 1. Clone the repository and run setup (installs dependencies)
+./install.sh
+
+# 2. Start the database, backend API, and frontend
+./start.sh
 ```
 
-### Step 2: Start the Backend
-**With Nix (Recommended)**:
-```bash
-nix develop
-run-backend
+### Setup and Start (Windows)
+The Windows environment uses standard Python `venv` and `npm`.
+```powershell
+# 1. Clone the repository and run setup (installs dependencies)
+.\install.ps1
+
+# 2. Start the database, backend API, and frontend
+.\start.ps1
 ```
 
-**Standard Python Setup**:
-```bash
-cd backend
-python -m venv venv
-source venv/bin/activate
-pip install -r requirements.lock
-uvicorn src.main:app --host 0.0.0.0 --port 8000 --reload
-```
-
-### Step 3: Start the Frontend
-**With Nix (Recommended)**:
-```bash
-nix run .#frontend
-```
-
-**Standard Node Setup**:
-```bash
-cd frontend
-npm install
-npm run dev
-```
-
-### Step 4: Open Dashboard
+### Accessing the Dashboard
 Navigate to **`http://localhost:3000`** in your web browser.
 
 ---
