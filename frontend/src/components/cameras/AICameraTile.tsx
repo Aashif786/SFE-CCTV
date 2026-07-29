@@ -88,6 +88,7 @@ export default function AICameraTile({ camera, onRefresh }: AICameraTileProps) {
     detectionCount,
     zone,
     fps: aiFps,
+    image,
   } = useAICameraStream(isOnline ? camera.id : null);
 
   const isIdleAlert = activity === "idle" && idleSeconds > idleThreshold;
@@ -96,27 +97,28 @@ export default function AICameraTile({ camera, onRefresh }: AICameraTileProps) {
 
   const handleFullscreen = useCallback(() => setIsExpanded((v) => !v), []);
 
-  // ── Manage MJPEG stream src & clean up HTTP connections on unmount ───
+  // ── Manage stream image src & clean up HTTP connections on unmount ───
   useEffect(() => {
     const img = imgRef.current;
     if (!img) return;
 
     if (isOnline) {
-      setImgError(false);
-      img.src = `${streamUrl}?t=${streamKey}`;
+      if (image) {
+        setImgError(false);
+        img.src = image;
+      }
     } else {
       img.src = "";
       img.removeAttribute("src");
     }
 
     return () => {
-      // CRITICAL: Close persistent HTTP/1.1 MJPEG stream to avoid browser connection limit exhaustion
       if (img) {
         img.src = "";
         img.removeAttribute("src");
       }
     };
-  }, [streamUrl, streamKey, isOnline, isExpanded]);
+  }, [image, isOnline]);
 
   const handleRestart = useCallback(async () => {
     setRestarting(true);

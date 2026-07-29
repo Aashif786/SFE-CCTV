@@ -36,6 +36,7 @@ export default function SettingsPage() {
   const [yoloIou, setYoloIou] = useState(90);
   const [yoloImgsz, setYoloImgsz] = useState(960);
   const [emaAlpha, setEmaAlpha] = useState(80);
+  const [maxTrackedPeople, setMaxTrackedPeople] = useState(10);
 
   // 2. Tracker (BoT-SORT)
   const [trackHighThresh, setTrackHighThresh] = useState(30);
@@ -80,6 +81,7 @@ export default function SettingsPage() {
         setYoloIou(toPercent(data.yolo_iou ?? 0.90));
         setYoloImgsz(data.yolo_imgsz ?? 960);
         setEmaAlpha(toPercent(data.ema_alpha ?? 0.80));
+        setMaxTrackedPeople(data.max_tracked_people ?? 10);
 
         // Tracker
         setTrackHighThresh(toPercent(data.tracker_track_high_thresh ?? 0.30));
@@ -130,6 +132,7 @@ export default function SettingsPage() {
         yolo_iou: fromPercent(yoloIou),
         yolo_imgsz: yoloImgsz,
         ema_alpha: fromPercent(emaAlpha),
+        max_tracked_people: maxTrackedPeople,
 
         // Tracker
         tracker_track_high_thresh: fromPercent(trackHighThresh),
@@ -292,6 +295,29 @@ export default function SettingsPage() {
                       <option value={960}>960px (Standard optimized)</option>
                       <option value={1280}>1280px (High definition - Distant detection)</option>
                     </select>
+                  </div>
+                </div>
+
+                {/* Max Tracked People */}
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-4 items-start border-t border-[hsl(var(--border))] pt-4">
+                  <div>
+                    <label className="block text-sm font-semibold text-[hsl(var(--text-primary))]">
+                      Max Tracked People per Feed
+                    </label>
+                    <p className="text-xs text-[hsl(var(--text-muted))] mt-1">
+                      Maximum number of people to track and display skeletons for in a single camera feed.
+                    </p>
+                  </div>
+                  <div className="md:col-span-2">
+                    <input
+                      id="max-tracked-people"
+                      type="number"
+                      min={1}
+                      max={50}
+                      value={maxTrackedPeople}
+                      onChange={(e) => setMaxTrackedPeople(Number(e.target.value))}
+                      className="w-full bg-[hsl(var(--bg-input))] border border-[hsl(var(--border-strong))] rounded-lg px-4 py-2 text-[hsl(var(--text-primary))] text-sm focus:outline-none focus:border-emerald-500 border-solid"
+                    />
                   </div>
                 </div>
 

@@ -47,6 +47,7 @@ interface UseAICameraStreamResult {
   detectionCount: number;
   zone: number[];
   fps: number;
+  image: string | null;
   disconnect: () => void;
 }
 
@@ -64,6 +65,7 @@ export function useAICameraStream(
   const [detectionCount, setDetectionCount] = useState(0);
   const [zone, setZone] = useState<number[]>([0, 0, 1, 1]);
   const [fps, setFps] = useState(0);
+  const [image, setImage] = useState<string | null>(null);
 
   const wsRef = useRef<WebSocket | null>(null);
   const lastMsgTimeRef = useRef<number>(0);
@@ -93,6 +95,7 @@ export function useAICameraStream(
     setDetections([]);
     setActivity("no_person");
     setFps(0);
+    setImage(null);
     lastMsgTimeRef.current = 0;
 
     const host =
@@ -144,6 +147,9 @@ export function useAICameraStream(
         if (data.zone) {
           setZone(data.zone);
         }
+        if (data.image) {
+          setImage(data.image);
+        }
       } catch (e) {
         console.error("[useAICameraStream] message parse error:", e);
       }
@@ -184,6 +190,7 @@ export function useAICameraStream(
     detectionCount,
     zone,
     fps,
+    image,
     disconnect,
   };
 }

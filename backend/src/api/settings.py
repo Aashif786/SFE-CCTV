@@ -36,6 +36,7 @@ async def get_settings():
         "yolo_iou": config.yolo_iou,
         "yolo_imgsz": config.yolo_imgsz,
         "ema_alpha": config.ema_alpha,
+        "max_tracked_people": config.max_tracked_people,
 
         # Tracker
         "tracker_track_high_thresh": config.tracker_track_high_thresh,
@@ -79,6 +80,7 @@ async def save_settings(payload: SettingsPayload):
     config.yolo_iou = payload.yolo_iou
     config.yolo_imgsz = payload.yolo_imgsz
     config.ema_alpha = payload.ema_alpha
+    config.max_tracked_people = payload.max_tracked_people
 
     # Tracker settings
     config.tracker_track_high_thresh = payload.tracker_track_high_thresh
@@ -110,6 +112,7 @@ async def save_settings(payload: SettingsPayload):
                 "yolo_iou": config.yolo_iou,
                 "yolo_imgsz": config.yolo_imgsz,
                 "ema_alpha": config.ema_alpha,
+                "max_tracked_people": config.max_tracked_people,
 
                 "tracker_track_high_thresh": config.tracker_track_high_thresh,
                 "tracker_track_low_thresh": config.tracker_track_low_thresh,

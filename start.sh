@@ -13,8 +13,8 @@ fi
 
 # 2. Determine if Nix is available and functional
 USE_NIX=true
-if ! command -v nix &> /dev/null || ! nix --version &> /dev/null; then
-    echo "⚠️  Warning: Nix is not available or is broken on this host. Using standard runtime..."
+if ! command -v nix &> /dev/null || ! nix-instantiate --eval -E '1 + 1' &> /dev/null; then
+    echo "⚠️  Warning: Nix is not available or is broken/inactive on this host. Using standard runtime..."
     USE_NIX=false
 fi
 
@@ -31,7 +31,7 @@ else
         if [ -f "docker-compose.yml" ]; then
             docker compose up -d db || docker-compose up -d db || true
         elif [ -f "backend/docker-compose.yml" ]; then
-            cd backend && (docker compose up -d db || docker compose up -d db || true) && cd ..
+            cd backend && (docker compose up -d db || docker-compose up -d db || true) && cd ..
         fi
     fi
 fi
@@ -40,11 +40,11 @@ fi
 echo "🚀 Starting backend and frontend in the background..."
 
 if [ "$USE_NIX" = true ]; then
-    # Run via Nix
-    nix run .#backend &
+    # Run via Nix with experimental features explicitly enabled
+    nix --extra-experimental-features "nix-command flakes" run .#backend &
     BACKEND_PID=$!
 
-    nix run .#frontend &
+    nix --extra-experimental-features "nix-command flakes" run .#frontend &
     FRONTEND_PID=$!
 else
     # Run via standard Python venv and npm

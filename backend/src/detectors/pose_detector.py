@@ -63,6 +63,7 @@ class WorkerDetector:
         self.EMA_ALPHA: float = getattr(config, "ema_alpha", 0.80)
         self.frame_count: int = 0
         self.alert_triggered: bool = False
+        self.last_returned_ids: set[int] = set()
 
     @staticmethod
     def _dist_xy(a: list[float], b: list[float]) -> float:
@@ -248,6 +249,26 @@ class WorkerDetector:
                 "keypoints":      keypoints,
                 "box":            box,
             })
+
+        # Sort and limit tracked people if max_tracked_people is set
+        max_people = getattr(config, "max_tracked_people", 10)
+        if max_people > 0 and len(poses_out) > max_people:
+            # Sort:
+            # 1. Was track returned in the previous frame? (True first, so false first in ascending sort_key)
+            # 2. Bounding box area (larger first)
+            # 3. Confidence (larger first)
+            def sort_key(pose):
+                t_id = pose["track_id"]
+                is_active = t_id in self.last_returned_ids
+                b = pose["box"]
+                area = (b[2] - b[0]) * (b[3] - b[1])
+                conf = pose["confidence"]
+                return (not is_active, -area, -conf)
+            
+            poses_out.sort(key=sort_key)
+            poses_out = poses_out[:max_people]
+
+        self.last_returned_ids = {p["track_id"] for p in poses_out}
 
         # Prune stale tracks
         for tid in list(self.smoothed.keys()):

@@ -7,8 +7,8 @@ echo "========================================="
 
 # 1. Determine if Nix is available and functional
 USE_NIX=true
-if ! command -v nix &> /dev/null || ! nix --version &> /dev/null; then
-    echo "⚠️  Warning: Nix is not installed or is broken on this host."
+if ! command -v nix &> /dev/null || ! nix-instantiate --eval -E '1 + 1' &> /dev/null; then
+    echo "⚠️  Warning: Nix is not installed or is broken/inactive on this host."
     echo "Falling back to standard Python venv and Node.js setup."
     USE_NIX=false
 else
@@ -38,7 +38,7 @@ fi
 # 4. Install dependencies
 if [ "$USE_NIX" = true ]; then
     echo "❄️  Installing frontend dependencies inside Nix shell..."
-    nix develop -c bash -c "cd frontend && npm install"
+    nix --extra-experimental-features "nix-command flakes" develop -c bash -c "cd frontend && npm install"
 else
     # Verify system prerequisites for standard setup
     if ! command -v python3 &> /dev/null; then

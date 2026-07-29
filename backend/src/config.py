@@ -109,6 +109,7 @@ class DetectionConfig:
     yolo_iou: float = 0.90
     yolo_imgsz: int = 960
     ema_alpha: float = 0.80
+    max_tracked_people: int = 10
 
     # Tracker parameters
     tracker_track_high_thresh: float = 0.30
@@ -146,6 +147,7 @@ if os.path.exists(SETTINGS_FILE):
             if "yolo_iou" in data: config.yolo_iou = float(data["yolo_iou"])
             if "yolo_imgsz" in data: config.yolo_imgsz = int(data["yolo_imgsz"])
             if "ema_alpha" in data: config.ema_alpha = float(data["ema_alpha"])
+            if "max_tracked_people" in data: config.max_tracked_people = int(data["max_tracked_people"])
 
             # Tracker parameters
             if "tracker_track_high_thresh" in data: config.tracker_track_high_thresh = float(data["tracker_track_high_thresh"])
@@ -179,6 +181,7 @@ class SettingsPayload(BaseModel):
     yolo_iou: float = Field(default=0.90)
     yolo_imgsz: int = Field(default=960)
     ema_alpha: float = Field(default=0.80)
+    max_tracked_people: int = Field(default=10)
 
     # Tracker parameters
     tracker_track_high_thresh: float = Field(default=0.30)

@@ -11,6 +11,7 @@ from __future__ import annotations
 import collections
 import threading
 import time
+import asyncio
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from enum import Enum
@@ -20,7 +21,6 @@ import cv2
 import numpy as np
 
 from ..config import env_settings
-
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -187,7 +187,7 @@ class StreamManager:
                 return buf.tobytes() if ok else None
         return None
 
-    def mjpeg_generator(self, camera_id: int, fps_limit: float = 15.0):
+    async def mjpeg_generator(self, camera_id: int, fps_limit: float = 15.0):
         """
         Yields MJPEG multipart chunks with zero CPU re-encoding overhead.
         """
@@ -204,7 +204,7 @@ class StreamManager:
                     b"--frame\r\n"
                     b"Content-Type: image/jpeg\r\n\r\n" + _BLACK_JPEG + b"\r\n"
                 )
-            time.sleep(interval)
+            await asyncio.sleep(interval)
 
     # -- status --------------------------------------------------------------
 

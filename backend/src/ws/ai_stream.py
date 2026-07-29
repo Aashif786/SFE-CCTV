@@ -22,6 +22,7 @@ from __future__ import annotations
 import asyncio
 import json
 import time
+import base64
 from datetime import datetime, timezone
 
 import cv2
@@ -275,6 +276,12 @@ async def camera_ai_endpoint(websocket: WebSocket, camera_id: int):
             else:
                 sm.process("no_person")
 
+            # Get latest JPEG frame
+            jpeg_bytes = stream_manager.get_jpeg(camera_id)
+            image_b64 = ""
+            if jpeg_bytes:
+                image_b64 = "data:image/jpeg;base64," + base64.b64encode(jpeg_bytes).decode("utf-8")
+
             # Send response
             response = {
                 "status": "tracking",
@@ -289,6 +296,7 @@ async def camera_ai_endpoint(websocket: WebSocket, camera_id: int):
                 "zone": list(zone),
                 "detections": detections_out,
                 "detection_count": len(detections_out),
+                "image": image_b64,
             }
             await websocket.send_text(json.dumps(response))
 
