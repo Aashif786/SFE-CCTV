@@ -1,127 +1,12 @@
-"""
-Server-side AI WebSocket — per-camera YOLO tracking pipeline.
+import re
 
-Endpoint
---------
-WS  /ws/camera/{camera_id}  — reads frames from stream_manager, runs YOLO
-                               pose detection, sends detection JSON to client.
+with open('backend/src/ws/ai_stream.py', 'r', encoding='utf-8') as f:
+    content = f.read()
 
-The client never sends frames — the backend already has them from the RTSP
-stream.  The client receives detection JSON and overlays it on the MJPEG
-<img> element.
+# We want to replace the try block starting at `try:` down to the end of the `finally:` block before `except WebSocketDisconnect:`
+pattern = re.compile(r'    try:\n        frame_count = 0\n.*?    except WebSocketDisconnect:', re.DOTALL)
 
-Lifecycle
----------
-1.  Client opens WS → backend validates camera is online.
-2.  Backend loops at ~5 FPS: grab frame → detect → classify → send JSON.
-3.  Client closes WS → backend cleans up detector state.
-"""
-
-from __future__ import annotations
-
-import asyncio
-import json
-import time
-import base64
-from datetime import datetime, timezone
-
-import cv2
-import numpy as np
-from fastapi import WebSocket, WebSocketDisconnect
-
-from ..cameras.stream_manager import stream_manager
-from ..config import config
-from ..db.database import SessionLocal
-from ..db.models import Alert
-from ..detectors.pose_detector import WorkerDetector
-from ..activity.classifier import classifier
-from ..identity.correlation import correlation_engine
-from ..identity.session_manager import worker_session_manager
-from ..identity.models import CameraEntryEvent
-from ..state import (
-    session_managers,
-    prev_track_ids,
-    track_absent_frames,
-    TRACK_CLOSE_GRACE_FRAMES,
-    track_activity_totals,
-    track_last_time,
-    get_zone_cached,
-    SessionManager,
-)
-
-# Colour per activity for the overlay label
-ACTIVITY_COLOUR: dict[str, str] = {
-    "working": "#10b981",    # emerald
-    "walking": "#3b82f6",    # blue
-    "idle": "#f59e0b",       # amber
-    "no_person": "#6b7280",  # gray
-}
-
-# Per-camera AI detector instances (separate from webcam detectors in state.py)
-_ai_detectors: dict[int, WorkerDetector] = {}
-_ai_detector_lock = asyncio.Lock()
-
-
-async def camera_ai_endpoint(websocket: WebSocket, camera_id: int):
-    """Server-side AI processing WebSocket for a specific camera."""
-
-    await websocket.accept()
-
-    # Send initial "loading" status IMMEDIATELY — before any model work.
-    # This lets the frontend show the loading spinner right away.
-    await websocket.send_text(json.dumps({
-        "status": "loading",
-        "camera_id": camera_id,
-        "message": "Connecting to camera stream…",
-    }))
-
-    # Validate camera stream is running
-    if not stream_manager.is_online(camera_id):
-        await websocket.send_text(json.dumps({
-            "error": "Camera stream is not online",
-            "camera_id": camera_id,
-        }))
-        await websocket.close(code=1008)
-        return
-
-    print(f"🧠 [AI-WS] Connected for camera {camera_id}")
-
-    cam_key = f"ai-{camera_id}"
-
-    # ------------------------------------------------------------------ #
-    # Lazy-init detector — done in a thread pool so the event loop is     #
-    # never blocked during model loading (YOLO + warmup can take 5-15s). #
-    # ------------------------------------------------------------------ #
-    async with _ai_detector_lock:
-        existing = _ai_detectors.get(camera_id)
-
-    if existing is None:
-        await websocket.send_text(json.dumps({
-            "status": "loading",
-            "camera_id": camera_id,
-            "message": "Loading AI model… (first load may take 10-15s)",
-        }))
-        # Run blocking model init in thread pool — never blocks event loop
-        new_detector = await asyncio.to_thread(WorkerDetector)
-        # Double-checked locking: another connection may have loaded it first
-        async with _ai_detector_lock:
-            if camera_id not in _ai_detectors:
-                _ai_detectors[camera_id] = new_detector
-
-    async with _ai_detector_lock:
-        detector = _ai_detectors[camera_id]
-
-    # Init per-camera state objects if needed
-    if cam_key not in session_managers:
-        session_managers[cam_key] = SessionManager(cam_key)
-    if cam_key not in prev_track_ids:
-        prev_track_ids[cam_key] = set()
-    if cam_key not in track_absent_frames:
-        track_absent_frames[cam_key] = {}
-
-    sm = session_managers[cam_key]
-
-    try:
+replacement = """    try:
         frame_count = 0
         fps_measured = 0.0
         fps_window_start = time.monotonic()
@@ -354,33 +239,8 @@ async def camera_ai_endpoint(websocket: WebSocket, camera_id: int):
             except (asyncio.CancelledError, Exception):
                 pass
 
-    except WebSocketDisconnect:
-        print(f"🧠 [AI-WS] Disconnected for camera {camera_id}")
-    except Exception as e:
-        print(f"❌ [AI-WS] Fatal error for camera {camera_id}: {e}")
-    finally:
-        # Cleanup
-        if cam_key in session_managers:
-            session_managers[cam_key].close_on_disconnect()
+    except WebSocketDisconnect:"""
 
-        # Close any active worker sessions for this AI camera
-        for s in worker_session_manager.get_all_active():
-            if s.camera_id == cam_key:
-                str_trk_id = s.current_track_id
-                totals = track_activity_totals.get(str_trk_id)
-                closed = worker_session_manager.close_session(str_trk_id, totals)
-                if closed:
-                    print(f"[AI-WS] 🚪 Session closed (cleanup) for employee={closed.employee_id}")
-                track_activity_totals.pop(str_trk_id, None)
-                track_last_time.pop(str_trk_id, None)
-
-        if cam_key in prev_track_ids:
-            prev_track_ids[cam_key] = set()
-        if cam_key in track_absent_frames:
-            track_absent_frames[cam_key] = {}
-
-        # Release detector to free GPU memory
-        async with _ai_detector_lock:
-            _ai_detectors.pop(camera_id, None)
-
-        print(f"🧠 [AI-WS] Cleaned up resources for camera {camera_id}")
+new_content = pattern.sub(replacement, content)
+with open('backend/src/ws/ai_stream.py', 'w', encoding='utf-8') as f:
+    f.write(new_content)

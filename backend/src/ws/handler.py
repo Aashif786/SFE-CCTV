@@ -9,6 +9,7 @@ annotated JSON responses back to the client.
 
 from __future__ import annotations
 
+import asyncio
 import base64
 import json
 from datetime import datetime, timezone
@@ -61,7 +62,10 @@ async def websocket_endpoint(websocket: WebSocket):
 
             # Lazy-init per-camera objects
             if camera_id not in detectors:
-                detectors[camera_id] = WorkerDetector()
+                # Run blocking model init in thread pool so the event loop isn't blocked
+                new_det = await asyncio.to_thread(WorkerDetector)
+                if camera_id not in detectors:
+                    detectors[camera_id] = new_det
             if camera_id not in session_managers:
                 session_managers[camera_id] = SessionManager(camera_id)
             if camera_id not in prev_track_ids:
@@ -80,9 +84,9 @@ async def websocket_endpoint(websocket: WebSocket):
                 continue
             h, w, _ = frame.shape
 
-            # Run multi-pose detection + native YOLO tracking
+            # Run multi-pose detection + native YOLO tracking (off event loop)
             try:
-                poses = detector.update(frame)
+                poses = await asyncio.to_thread(detector.update, frame)
             except Exception as det_err:
                 print(f"⚠️  Detector error: {det_err}")
                 poses = []

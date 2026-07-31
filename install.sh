@@ -49,17 +49,38 @@ else
         echo "❌ Error: npm is required but not installed."
         exit 1
     fi
-    
+
     echo "🐍 Setting up Python Virtual Environment..."
     if [ ! -d "backend/venv" ]; then
         python3 -m venv backend/venv
     fi
-    
+
+    PYBIN="backend/venv/bin/python"
+
+    # ── GPU-accelerated PyTorch ──────────────────────────────────────────
+    # Install PyTorch with CUDA 12.4 if a CUDA-capable GPU is available,
+    # otherwise fall back to the CPU-only build.
+    echo "🔍 Detecting GPU availability..."
+    if command -v nvidia-smi &> /dev/null && nvidia-smi &> /dev/null; then
+        echo "🚀 NVIDIA GPU detected — installing PyTorch with CUDA 12.4 support..."
+        "$PYBIN" -m pip install --upgrade pip
+        "$PYBIN" -m pip install torch torchvision \
+            --index-url https://download.pytorch.org/whl/cu124
+        "$PYBIN" -m pip install onnxruntime-gpu
+    else
+        echo "⚠️  No NVIDIA GPU found — installing CPU-only PyTorch..."
+        "$PYBIN" -m pip install --upgrade pip
+        "$PYBIN" -m pip install torch torchvision \
+            --index-url https://download.pytorch.org/whl/cpu
+        "$PYBIN" -m pip install onnxruntime
+    fi
+    # ─────────────────────────────────────────────────────────────────────
+
     echo "📦 Installing backend dependencies..."
-    if [ -f "backend/requirements.lock" ]; then
-        backend/venv/bin/pip install -r backend/requirements.lock
-    elif [ -f "backend/requirements.txt" ]; then
-        backend/venv/bin/pip install -r backend/requirements.txt
+    if [ -f "backend/requirements.txt" ]; then
+        # Exclude torch/onnxruntime so we don't overwrite the GPU build above
+        grep -v -E "^(torch|torchvision|onnxruntime)" backend/requirements.txt \
+            | "$PYBIN" -m pip install -r /dev/stdin
     fi
 
     echo "📦 Installing frontend dependencies..."

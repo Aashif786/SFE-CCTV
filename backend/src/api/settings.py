@@ -53,6 +53,9 @@ async def get_settings():
         # Classifier
         "classifier_velocity_threshold": config.classifier_velocity_threshold,
 
+        # Tracking pipeline
+        "tracking_fps": config.tracking_fps,
+
         # Env / Streaming overrides
         "default_rtsp_port": env_settings.default_rtsp_port,
         "stream_reconnect_interval": env_settings.stream_reconnect_interval,
@@ -97,6 +100,9 @@ async def save_settings(payload: SettingsPayload):
     # Classifier settings
     config.classifier_velocity_threshold = payload.classifier_velocity_threshold
 
+    # Tracking FPS
+    config.tracking_fps = max(1.0, min(30.0, payload.tracking_fps))
+
     # Write to settings.json
     try:
         with open(SETTINGS_FILE, "w") as f:
@@ -126,6 +132,8 @@ async def save_settings(payload: SettingsPayload):
                 "tracker_appearance_thresh": config.tracker_appearance_thresh,
 
                 "classifier_velocity_threshold": config.classifier_velocity_threshold,
+
+                "tracking_fps": config.tracking_fps,
 
                 # Env / Streaming overrides
                 "default_rtsp_port": payload.default_rtsp_port,
