@@ -50,6 +50,7 @@ class CameraStream:
     last_frame_time: Optional[datetime] = None
     reconnect_count: int = 0
     _latest_jpeg: Optional[bytes] = field(default=None, repr=False)
+    _latest_jpeg_ws: Optional[bytes] = field(default=None, repr=False)  # Smaller, for WebSocket
     # Internal
     _thread: Optional[threading.Thread] = field(default=None, repr=False)
     _stop_event: threading.Event = field(default_factory=threading.Event, repr=False)
@@ -173,7 +174,7 @@ class StreamManager:
                 return cs._buffer[-1]
         return None
 
-    def get_jpeg(self, camera_id: int, quality: int = 75) -> Optional[bytes]:
+    def get_jpeg(self, camera_id: int, quality: int = 50) -> Optional[bytes]:
         """Return pre-encoded JPEG bytes with zero CPU re-encoding overhead."""
         cs = self._streams.get(camera_id)
         if not cs:
@@ -185,6 +186,21 @@ class StreamManager:
                 frame = cs._buffer[-1]
                 ok, buf = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, quality])
                 return buf.tobytes() if ok else None
+        return None
+
+    def get_jpeg_for_ws(self, camera_id: int) -> Optional[bytes]:
+        """Return a small, downscaled JPEG for WebSocket base64 delivery.
+
+        Downscales to max 640px wide and uses quality 40 to minimise
+        the base64 string size and reduce heap allocation pressure on
+        memory-constrained systems.
+        """
+        cs = self._streams.get(camera_id)
+        if not cs:
+            return None
+        with cs._lock:
+            if cs._latest_jpeg_ws:
+                return cs._latest_jpeg_ws
         return None
 
     async def mjpeg_generator(self, camera_id: int, fps_limit: float = 15.0):
@@ -252,6 +268,11 @@ class StreamManager:
                 cap = cv2.VideoCapture(cs.rtsp_url, cv2.CAP_FFMPEG)
                 cap.set(cv2.CAP_PROP_OPEN_TIMEOUT_MSEC, timeout * 1000)
                 cap.set(cv2.CAP_PROP_READ_TIMEOUT_MSEC, timeout * 1000)
+                # Attempt GPU hardware decoding (NVDEC/VAAPI) to offload video decoding from CPU
+                try:
+                    cap.set(cv2.CAP_PROP_HW_ACCELERATION, cv2.VIDEO_ACCELERATION_ANY)
+                except Exception:
+                    pass
                 if transport == "tcp":
                     cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*"H264"))
 
@@ -263,6 +284,9 @@ class StreamManager:
                 print(f"[StreamManager] 🟢 Camera {cs.camera_id} ONLINE")
 
                 consecutive_failures = 0
+                last_jpeg_time = 0.0  # Track when we last encoded a JPEG
+                jpeg_interval = 0.1   # Only encode JPEGs at ~10 FPS max
+
                 while not cs._stop_event.is_set():
                     ret, frame = cap.read()
                     if not ret or frame is None:
@@ -275,17 +299,33 @@ class StreamManager:
                     consecutive_failures = 0
                     now = time.monotonic()
 
-                    # Pre-encode JPEG once in background thread
-                    ok, buf = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, 75])
-                    jpeg_bytes = buf.tobytes() if ok else None
-
+                    # Always update the raw frame buffer (needed for AI inference)
                     with cs._lock:
                         cs._buffer.append(frame)
                         cs._frame_times.append(now)
-                        if jpeg_bytes:
-                            cs._latest_jpeg = jpeg_bytes
 
                     cs.last_frame_time = datetime.now(timezone.utc)
+
+                    # Only encode JPEGs at a throttled rate to save CPU.
+                    # The RTSP stream runs at 25+ FPS but the AI stream and
+                    # MJPEG viewers only need ~10 FPS of encoded images.
+                    if (now - last_jpeg_time) >= jpeg_interval:
+                        last_jpeg_time = now
+
+                        # Encode a small downscaled JPEG for WebSocket delivery
+                        h_f, w_f = frame.shape[:2]
+                        if w_f > 640:
+                            scale = 640.0 / w_f
+                            small = cv2.resize(frame, (640, int(h_f * scale)), interpolation=cv2.INTER_AREA)
+                        else:
+                            small = frame
+                        ok_ws, buf_ws = cv2.imencode(".jpg", small, [cv2.IMWRITE_JPEG_QUALITY, 40])
+
+                        with cs._lock:
+                            if ok_ws:
+                                cs._latest_jpeg_ws = buf_ws.tobytes()
+                            # Clear full-size cache so get_jpeg() re-encodes on next call
+                            cs._latest_jpeg = None
 
                     if len(cs._frame_times) >= 2:
                         dt = cs._frame_times[-1] - cs._frame_times[0]
