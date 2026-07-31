@@ -45,24 +45,68 @@ if (-not (Test-Path ".env")) {
     Write-Host "[OK] .env file already exists." -ForegroundColor Green
 }
 
-# 5. Setup Python Virtual Environment and Backend Dependencies
-Write-Host "[INFO] Setting up Python Virtual Environment..." -ForegroundColor Yellow
-if (-not (Test-Path "backend\venv")) {
-    python -m venv backend\venv
+# 5. Setup Python Virtual Environment and GPU-Accelerated Backend Dependencies
+Write-Host "[INFO] Setting up Python Virtual Environment with CUDA GPU acceleration..." -ForegroundColor Yellow
+$PythonLauncher = "python"
+if (Get-Command "py" -ErrorAction SilentlyContinue) {
+    if (py -3.13 --version 2>$null) {
+        $PythonLauncher = "py -3.13"
+    } elseif (py -3.12 --version 2>$null) {
+        $PythonLauncher = "py -3.12"
+    }
 }
 
-$PipCmd = "backend\venv\Scripts\pip.exe"
-if (Test-Path $PipCmd) {
-    Write-Host "[INFO] Installing backend dependencies..." -ForegroundColor Yellow
-    if (Test-Path "backend\requirements.lock") {
-        & $PipCmd install -r backend\requirements.lock
-    } elseif (Test-Path "backend\requirements.txt") {
-        & $PipCmd install -r backend\requirements.txt
+if (-not (Test-Path "backend\venv")) {
+    Invoke-Expression "$PythonLauncher -m venv backend\venv"
+}
+
+$PyCmd = "backend\venv\Scripts\python.exe"
+if (Test-Path $PyCmd) {
+    Write-Host "[INFO] Upgrading pip..." -ForegroundColor Yellow
+    & $PyCmd -m pip install --upgrade pip 2>$null
+
+    # ── GPU Detection ──────────────────────────────────────────────────
+    $HasGPU = $false
+    try {
+        $NvidiaSmiOutput = & nvidia-smi --query-gpu=name --format=csv,noheader 2>$null
+        if ($LASTEXITCODE -eq 0 -and $NvidiaSmiOutput) {
+            $HasGPU = $true
+            Write-Host "[INFO] NVIDIA GPU detected: $NvidiaSmiOutput" -ForegroundColor Green
+        }
+    } catch {}
+
+    if ($HasGPU) {
+        Write-Host "[INFO] Installing PyTorch with CUDA 12.4 & ONNX Runtime GPU..." -ForegroundColor Yellow
+        & $PyCmd -m pip install torch torchvision --index-url https://download.pytorch.org/whl/cu124
+        & $PyCmd -m pip install onnxruntime-gpu
     } else {
-        Write-Host "[WARNING] Could not find requirements.lock or requirements.txt in the backend folder." -ForegroundColor Yellow
+        Write-Host "[INFO] No NVIDIA GPU found. Installing CPU-only PyTorch..." -ForegroundColor Yellow
+        & $PyCmd -m pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu
+        & $PyCmd -m pip install onnxruntime
+    }
+
+    # ── Dynamically add user site-packages to venv search path ────────
+    # This allows GPU wheels installed in the user profile to be found
+    $UserSite = & $PyCmd -c "import site; print(site.getusersitepackages())" 2>$null
+    $SystemSite = & $PyCmd -c "import site; print(site.getsitepackages()[0])" 2>$null
+    if ($UserSite) {
+        $PthFile = "backend\venv\Lib\site-packages\custom_gpu_paths.pth"
+        @($UserSite, $SystemSite) | Where-Object { $_ } | Out-File -FilePath $PthFile -Encoding utf8 -Force
+    }
+
+    Write-Host "[INFO] Installing remaining backend dependencies..." -ForegroundColor Yellow
+    if (Test-Path "backend\requirements.txt") {
+        # Filter out torch/onnxruntime — already installed above with the correct GPU build
+        $filteredDeps = Get-Content "backend\requirements.txt" | Where-Object {
+            $_ -notmatch '^(torch|torchvision|onnxruntime)' -and $_ -ne ''
+        }
+        $tmpReq = [System.IO.Path]::GetTempFileName() + ".txt"
+        $filteredDeps | Out-File -FilePath $tmpReq -Encoding utf8
+        & $PyCmd -m pip install -r $tmpReq
+        Remove-Item $tmpReq -ErrorAction SilentlyContinue
     }
 } else {
-    Write-Host "[ERROR] Virtual environment pip not found." -ForegroundColor Red
+    Write-Host "[ERROR] Virtual environment python executable not found." -ForegroundColor Red
     exit 1
 }
 

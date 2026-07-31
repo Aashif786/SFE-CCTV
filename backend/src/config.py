@@ -127,6 +127,9 @@ class DetectionConfig:
     # Classifier parameters
     classifier_velocity_threshold: float = 0.05
 
+    # AI WebSocket tracking rate (FPS delivered to the frontend)
+    tracking_fps: float = 5.0
+
 config = DetectionConfig()
 SETTINGS_FILE = os.path.join(os.path.dirname(__file__), "..", "settings.json")
 
@@ -166,6 +169,9 @@ if os.path.exists(SETTINGS_FILE):
             # Classifier parameters
             if "classifier_velocity_threshold" in data: config.classifier_velocity_threshold = float(data["classifier_velocity_threshold"])
 
+            # Tracking FPS
+            if "tracking_fps" in data: config.tracking_fps = float(data["tracking_fps"])
+
             print(f"Loaded persistent settings from {SETTINGS_FILE}")
     except Exception as e:
         print(f"Error loading settings: {e}")
@@ -201,6 +207,9 @@ class SettingsPayload(BaseModel):
     # Classifier parameters
     classifier_velocity_threshold: float = Field(default=0.05)
 
+    # AI tracking FPS
+    tracking_fps: float = Field(default=5.0)
+
     # Env / Streaming settings (overridden dynamically)
     default_rtsp_port: int = Field(default=554)
     stream_reconnect_interval: int = Field(default=5)
@@ -213,6 +222,12 @@ class SettingsPayload(BaseModel):
 
 def sync_tracker_config():
     tracker_path = os.path.join(os.path.dirname(__file__), "..", "custom_tracker.yaml")
+    # Use absolute path for the ReID model so it resolves correctly regardless of CWD.
+    # On Windows, relative paths in YAML break when uvicorn CWD differs from backend/.
+    _backend_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+    _reid_model_path = os.path.join(_backend_dir, "yolo26m-reid.onnx")
+    # Normalize to forward slashes for cross-platform YAML compatibility
+    _reid_model_path = _reid_model_path.replace("\\", "/")
     yaml_content = f"""# Auto-generated BoT-SORT tracker configuration
 tracker_type: botsort
 track_high_thresh: {config.tracker_track_high_thresh}
@@ -227,7 +242,7 @@ gmc_method: {config.tracker_gmc_method}
 
 # ReID
 with_reid: {str(config.tracker_with_reid)}
-model: yolo26m-reid.onnx
+model: {_reid_model_path}
 proximity_thresh: {config.tracker_proximity_thresh}
 appearance_thresh: {config.tracker_appearance_thresh}
 """
