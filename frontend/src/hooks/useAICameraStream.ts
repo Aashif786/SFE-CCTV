@@ -10,6 +10,24 @@ import { useEffect, useRef, useState, useCallback } from "react";
  * for rendering overlays on the MJPEG <img>.
  */
 
+export interface CameraZone {
+  id: string;
+  name: string;
+  color: string;
+  description?: string | null;
+  points: [number, number][];
+  enabled: boolean;
+}
+
+export interface ZoneStatus {
+  zone_id: string;
+  zone_name: string;
+  zone_color: string;
+  dwell_seconds: number;
+  formatted_dwell: string;
+  entry_time: string;
+}
+
 export interface AIDetection {
   track_id: number;
   activity: string;
@@ -18,6 +36,8 @@ export interface AIDetection {
   confidence: number;
   idle_seconds: number;
   worker_position: [number, number] | null;
+  foot_position?: [number, number] | null;
+  zone_status?: ZoneStatus | null;
   keypoints: [number, number][];
   box: [number, number, number, number];
   identity: {
@@ -46,6 +66,7 @@ interface UseAICameraStreamResult {
   movementScore: number;
   detectionCount: number;
   zone: number[];
+  zones: CameraZone[];
   fps: number;
   image: string | null;
   disconnect: () => void;
@@ -64,6 +85,7 @@ export function useAICameraStream(
   const [movementScore, setMovementScore] = useState(0);
   const [detectionCount, setDetectionCount] = useState(0);
   const [zone, setZone] = useState<number[]>([0, 0, 1, 1]);
+  const [zones, setZones] = useState<CameraZone[]>([]);
   const [fps, setFps] = useState(0);
   const [image, setImage] = useState<string | null>(null);
 
@@ -94,6 +116,7 @@ export function useAICameraStream(
     setStatus("connecting");
     setDetections([]);
     setActivity("no_person");
+    setZones([]);
     setFps(0);
     setImage(null);
     lastMsgTimeRef.current = 0;
@@ -147,6 +170,9 @@ export function useAICameraStream(
         if (data.zone) {
           setZone(data.zone);
         }
+        if (data.zones) {
+          setZones(data.zones);
+        }
         if (data.image) {
           setImage(data.image);
         }
@@ -189,6 +215,7 @@ export function useAICameraStream(
     movementScore,
     detectionCount,
     zone,
+    zones,
     fps,
     image,
     disconnect,

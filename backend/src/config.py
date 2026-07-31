@@ -110,6 +110,7 @@ class DetectionConfig:
     yolo_imgsz: int = 960
     ema_alpha: float = 0.80
     max_tracked_people: int = 10
+    ai_stream_fps: int = 15  # Target FPS for the AI WebSocket stream
 
     # Tracker parameters
     tracker_track_high_thresh: float = 0.30
@@ -151,6 +152,7 @@ if os.path.exists(SETTINGS_FILE):
             if "yolo_imgsz" in data: config.yolo_imgsz = int(data["yolo_imgsz"])
             if "ema_alpha" in data: config.ema_alpha = float(data["ema_alpha"])
             if "max_tracked_people" in data: config.max_tracked_people = int(data["max_tracked_people"])
+            if "ai_stream_fps" in data: config.ai_stream_fps = int(data["ai_stream_fps"])
 
             # Tracker parameters
             if "tracker_track_high_thresh" in data: config.tracker_track_high_thresh = float(data["tracker_track_high_thresh"])
@@ -188,6 +190,7 @@ class SettingsPayload(BaseModel):
     yolo_imgsz: int = Field(default=960)
     ema_alpha: float = Field(default=0.80)
     max_tracked_people: int = Field(default=10)
+    ai_stream_fps: int = Field(default=15, ge=1, le=60)
 
     # Tracker parameters
     tracker_track_high_thresh: float = Field(default=0.30)

@@ -1,6 +1,6 @@
 {
-    "idle_threshold_seconds": 4.0,
-    "movement_sensitivity": 0.1268,
+    "idle_threshold_seconds": 5.0,
+    "movement_sensitivity": 0.0978,
     "confidence_threshold": 0.5,
     "correlation_window_seconds": 5.0,
     "identity_provider": "HIKVISION_ISAPI",
@@ -9,7 +9,8 @@
     "yolo_iou": 0.9,
     "yolo_imgsz": 1280,
     "ema_alpha": 0.8,
-    "max_tracked_people": 2,
+    "max_tracked_people": 1,
+    "ai_stream_fps": 10,
     "tracker_track_high_thresh": 0.3,
     "tracker_track_low_thresh": 0.1,
     "tracker_new_track_thresh": 0.5,

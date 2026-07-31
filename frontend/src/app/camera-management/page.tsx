@@ -15,9 +15,11 @@ import {
   CheckCircle2,
   XCircle,
   RefreshCw,
+  Layers,
 } from "lucide-react";
 import { useCameras, useCameraActions } from "@/hooks/useCameras";
 import CameraFormModal from "@/components/cameras/CameraFormModal";
+import ZoneManagementModal from "@/components/cameras/ZoneManagementModal";
 import type { CameraInfo } from "@/hooks/useCameras";
 
 // ---------------------------------------------------------------------------
@@ -57,6 +59,7 @@ export default function CameraManagementPage() {
   const [search, setSearch] = useState("");
   const [modalOpen, setModalOpen] = useState(false);
   const [editCamera, setEditCamera] = useState<CameraInfo | null>(null);
+  const [zoneModalCamera, setZoneModalCamera] = useState<CameraInfo | null>(null);
   const [deleteConfirm, setDeleteConfirm] = useState<CameraInfo | null>(null);
   const [actionLoading, setActionLoading] = useState<number | null>(null);
   const [toast, setToast] = useState<{ ok: boolean; msg: string } | null>(null);
@@ -268,6 +271,13 @@ export default function CameraManagementPage() {
                     <td className="px-4 py-3">
                       <div className="flex items-center justify-end gap-1">
                         <button
+                          onClick={() => setZoneModalCamera(cam)}
+                          className="p-1.5 rounded-lg text-violet-600 dark:text-violet-400 hover:bg-violet-500/10 transition-colors"
+                          title="Manage Polygonal Zones"
+                        >
+                          <Layers className="w-4 h-4" />
+                        </button>
+                        <button
                           onClick={() => handleToggleEnabled(cam)}
                           disabled={actionLoading === cam.id}
                           className={`p-1.5 rounded-lg transition-colors ${
@@ -400,6 +410,14 @@ export default function CameraManagementPage() {
         onClose={() => setModalOpen(false)}
         onSaved={handleSaved}
         camera={editCamera}
+      />
+
+      {/* Zone Management Modal */}
+      <ZoneManagementModal
+        camera={zoneModalCamera}
+        isOpen={!!zoneModalCamera}
+        onClose={() => setZoneModalCamera(null)}
+        onZonesUpdated={refetch}
       />
     </div>
   );

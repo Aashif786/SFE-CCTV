@@ -1,0 +1,226 @@
+"""
+Dwell Time & Zone Transition Tracking Engine.
+
+Tracks active zone visits per camera and track ID, handles seamless zone transitions,
+persists completed visits to SQLite database (ZoneVisitDB), and calculates real-time
+dwell time durations.
+"""
+
+from __future__ import annotations
+
+import threading
+from dataclasses import dataclass
+from datetime import datetime, timezone
+from typing import Dict, Optional, Tuple
+
+from ..db.database import SessionLocal
+from ..db.models import ZoneVisitDB
+
+
+def format_dwell_time(seconds: float) -> str:
+    """Format seconds into HH:MM:SS or MM:SS string."""
+    total_sec = int(max(0, seconds))
+    hours = total_sec // 3600
+    minutes = (total_sec % 3600) // 60
+    secs = total_sec % 60
+    if hours > 0:
+        return f"{hours:02d}:{minutes:02d}:{secs:02d}"
+    return f"{minutes:02d}:{secs:02d}"
+
+
+@dataclass
+class ActiveZoneVisit:
+    camera_id: str
+    zone_id: str
+    zone_name: str
+    zone_color: str
+    tracking_id: str
+    person_identifier: Optional[str]
+    entry_time: datetime
+    db_visit_id: int
+
+
+class ZoneDwellTracker:
+    """Thread-safe active visit & transition manager."""
+
+    def __init__(self) -> None:
+        # { camera_id: { track_id: ActiveZoneVisit } }
+        self._active_visits: Dict[str, Dict[str, ActiveZoneVisit]] = {}
+        self._lock = threading.Lock()
+
+    def update_track_zone(
+        self,
+        camera_id: str,
+        track_id: str,
+        current_zone: Optional[Dict[str, str]],  # {"id": str, "name": str, "color": str}
+        person_identifier: Optional[str] = None,
+        timestamp: Optional[datetime] = None,
+    ) -> Tuple[Optional[Dict[str, Any]], float]:
+        """
+        Process a track's current zone evaluation.
+
+        Returns:
+            (zone_status_dict, dwell_seconds)
+            where zone_status_dict = {
+                "zone_id": str,
+                "zone_name": str,
+                "zone_color": str,
+                "dwell_seconds": float,
+                "formatted_dwell": str,
+                "entry_time": str (ISO format),
+            }
+        """
+        cam_key = str(camera_id)
+        str_trk_id = str(track_id)
+        now = timestamp or datetime.now(timezone.utc).replace(tzinfo=None)
+
+        with self._lock:
+            if cam_key not in self._active_visits:
+                self._active_visits[cam_key] = {}
+
+            cam_visits = self._active_visits[cam_key]
+            active_visit = cam_visits.get(str_trk_id)
+
+            current_zone_id = current_zone["id"] if current_zone else None
+
+            # Case 1: Outside all zones
+            if not current_zone_id:
+                if active_visit:
+                    self._close_visit_in_db(active_visit, now)
+                    cam_visits.pop(str_trk_id, None)
+                return None, 0.0
+
+            # Case 2: In same zone as active visit
+            if active_visit and active_visit.zone_id == current_zone_id:
+                dwell_sec = max(0.0, (now - active_visit.entry_time).total_seconds())
+                # Update person identifier if newly resolved
+                if person_identifier and not active_visit.person_identifier:
+                    active_visit.person_identifier = person_identifier
+                    self._update_person_identifier_in_db(active_visit.db_visit_id, person_identifier)
+
+                return {
+                    "zone_id": active_visit.zone_id,
+                    "zone_name": active_visit.zone_name,
+                    "zone_color": active_visit.zone_color,
+                    "dwell_seconds": round(dwell_sec, 1),
+                    "formatted_dwell": format_dwell_time(dwell_sec),
+                    "entry_time": active_visit.entry_time.isoformat(),
+                }, dwell_sec
+
+            # Case 3: Transitioning from zone_A -> zone_B (or new entry)
+            if active_visit:
+                self._close_visit_in_db(active_visit, now)
+                cam_visits.pop(str_trk_id, None)
+
+            # Open new visit
+            db_id = self._open_visit_in_db(
+                camera_id=cam_key,
+                zone_id=current_zone_id,
+                tracking_id=str_trk_id,
+                person_identifier=person_identifier,
+                entry_time=now,
+            )
+
+            new_visit = ActiveZoneVisit(
+                camera_id=cam_key,
+                zone_id=current_zone_id,
+                zone_name=current_zone.get("name", current_zone_id),
+                zone_color=current_zone.get("color", "#3B82F6"),
+                tracking_id=str_trk_id,
+                person_identifier=person_identifier,
+                entry_time=now,
+                db_visit_id=db_id,
+            )
+            cam_visits[str_trk_id] = new_visit
+
+            return {
+                "zone_id": new_visit.zone_id,
+                "zone_name": new_visit.zone_name,
+                "zone_color": new_visit.zone_color,
+                "dwell_seconds": 0.0,
+                "formatted_dwell": "00:00",
+                "entry_time": now.isoformat(),
+            }, 0.0
+
+    def close_track_visit(self, camera_id: str, track_id: str) -> None:
+        """Close active visit when a track disappears or closes."""
+        cam_key = str(camera_id)
+        str_trk_id = str(track_id)
+        now = datetime.now(timezone.utc).replace(tzinfo=None)
+
+        with self._lock:
+            if cam_key in self._active_visits:
+                visit = self._active_visits[cam_key].pop(str_trk_id, None)
+                if visit:
+                    self._close_visit_in_db(visit, now)
+
+    def close_all_camera_visits(self, camera_id: str) -> None:
+        """Close all active visits for a camera on stream shutdown/disconnect."""
+        cam_key = str(camera_id)
+        now = datetime.now(timezone.utc).replace(tzinfo=None)
+
+        with self._lock:
+            if cam_key in self._active_visits:
+                visits = self._active_visits.pop(cam_key, {})
+                for visit in visits.values():
+                    self._close_visit_in_db(visit, now)
+
+    # ── Database Helpers ───────────────────────────────────────────────────
+
+    def _open_visit_in_db(
+        self,
+        camera_id: str,
+        zone_id: str,
+        tracking_id: str,
+        person_identifier: Optional[str],
+        entry_time: datetime,
+    ) -> int:
+        try:
+            with SessionLocal() as db:
+                row = ZoneVisitDB(
+                    camera_id=camera_id,
+                    zone_id=zone_id,
+                    tracking_id=tracking_id,
+                    person_identifier=person_identifier,
+                    entry_time=entry_time,
+                    exit_time=None,
+                    duration_seconds=None,
+                )
+                db.add(row)
+                db.commit()
+                db.refresh(row)
+                return row.id
+        except Exception as e:
+            print(f"⚠️  [DwellTracker] Error opening visit in DB: {e}")
+            return -1
+
+    def _close_visit_in_db(self, visit: ActiveZoneVisit, exit_time: datetime) -> None:
+        if visit.db_visit_id <= 0:
+            return
+        duration = max(0.0, (exit_time - visit.entry_time).total_seconds())
+        try:
+            with SessionLocal() as db:
+                row = db.query(ZoneVisitDB).filter(ZoneVisitDB.id == visit.db_visit_id).first()
+                if row:
+                    row.exit_time = exit_time
+                    row.duration_seconds = round(duration, 2)
+                    if visit.person_identifier:
+                        row.person_identifier = visit.person_identifier
+                    db.commit()
+        except Exception as e:
+            print(f"⚠️  [DwellTracker] Error closing visit in DB: {e}")
+
+    def _update_person_identifier_in_db(self, db_visit_id: int, person_identifier: str) -> None:
+        if db_visit_id <= 0:
+            return
+        try:
+            with SessionLocal() as db:
+                row = db.query(ZoneVisitDB).filter(ZoneVisitDB.id == db_visit_id).first()
+                if row and not row.person_identifier:
+                    row.person_identifier = person_identifier
+                    db.commit()
+        except Exception as e:
+            print(f"⚠️  [DwellTracker] Error updating person_identifier in DB: {e}")
+
+
+dwell_tracker = ZoneDwellTracker()

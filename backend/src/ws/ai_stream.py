@@ -13,7 +13,7 @@ stream.  The client receives detection JSON and overlays it on the MJPEG
 Lifecycle
 ---------
 1.  Client opens WS → backend validates camera is online.
-2.  Backend loops at ~5 FPS: grab frame → detect → classify → send JSON.
+2.  Backend loops at target FPS: grab frame → detect → classify → send JSON.
 3.  Client closes WS → backend cleans up detector state.
 """
 
@@ -32,12 +32,14 @@ from fastapi import WebSocket, WebSocketDisconnect
 from ..cameras.stream_manager import stream_manager
 from ..config import config
 from ..db.database import SessionLocal
-from ..db.models import Alert
+from ..db.models import Alert, CameraZoneDB
 from ..detectors.pose_detector import WorkerDetector
 from ..activity.classifier import classifier
 from ..identity.correlation import correlation_engine
 from ..identity.session_manager import worker_session_manager
 from ..identity.models import CameraEntryEvent
+from ..zones.polygon_eval import is_point_in_polygon, zone_cache
+from ..zones.dwell_tracker import dwell_tracker
 from ..state import (
     session_managers,
     prev_track_ids,
@@ -60,6 +62,9 @@ ACTIVITY_COLOUR: dict[str, str] = {
 # Per-camera AI detector instances (separate from webcam detectors in state.py)
 _ai_detectors: dict[int, WorkerDetector] = {}
 _ai_detector_lock = asyncio.Lock()
+
+# Default FPS cap — overridden at runtime by config.ai_stream_fps
+_DEFAULT_AI_STREAM_FPS = 15
 
 
 async def camera_ai_endpoint(websocket: WebSocket, camera_id: int):
@@ -171,6 +176,8 @@ async def camera_ai_endpoint(websocket: WebSocket, camera_id: int):
                         continue
                     await asyncio.sleep(frame_interval)
                     continue
+                await asyncio.sleep(0.05)
+                continue
 
                 h, w, _ = frame.shape
                 frame_count += 1
@@ -182,12 +189,37 @@ async def camera_ai_endpoint(websocket: WebSocket, camera_id: int):
                     print(f"⚠️  [AI-WS] Detector error cam {camera_id}: {det_err}")
                     poses = []
 
-                # Load workstation zone
-                zone = get_zone_cached(cam_key)
+            # Load workstation zone (legacy rectangular zone)
+            zone = get_zone_cached(cam_key)
 
-                current_track_ids = {p["track_id"] for p in poses}
-                current_track_ids_str = {str(t) for t in current_track_ids}
-                previous_ids = prev_track_ids.get(cam_key, set())
+            # Load polygonal camera zones (cached)
+            camera_zones = zone_cache.get_zones(str(camera_id))
+            if not camera_zones:
+                with SessionLocal() as db:
+                    db_zones = db.query(CameraZoneDB).filter(
+                        CameraZoneDB.camera_id == str(camera_id),
+                        CameraZoneDB.enabled == True
+                    ).all()
+                    zones_data = []
+                    for z in db_zones:
+                        try:
+                            pts = json.loads(z.points_json)
+                        except Exception:
+                            pts = []
+                        zones_data.append({
+                            "id": z.zone_id,
+                            "name": z.name,
+                            "color": z.color,
+                            "description": z.description,
+                            "points": pts,
+                            "enabled": z.enabled,
+                        })
+                    zone_cache.set_zones(str(camera_id), zones_data)
+                    camera_zones = zones_data
+
+            current_track_ids: set[int] = {p["track_id"] for p in poses}
+            current_track_ids_str: set[str] = {str(t) for t in current_track_ids}
+            previous_ids = prev_track_ids.get(cam_key, set())
 
                 # Detect newly entered tracks → notify correlation engine
                 for p in poses:
@@ -237,6 +269,13 @@ async def camera_ai_endpoint(websocket: WebSocket, camera_id: int):
                 for p in poses:
                     trk_id = p["track_id"]
                     str_trk_id = str(trk_id)
+                    totals = track_activity_totals.get(str_trk_id)
+                    closed = worker_session_manager.close_session(str_trk_id, totals)
+                    if closed:
+                        print(f"[AI-WS] 🚪 Session closed for employee={closed.employee_id} track={trk_id}")
+                    dwell_tracker.close_track_visit(str(camera_id), str_trk_id)
+                    track_activity_totals.pop(str_trk_id, None)
+                    track_last_time.pop(str_trk_id, None)
 
                     keypoints_to_send = p["keypoints"] if p["confidence"] >= config.confidence_threshold else []
 
@@ -293,12 +332,59 @@ async def camera_ai_endpoint(websocket: WebSocket, camera_id: int):
                     if str_trk_id not in track_activity_totals:
                         track_activity_totals[str_trk_id] = {"working": 0.0, "walking": 0.0, "idle": 0.0, "no_person": 0.0}
 
-                    if str_trk_id in track_last_time:
-                        dt = (now_time - track_last_time[str_trk_id]).total_seconds()
-                        if dt < 2.0:
-                            track_activity_totals[str_trk_id][activity] += dt
+                # Resolve identity
+                worker_session = worker_session_manager.get_by_track(str_trk_id)
+                employee_id = worker_session.employee_id if worker_session else None
 
-                    track_last_time[str_trk_id] = now_time
+                # Calculate bottom-center point of bounding box (foot position)
+                box_n = p["box"]  # [x1, y1, x2, y2]
+                foot_x = float(box_n[0] + box_n[2]) / 2.0
+                foot_y = float(box_n[3])
+
+                # Point-in-polygon zone evaluation
+                matched_zone_dict = None
+                for cz in camera_zones:
+                    if cz.get("enabled", True) and cz.get("points"):
+                        if is_point_in_polygon(foot_x, foot_y, cz["points"], frame_width=w, frame_height=h):
+                            matched_zone_dict = {
+                                "id": cz["id"],
+                                "name": cz["name"],
+                                "color": cz.get("color", "#3B82F6"),
+                            }
+                            break
+
+                # Process dwell tracking visit & live duration
+                zone_status, dwell_sec = dwell_tracker.update_track_zone(
+                    camera_id=str(camera_id),
+                    track_id=str_trk_id,
+                    current_zone=matched_zone_dict,
+                    person_identifier=employee_id,
+                    timestamp=now_time,
+                )
+
+                detections_out.append({
+                    "track_id": trk_id,
+                    "activity": activity,
+                    "activity_colour": ACTIVITY_COLOUR.get(activity, "#6b7280"),
+                    "movement_score": round(p["movement_score"], 5),
+                    "confidence": round(p["confidence"], 3),
+                    "idle_seconds": round(idle_sec, 1),
+                    "worker_position": list(p["worker_pos"]) if p["worker_pos"] else None,
+                    "foot_position": [round(foot_x, 4), round(foot_y, 4)],
+                    "zone_status": zone_status,
+                    "keypoints": keypoints_to_send,
+                    "box": [
+                        round(float(p["box"][0]), 5),
+                        round(float(float(p["box"][1])), 5),
+                        round(float(p["box"][2]), 5),
+                        round(float(p["box"][3]), 5),
+                    ],
+                    "identity": {
+                        "employee_id": employee_id,
+                        "session_id": worker_session.session_id if worker_session else None,
+                        "correlation_delay": worker_session.correlation_delay_seconds if worker_session else None,
+                    },
+                })
 
                 # Drive session manager
                 if detections_out:
@@ -339,20 +425,44 @@ async def camera_ai_endpoint(websocket: WebSocket, camera_id: int):
                 }
                 await websocket.send_text(json.dumps(response))
 
-                # ── Throttle to target FPS ─────────────────────────────────────
-                elapsed = time.monotonic() - loop_start
-                sleep_time = frame_interval - elapsed
-                if sleep_time > 0.001:
-                    await asyncio.sleep(sleep_time)
-                else:
-                    await asyncio.sleep(0)
+            # Get latest JPEG frame — use the lightweight WS-specific version
+            # to reduce memory allocation pressure on swap-constrained systems.
+            # Offload base64 encoding to thread pool so the event loop stays free.
+            target_fps = max(1, getattr(config, "ai_stream_fps", _DEFAULT_AI_STREAM_FPS))
+            frame_interval = 1.0 / target_fps
 
-        finally:
-            stop_listener.cancel()
-            try:
-                await stop_listener
-            except (asyncio.CancelledError, Exception):
-                pass
+            image_b64 = ""
+            jpeg_bytes = stream_manager.get_jpeg_for_ws(camera_id)
+            if jpeg_bytes:
+                image_b64 = await asyncio.to_thread(
+                    lambda b: "data:image/jpeg;base64," + base64.b64encode(b).decode("ascii"),
+                    jpeg_bytes,
+                )
+
+            # Send response
+            response = {
+                "status": "tracking",
+                "camera_id": camera_id,
+                "timestamp": datetime.utcnow().isoformat(),
+                "activity": detections_out[0]["activity"] if detections_out else "no_person",
+                "activity_colour": detections_out[0]["activity_colour"] if detections_out else "#6b7280",
+                "idle_seconds": detections_out[0]["idle_seconds"] if detections_out else 0.0,
+                "idle_threshold_seconds": config.idle_threshold_seconds,
+                "confidence": detections_out[0]["confidence"] if detections_out else 0.0,
+                "movement_score": detections_out[0]["movement_score"] if detections_out else 0.0,
+                "zone": list(zone),
+                "zones": camera_zones,
+                "detections": detections_out,
+                "detection_count": len(detections_out),
+                "image": image_b64,
+            }
+            await websocket.send_text(json.dumps(response))
+
+            # Throttle to target FPS (reads config live so changes take effect immediately)
+            elapsed = time.monotonic() - loop_start
+            sleep_time = frame_interval - elapsed
+            if sleep_time > 0:
+                await asyncio.sleep(sleep_time)
 
     except WebSocketDisconnect:
         print(f"🧠 [AI-WS] Disconnected for camera {camera_id}")
@@ -360,6 +470,8 @@ async def camera_ai_endpoint(websocket: WebSocket, camera_id: int):
         print(f"❌ [AI-WS] Fatal error for camera {camera_id}: {e}")
     finally:
         # Cleanup
+        dwell_tracker.close_all_camera_visits(str(camera_id))
+
         if cam_key in session_managers:
             session_managers[cam_key].close_on_disconnect()
 

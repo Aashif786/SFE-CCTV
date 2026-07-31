@@ -87,6 +87,7 @@ export default function AICameraTile({ camera, onRefresh }: AICameraTileProps) {
     movementScore,
     detectionCount,
     zone,
+    zones,
     fps: aiFps,
     image,
   } = useAICameraStream(isOnline ? camera.id : null);
@@ -134,6 +135,14 @@ export default function AICameraTile({ camera, onRefresh }: AICameraTileProps) {
     }
   }, [camera.id, restartStream, onRefresh]);
 
+function hexToRgba(hex: string, alpha: number): string {
+  let c = (hex || "#3B82F6").replace("#", "");
+  if (c.length === 3) c = c.split("").map((x) => x + x).join("");
+  const num = parseInt(c, 16);
+  if (isNaN(num)) return `rgba(59, 130, 246, ${alpha})`;
+  return `rgba(${(num >> 16) & 255}, ${(num >> 8) & 255}, ${num & 255}, ${alpha})`;
+}
+
   // ── Draw detection overlay on canvas ────────────────────────────────────
 
   useEffect(() => {
@@ -156,8 +165,49 @@ export default function AICameraTile({ camera, onRefresh }: AICameraTileProps) {
     const cw = canvas.width;
     const ch = canvas.height;
 
-    // Draw workstation zone boundary
-    if (zone && zone.length === 4) {
+    // Draw multi-zone polygonal ROIs
+    if (zones && zones.length > 0) {
+      zones.forEach((z) => {
+        if (!z.enabled || !z.points || z.points.length < 3) return;
+
+        // Check if points are in pixel coordinates or normalized
+        const maxPx = Math.max(...z.points.map((pt) => pt[0]));
+        const maxPy = Math.max(...z.points.map((pt) => pt[1]));
+        const isPixel = maxPx > 1.0 || maxPy > 1.0;
+
+        const canvasPoints: [number, number][] = z.points.map(([px, py]) => [
+          isPixel ? px : px * cw,
+          isPixel ? py : py * ch,
+        ]);
+
+        ctx.beginPath();
+        ctx.moveTo(canvasPoints[0][0], canvasPoints[0][1]);
+        for (let i = 1; i < canvasPoints.length; i++) {
+          ctx.lineTo(canvasPoints[i][0], canvasPoints[i][1]);
+        }
+        ctx.closePath();
+
+        // Semi-transparent fill & border
+        ctx.fillStyle = hexToRgba(z.color, 0.18);
+        ctx.fill();
+        ctx.strokeStyle = z.color;
+        ctx.lineWidth = 2;
+        ctx.setLineDash([6, 4]);
+        ctx.stroke();
+        ctx.setLineDash([]);
+
+        // Zone Name Label Tag
+        const firstPt = canvasPoints[0];
+        ctx.font = "bold 11px Arial";
+        const tagText = z.name;
+        const tagWidth = ctx.measureText(tagText).width + 12;
+        ctx.fillStyle = z.color;
+        ctx.fillRect(firstPt[0], firstPt[1], tagWidth, 18);
+        ctx.fillStyle = "#ffffff";
+        ctx.fillText(tagText, firstPt[0] + 6, firstPt[1] + 13);
+      });
+    } else if (zone && zone.length === 4) {
+      // Legacy workstation zone boundary fallback
       const [zx1, zy1, zx2, zy2] = zone;
       const px = zx1 * cw;
       const py = zy1 * ch;
@@ -214,6 +264,18 @@ export default function AICameraTile({ camera, onRefresh }: AICameraTileProps) {
       ctx.fillStyle = "#ffffff";
       ctx.fillText(pillLabel, bx1 + 6, by1 - pillH / 3);
 
+      // Zone Dwell Badge on top of bounding box if person is in a zone
+      if (det.zone_status) {
+        const zoneTag = `📍 ${det.zone_status.zone_name} (${det.zone_status.formatted_dwell})`;
+        ctx.font = `bold ${Math.max(8, fontSize - 1)}px Arial`;
+        const zPillW = ctx.measureText(zoneTag).width + 10;
+        const zPillH = Math.max(14, pillH - 2);
+        ctx.fillStyle = det.zone_status.zone_color || "#3B82F6";
+        ctx.fillRect(bx1, by1 - pillH - zPillH - 2, zPillW, zPillH);
+        ctx.fillStyle = "#ffffff";
+        ctx.fillText(zoneTag, bx1 + 5, by1 - pillH - 5);
+      }
+
       // Skeleton
       if (det.keypoints && det.keypoints.length > 0) {
         const pts = det.keypoints.map(([px, py]) => [px * cw, py * ch]);
@@ -247,8 +309,19 @@ export default function AICameraTile({ camera, onRefresh }: AICameraTileProps) {
         });
       }
 
-      // Hip-centre dot
-      if (
+      // Foot Position Indicator Dot (bottom-center)
+      if (det.foot_position) {
+        const [fx, fy] = det.foot_position;
+        const footPx = fx * cw;
+        const footPy = fy * ch;
+        ctx.beginPath();
+        ctx.arc(footPx, footPy, Math.max(3, dotR + 1), 0, 2 * Math.PI);
+        ctx.fillStyle = det.zone_status?.zone_color || "#10B981";
+        ctx.fill();
+        ctx.strokeStyle = "#ffffff";
+        ctx.lineWidth = 1.5;
+        ctx.stroke();
+      } else if (
         det.worker_position &&
         det.worker_position[0] > 0.01 &&
         det.worker_position[1] > 0.01
@@ -263,7 +336,7 @@ export default function AICameraTile({ camera, onRefresh }: AICameraTileProps) {
         ctx.stroke();
       }
     });
-  }, [detections, zone, isOnline]);
+  }, [detections, zone, zones, isOnline]);
 
   // ── Status indicator ──────────────────────────────────────────────────
 

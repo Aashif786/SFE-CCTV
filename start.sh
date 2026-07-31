@@ -54,7 +54,7 @@ else
     fi
     
     # Run backend from the backend folder to ensure src package is found
-    (cd backend && PYTHONPATH="src:$PYTHONPATH" venv/bin/uvicorn src.main:app --host 0.0.0.0 --port 8000 --reload) &
+    (cd backend && PYTHONPATH="src:$PYTHONPATH" venv/bin/uvicorn src.main:app --host 0.0.0.0 --port 8000) &
     BACKEND_PID=$!
 
     # Run frontend
