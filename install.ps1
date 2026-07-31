@@ -45,24 +45,52 @@ if (-not (Test-Path ".env")) {
     Write-Host "[OK] .env file already exists." -ForegroundColor Green
 }
 
-# 5. Setup Python Virtual Environment and Backend Dependencies
-Write-Host "[INFO] Setting up Python Virtual Environment..." -ForegroundColor Yellow
-if (-not (Test-Path "backend\venv")) {
-    python -m venv backend\venv
+# 5. Setup Python Virtual Environment and GPU-Accelerated Backend Dependencies
+Write-Host "[INFO] Setting up Python Virtual Environment with CUDA GPU acceleration..." -ForegroundColor Yellow
+$PythonLauncher = "python"
+if (Get-Command "py" -ErrorAction SilentlyContinue) {
+    if (py -3.13 --version 2>$null) {
+        $PythonLauncher = "py -3.13"
+    } elseif (py -3.12 --version 2>$null) {
+        $PythonLauncher = "py -3.12"
+    }
 }
 
-$PipCmd = "backend\venv\Scripts\pip.exe"
-if (Test-Path $PipCmd) {
-    Write-Host "[INFO] Installing backend dependencies..." -ForegroundColor Yellow
-    if (Test-Path "backend\requirements.lock") {
-        & $PipCmd install -r backend\requirements.lock
-    } elseif (Test-Path "backend\requirements.txt") {
-        & $PipCmd install -r backend\requirements.txt
-    } else {
-        Write-Host "[WARNING] Could not find requirements.lock or requirements.txt in the backend folder." -ForegroundColor Yellow
+if (-not (Test-Path "backend\venv")) {
+    Invoke-Expression "$PythonLauncher -m venv --system-site-packages backend\venv"
+}
+
+$PyCmd = "backend\venv\Scripts\python.exe"
+if (Test-Path $PyCmd) {
+    Write-Host "[INFO] Upgrading pip & installing PyTorch CUDA 12.4 & ONNX Runtime GPU..." -ForegroundColor Yellow
+    & $PyCmd -m ensurepip 2>$null
+    
+    # Configure pyvenv.cfg for system site packages access
+    $PyCfg = "backend\venv\pyvenv.cfg"
+    if (Test-Path $PyCfg) {
+        (Get-Content $PyCfg) -replace "include-system-site-packages = false", "include-system-site-packages = true" | Set-Content $PyCfg
+    }
+
+    # Ensure custom pth links for GPU wheels
+    $PthFile = "backend\venv\Lib\site-packages\custom_gpu_paths.pth"
+    $PthLines = @(
+        "C:\Users\user\AppData\Roaming\Python\Python313\site-packages",
+        "C:\Users\user\AppData\Local\Programs\Python\Python313\Lib\site-packages"
+    )
+    $PthLines | Out-File -FilePath $PthFile -Encoding utf8 -Force
+
+    # Install PyTorch CUDA 12.4
+    & $PyCmd -m pip install torch torchvision --index-url https://download.pytorch.org/whl/cu124
+    
+    # Install ONNX Runtime GPU
+    & $PyCmd -m pip install onnxruntime-gpu
+
+    Write-Host "[INFO] Installing remaining backend dependencies..." -ForegroundColor Yellow
+    if (Test-Path "backend\requirements.txt") {
+        & $PyCmd -m pip install -r backend\requirements.txt
     }
 } else {
-    Write-Host "[ERROR] Virtual environment pip not found." -ForegroundColor Red
+    Write-Host "[ERROR] Virtual environment python executable not found." -ForegroundColor Red
     exit 1
 }
 

@@ -43,15 +43,28 @@ class WorkerDetector:
             self.device_id = 0
             self.device = "cuda:0"
             torch.backends.cudnn.benchmark = True
+            torch.backends.cuda.matmul.allow_tf32 = True
+            torch.backends.cudnn.allow_tf32 = True
+            print(f"[WorkerDetector] 🚀 GPU Acceleration Enabled: {torch.cuda.get_device_name(0)}")
         else:
             self.device_id = "cpu"
             self.device = "cpu"
             torch.set_num_threads(4)
+            print("[WorkerDetector] ⚠️ Running on CPU mode.")
 
         target_model = getattr(config, "yolo_model", "yolo11m-pose.pt")
         self.model = YOLO(target_model)
         self.model.to(self.device)
         self.model_name = target_model
+
+        # Warmup GPU engine to eliminate initial inference latency
+        if self.device != "cpu":
+            try:
+                dummy_frame = np.zeros((640, 640, 3), dtype=np.uint8)
+                use_half = True
+                self.model.predict(dummy_frame, device=self.device_id, half=use_half, verbose=False)
+            except Exception as e:
+                print(f"[WorkerDetector] Model GPU warmup note: {e}")
         
         # Per-track EMA smoothing state — keyed by track_id
         self.smoothed: dict[int, list[list[float]]] = {}
@@ -90,11 +103,13 @@ class WorkerDetector:
         # Use YOLO's built-in robust tracking (BoT-SORT / ByteTrack)
         # imgsz=640 gives fast 60+ FPS inference latency on CUDA GPUs
         tracker_config = os.path.join(os.path.dirname(__file__), "..", "..", "custom_tracker.yaml")
+        use_half = (self.device != "cpu")
         results = self.model.track(
             frame,
             persist=True,
             verbose=False,
             device=self.device_id,
+            half=use_half,
             conf=getattr(config, "yolo_conf", 0.30),
             iou=getattr(config, "yolo_iou", 0.90),
             imgsz=getattr(config, "yolo_imgsz", 640),
