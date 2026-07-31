@@ -40,11 +40,15 @@ interface PerZoneMetric {
 
 interface PerPersonMetric {
   person_identifier: string;
+  raw_person_id?: string | null;
+  tracking_id?: string;
   visit_count: number;
   total_occupancy_seconds: number;
   formatted_total_occupancy: string;
   average_dwell_seconds: number;
   formatted_average_dwell: string;
+  last_entry?: string | null;
+  is_inside?: boolean;
 }
 
 interface VisitRecord {
@@ -205,6 +209,7 @@ export default function ZoneAnalyticsPage() {
             value={selectedCamera}
             onChange={(e) => {
               setSelectedCamera(e.target.value);
+              setSelectedZone("all");
               setPage(0);
             }}
             className="w-full bg-[hsl(var(--bg-page))] border border-[hsl(var(--border))] rounded-xl px-3 py-2 text-xs font-medium text-[hsl(var(--text-primary))] focus:outline-none focus:ring-2 focus:ring-violet-500/50"
@@ -361,7 +366,13 @@ export default function ZoneAnalyticsPage() {
               {perZone.map((z) => (
                 <div
                   key={z.zone_id}
-                  className="p-3.5 rounded-xl bg-[hsl(var(--bg-page))] border border-[hsl(var(--border))] space-y-2"
+                  onClick={() => setSelectedZone(z.zone_id === selectedZone ? "all" : z.zone_id)}
+                  className={`p-3.5 rounded-xl bg-[hsl(var(--bg-page))] border transition-all cursor-pointer hover:border-violet-500/50 space-y-2 ${
+                    selectedZone === z.zone_id
+                      ? "border-violet-500 ring-2 ring-violet-500/20 shadow-md"
+                      : "border-[hsl(var(--border))]"
+                  }`}
+                  title="Click to filter tracks by this zone"
                 >
                   <div className="flex items-center justify-between">
                     <div className="flex items-center gap-2.5">
@@ -372,6 +383,11 @@ export default function ZoneAnalyticsPage() {
                       <span className="text-xs font-bold text-[hsl(var(--text-primary))]">
                         {z.zone_name}
                       </span>
+                      {selectedZone === z.zone_id && (
+                        <span className="text-[10px] bg-violet-500 text-white font-bold px-1.5 py-0.5 rounded">
+                          Selected Filter
+                        </span>
+                      )}
                     </div>
                     <div className="text-xs font-semibold text-[hsl(var(--text-secondary))]">
                       {z.visit_count} visit(s) · Avg: {z.formatted_average_dwell}
@@ -393,8 +409,9 @@ export default function ZoneAnalyticsPage() {
                       }}
                     />
                   </div>
-                  <div className="flex justify-end text-[10px] text-[hsl(var(--text-muted))]">
-                    Total Occupancy: {z.formatted_total_occupancy}
+                  <div className="flex justify-between items-center text-[10px] text-[hsl(var(--text-muted))]">
+                    <span>Click to filter tracks</span>
+                    <span>Total Occupancy: {z.formatted_total_occupancy}</span>
                   </div>
                 </div>
               ))}
@@ -402,40 +419,65 @@ export default function ZoneAnalyticsPage() {
           )}
         </div>
 
-        {/* Person Breakdown */}
+        {/* Person / Track Breakdown for Selected Zone */}
         <div className="p-6 rounded-2xl border border-[hsl(var(--border))] bg-[hsl(var(--bg-card))] shadow-sm space-y-4">
           <div className="flex items-center justify-between">
             <h3 className="text-base font-bold flex items-center gap-2">
               <Users className="w-5 h-5 text-emerald-500" />
-              Person Dwell Metrics
+              Tracks &amp; Persons in {selectedZone === "all" ? "All Zones" : "Selected Zone"}
             </h3>
-            <span className="text-xs text-[hsl(var(--text-muted))]">{perPerson.length} person(s)</span>
+            <span className="text-xs text-[hsl(var(--text-muted))]">{perPerson.length} occupant(s)</span>
           </div>
 
           {perPerson.length === 0 ? (
             <p className="text-xs text-[hsl(var(--text-muted))] py-6 text-center">
-              No person identity dwell data recorded yet.
+              No track or person visits recorded for the selected camera/zone filter.
             </p>
           ) : (
             <div className="overflow-x-auto">
               <table className="w-full text-xs">
                 <thead>
-                  <tr className="border-b border-[hsl(var(--border))] text-[hsl(var(--text-muted))] text-left">
-                    <th className="pb-2 font-bold uppercase">Person / Employee</th>
-                    <th className="pb-2 font-bold uppercase text-center">Visits</th>
-                    <th className="pb-2 font-bold uppercase text-right">Avg Dwell</th>
-                    <th className="pb-2 font-bold uppercase text-right">Total Time</th>
+                  <tr className="border-b border-[hsl(var(--border))] text-[hsl(var(--text-muted))] text-left uppercase">
+                    <th className="pb-2 font-bold">Track / Person</th>
+                    <th className="pb-2 font-bold text-center">Status</th>
+                    <th className="pb-2 font-bold text-center">Visits</th>
+                    <th className="pb-2 font-bold text-right">Avg Dwell</th>
+                    <th className="pb-2 font-bold text-right">Total Time</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-[hsl(var(--border))]/50">
-                  {perPerson.map((p) => (
-                    <tr key={p.person_identifier}>
+                  {perPerson.map((p, idx) => (
+                    <tr key={`${p.person_identifier}-${idx}`} className="hover:bg-[hsl(var(--bg-table-head))]/40">
                       <td className="py-2.5 font-bold text-[hsl(var(--text-primary))] flex items-center gap-2">
-                        <UserCheck className="w-4 h-4 text-emerald-500" />
-                        {p.person_identifier}
+                        <UserCheck className="w-4 h-4 text-emerald-500 shrink-0" />
+                        <div>
+                          <div>{p.person_identifier}</div>
+                          {p.last_entry && (
+                            <div className="text-[10px] text-[hsl(var(--text-muted))] font-normal">
+                              Last: {new Date(p.last_entry).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                            </div>
+                          )}
+                        </div>
+                      </td>
+                      <td className="py-2.5 text-center">
+                        <span
+                          className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold ${
+                            p.is_inside
+                              ? "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20"
+                              : "bg-gray-500/10 text-gray-500 dark:text-gray-400 border border-gray-500/20"
+                          }`}
+                        >
+                          {p.is_inside ? (
+                            <>
+                              <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" /> INSIDE
+                            </>
+                          ) : (
+                            "EXITED"
+                          )}
+                        </span>
                       </td>
                       <td className="py-2.5 text-center font-medium">{p.visit_count}</td>
-                      <td className="py-2.5 text-right font-mono">{p.formatted_average_dwell}</td>
+                      <td className="py-2.5 text-right font-mono text-[hsl(var(--text-secondary))]">{p.formatted_average_dwell}</td>
                       <td className="py-2.5 text-right font-mono font-bold text-emerald-500">
                         {p.formatted_total_occupancy}
                       </td>
@@ -447,6 +489,7 @@ export default function ZoneAnalyticsPage() {
           )}
         </div>
       </div>
+
 
       {/* Historical Visit Log Table */}
       <div className="p-6 rounded-2xl border border-[hsl(var(--border))] bg-[hsl(var(--bg-card))] shadow-sm space-y-4">

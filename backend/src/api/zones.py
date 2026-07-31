@@ -120,28 +120,32 @@ async def get_camera_zones(camera_id: str, db: Session = Depends(get_db)):
 async def upload_camera_zones(
     camera_id: str,
     request: Request,
-    file: Optional[UploadFile] = File(None),
     db: Session = Depends(get_db),
 ):
     """
     Upload and validate a JSON zone configuration file or JSON body for a camera.
     Replaces existing zones with the newly validated payload.
+    Supports both application/json body and multipart/form-data file upload.
     """
     raw_content = None
+    content_type = request.headers.get("content-type", "")
 
-    if file:
+    if "multipart/form-data" in content_type:
         try:
-            raw_bytes = await file.read()
-            raw_content = raw_bytes.decode("utf-8")
+            form = await request.form()
+            uploaded_file = form.get("file")
+            if uploaded_file and hasattr(uploaded_file, "read"):
+                raw_bytes = await uploaded_file.read()
+                raw_content = raw_bytes.decode("utf-8")
         except Exception as e:
-            raise HTTPException(status_code=400, detail=f"Failed to read uploaded file: {str(e)}")
+            raise HTTPException(status_code=400, detail=f"Failed to read form file upload: {str(e)}")
     else:
         try:
-            body = await request.body()
-            if body:
-                raw_content = body.decode("utf-8")
-        except Exception:
-            pass
+            body_bytes = await request.body()
+            if body_bytes:
+                raw_content = body_bytes.decode("utf-8")
+        except Exception as e:
+            raise HTTPException(status_code=400, detail=f"Failed to read request body: {str(e)}")
 
     if not raw_content:
         raise HTTPException(status_code=400, detail="Please upload a JSON file or provide a valid JSON body")
@@ -171,7 +175,7 @@ async def upload_camera_zones(
     zone_cache.invalidate(str(camera_id))
     zone_cache.invalidate(f"ai-{camera_id}")
 
-    print(f"🗺️  [ZonesAPI] Successfully updated {len(validated_zones)} zones for camera {camera_id}")
+    print(f"[ZonesAPI] Successfully updated {len(validated_zones)} zones for camera {camera_id}")
 
     return {
         "status": "success",
@@ -280,7 +284,13 @@ async def get_zone_analytics_summary(
     total_occupancy_sec = dur_query.with_entities(func.sum(ZoneVisitDB.duration_seconds)).scalar() or 0.0
     avg_dwell_sec = (total_occupancy_sec / total_visits) if total_visits > 0 else 0.0
 
-    # Per Zone breakdown
+    # Fetch all configured zones from CameraZoneDB for this camera (or all cameras)
+    zone_q = db.query(CameraZoneDB)
+    if camera_id:
+        zone_q = zone_q.filter(CameraZoneDB.camera_id == str(camera_id))
+    all_configured_zones = zone_q.all()
+
+    # Per Zone visit grouping from ZoneVisitDB
     zone_grouping = db.query(
         ZoneVisitDB.zone_id,
         func.count(ZoneVisitDB.id).label("visit_count"),
@@ -291,52 +301,117 @@ async def get_zone_analytics_summary(
         zone_grouping = zone_grouping.filter(ZoneVisitDB.camera_id == str(camera_id))
     zone_grouping = zone_grouping.group_by(ZoneVisitDB.zone_id).all()
 
-    # Fetch zone metadata (names & colors)
-    zone_meta = {}
-    zone_rows = db.query(CameraZoneDB).all()
-    for zr in zone_rows:
-        zone_meta[zr.zone_id] = {"name": zr.name, "color": zr.color}
+    visit_stats_map = {}
+    for row in zone_grouping:
+        visit_stats_map[row.zone_id] = {
+            "visit_count": row.visit_count,
+            "total_duration": row.total_duration or 0.0,
+            "avg_duration": row.avg_duration or 0.0,
+        }
 
     per_zone_metrics = []
-    for row in zone_grouping:
-        zid = row.zone_id
-        meta = zone_meta.get(zid, {"name": zid, "color": "#3B82F6"})
-        tot_dur = row.total_duration or 0.0
-        avg_dur = row.avg_duration or 0.0
+    seen_zone_ids = set()
+
+    # 1. Include all configured zones from CameraZoneDB
+    for cz in all_configured_zones:
+        seen_zone_ids.add(cz.zone_id)
+        stats = visit_stats_map.get(cz.zone_id, {"visit_count": 0, "total_duration": 0.0, "avg_duration": 0.0})
+        tot_dur = stats["total_duration"]
+        avg_dur = stats["avg_duration"]
         per_zone_metrics.append({
-            "zone_id": zid,
-            "zone_name": meta["name"],
-            "zone_color": meta["color"],
-            "visit_count": row.visit_count,
+            "zone_id": cz.zone_id,
+            "zone_name": cz.name,
+            "zone_color": cz.color,
+            "visit_count": stats["visit_count"],
             "total_occupancy_seconds": round(tot_dur, 1),
             "formatted_total_occupancy": format_dwell_time(tot_dur),
             "average_dwell_seconds": round(avg_dur, 1),
             "formatted_average_dwell": format_dwell_time(avg_dur),
         })
 
-    # Per Person breakdown
+    # 2. Include any historical zones from visits that might no longer be in CameraZoneDB
+    for row in zone_grouping:
+        if row.zone_id not in seen_zone_ids:
+            tot_dur = row.total_duration or 0.0
+            avg_dur = row.avg_duration or 0.0
+            per_zone_metrics.append({
+                "zone_id": row.zone_id,
+                "zone_name": row.zone_id,
+                "zone_color": "#3B82F6",
+                "visit_count": row.visit_count,
+                "total_occupancy_seconds": round(tot_dur, 1),
+                "formatted_total_occupancy": format_dwell_time(tot_dur),
+                "average_dwell_seconds": round(avg_dur, 1),
+                "formatted_average_dwell": format_dwell_time(avg_dur),
+            })
+
+    # Per Person / Track breakdown for selected camera and zone
+    person_label_expr = func.coalesce(
+        ZoneVisitDB.person_identifier,
+        'Track #' + ZoneVisitDB.tracking_id
+    )
+
     person_grouping = db.query(
+        person_label_expr.label("person_label"),
+        ZoneVisitDB.tracking_id,
         ZoneVisitDB.person_identifier,
         func.count(ZoneVisitDB.id).label("visit_count"),
         func.sum(ZoneVisitDB.duration_seconds).label("total_duration"),
         func.avg(ZoneVisitDB.duration_seconds).label("avg_duration"),
-    ).filter(ZoneVisitDB.person_identifier.isnot(None))
+        func.max(ZoneVisitDB.entry_time).label("last_entry"),
+    )
 
     if camera_id:
         person_grouping = person_grouping.filter(ZoneVisitDB.camera_id == str(camera_id))
-    person_grouping = person_grouping.group_by(ZoneVisitDB.person_identifier).all()
+    if zone_id:
+        person_grouping = person_grouping.filter(ZoneVisitDB.zone_id == str(zone_id))
+    if start_date:
+        try:
+            dt_start = datetime.fromisoformat(start_date)
+            person_grouping = person_grouping.filter(ZoneVisitDB.entry_time >= dt_start)
+        except Exception:
+            pass
+    if end_date:
+        try:
+            dt_end = datetime.fromisoformat(end_date)
+            person_grouping = person_grouping.filter(ZoneVisitDB.entry_time <= dt_end)
+        except Exception:
+            pass
+
+    person_rows = person_grouping.group_by(
+        person_label_expr,
+        ZoneVisitDB.tracking_id,
+        ZoneVisitDB.person_identifier,
+    ).order_by(func.count(ZoneVisitDB.id).desc()).all()
 
     per_person_metrics = []
-    for row in person_grouping:
+    for row in person_rows:
         tot_dur = row.total_duration or 0.0
         avg_dur = row.avg_duration or 0.0
+
+        # Check if currently inside zone (open visit)
+        active_check = db.query(ZoneVisitDB).filter(
+            ZoneVisitDB.tracking_id == row.tracking_id,
+            ZoneVisitDB.exit_time.is_(None),
+        )
+        if camera_id:
+            active_check = active_check.filter(ZoneVisitDB.camera_id == str(camera_id))
+        if zone_id:
+            active_check = active_check.filter(ZoneVisitDB.zone_id == str(zone_id))
+
+        is_inside = active_check.first() is not None
+
         per_person_metrics.append({
-            "person_identifier": row.person_identifier,
+            "person_identifier": row.person_label,
+            "raw_person_id": row.person_identifier,
+            "tracking_id": row.tracking_id,
             "visit_count": row.visit_count,
             "total_occupancy_seconds": round(tot_dur, 1),
             "formatted_total_occupancy": format_dwell_time(tot_dur),
             "average_dwell_seconds": round(avg_dur, 1),
             "formatted_average_dwell": format_dwell_time(avg_dur),
+            "last_entry": row.last_entry.isoformat() if row.last_entry else None,
+            "is_inside": is_inside,
         })
 
     return {
