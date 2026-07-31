@@ -11,3 +11,4 @@ websockets
 opencv-python-headless
 numpy
 cryptography
+onnxruntime-gpu

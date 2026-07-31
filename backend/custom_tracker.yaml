@@ -11,7 +11,7 @@ fuse_score: True
 gmc_method: none
 
 # ReID
-with_reid: False
+with_reid: True
 model: yolo26m-reid.onnx
 proximity_thresh: 0.0
 appearance_thresh: 0.75
