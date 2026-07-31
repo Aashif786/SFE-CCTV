@@ -153,3 +153,42 @@ class EmployeeDailySummary(Base):
     check_in_count = Column(Integer, nullable=False, default=0)  # number of WorkerSessions closed today
     first_seen = Column(DateTime, nullable=True)   # earliest session start today
     last_seen  = Column(DateTime, nullable=True)   # latest session end today
+
+
+class CameraZoneDB(Base):
+    """
+    Polygonal Region of Interest (ROI) zone per camera.
+    Stores user-defined polygons, color, name, and enabled status.
+    """
+    __tablename__ = "camera_zones"
+    __table_args__ = (
+        UniqueConstraint("camera_id", "zone_id", name="uq_camera_zone"),
+    )
+
+    id = Column(Integer, primary_key=True, index=True)
+    camera_id = Column(String, nullable=False, index=True)
+    zone_id = Column(String, nullable=False, index=True)
+    name = Column(String, nullable=False)
+    color = Column(String, nullable=False, default="#3B82F6")
+    description = Column(String, nullable=True)
+    points_json = Column(String, nullable=False)  # JSON array of [x, y] coordinates
+    enabled = Column(Boolean, default=True, nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
+class ZoneVisitDB(Base):
+    """
+    Historical log of a person's dwell visit inside a camera zone.
+    Tracks entry time, exit time, and calculated duration in seconds.
+    """
+    __tablename__ = "zone_visits"
+
+    id = Column(Integer, primary_key=True, index=True)
+    camera_id = Column(String, nullable=False, index=True)
+    zone_id = Column(String, nullable=False, index=True)
+    tracking_id = Column(String, nullable=False, index=True)
+    person_identifier = Column(String, nullable=True, index=True)  # e.g., employee_id
+    entry_time = Column(DateTime, nullable=False, default=datetime.utcnow, index=True)
+    exit_time = Column(DateTime, nullable=True, index=True)
+    duration_seconds = Column(Float, nullable=True)

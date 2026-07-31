@@ -5,7 +5,7 @@ import Link from 'next/link';
 import {
   LayoutDashboard, History, Settings, Bell,
   Fingerprint, BarChart2, Menu, UserCheck, Sun, Moon, DoorClosed, Wifi,
-  Video, SlidersHorizontal, Radar
+  Video, SlidersHorizontal, Radar, Layers, Clock
 } from 'lucide-react';
 import { usePathname } from 'next/navigation';
 import { useTheme } from '@/context/ThemeContext';
@@ -19,6 +19,7 @@ export default function SidebarLayout({ children }: { children: React.ReactNode 
     { href: "/",                    icon: LayoutDashboard,    label: "Dashboard" },
     { href: "/live-cameras",        icon: Video,              label: "Live Cameras" },
     { href: "/camera-management",   icon: SlidersHorizontal,  label: "Camera Management" },
+    { href: "/zone-analytics",      icon: Layers,             label: "Zone Analytics" },
     { href: "/live-checkins",       icon: UserCheck,          label: "Live Check-ins" },
     { href: "/doors",               icon: DoorClosed,         label: "Door Configs" },
     { href: "/history",             icon: History,            label: "History" },

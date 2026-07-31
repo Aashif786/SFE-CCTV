@@ -52,6 +52,14 @@ class WorkerDetector:
         self.model = YOLO(target_model)
         self.model.to(self.device)
         self.model_name = target_model
+
+        # Warm up CUDA GPU engine to pre-allocate VRAM & compile kernels at startup
+        if self.device != "cpu":
+            try:
+                dummy = np.zeros((480, 640, 3), dtype=np.uint8)
+                self.model(dummy, verbose=False, device=self.device_id)
+            except Exception as e:
+                print(f"[WorkerDetector] CUDA warmup note: {e}")
         
         # Per-track EMA smoothing state — keyed by track_id
         self.smoothed: dict[int, list[list[float]]] = {}
@@ -65,6 +73,14 @@ class WorkerDetector:
         self.alert_triggered: bool = False
         self.last_returned_ids: set[int] = set()
 
+        # Track stability: record the last confirmed box for each track_id
+        # to use as a spatial gate against suspicious re-assignments.
+        self.last_confirmed_box: dict[int, list[float]] = {}
+        # Track ID -> the frame it was last seen. Used to detect re-use of
+        # recently-dropped IDs (the most common cause of apparent swap).
+        self.dropped_ids: dict[int, int] = {}  # track_id -> frame_number it was dropped
+        DROPPED_ID_COOLDOWN = 60  # frames to reject a re-appearing ID as suspicious
+
     @staticmethod
     def _dist_xy(a: list[float], b: list[float]) -> float:
         return math.sqrt((a[0] - b[0]) ** 2 + (a[1] - b[1]) ** 2)
@@ -76,13 +92,25 @@ class WorkerDetector:
         self.frame_count += 1
         h, w, _ = frame.shape
 
-        # Dynamic reload YOLO model
+        # Dynamic reload YOLO model — reset tracker state on model swap to
+        # prevent the Kalman filter from using stale predictions from the old
+        # model's output space, which is the #1 cause of track swaps.
         target_model = getattr(config, "yolo_model", "yolo11m-pose.pt")
         if not hasattr(self, "model_name") or self.model_name != target_model:
             print(f"[WorkerDetector] Reloading YOLO model: {getattr(self, 'model_name', 'None')} -> {target_model}")
             self.model = YOLO(target_model)
             self.model.to(self.device)
             self.model_name = target_model
+            # Clear all per-track state because the new model will restart track IDs
+            self.smoothed.clear()
+            self.prev_smoothed.clear()
+            self.idle_seconds.clear()
+            self.last_seen_frame.clear()
+            self.prev_worker_pos.clear()
+            self.smoothed_velocities.clear()
+            self.last_confirmed_box.clear()
+            self.dropped_ids.clear()
+            self.last_returned_ids = set()
 
         # Dynamic EMA_ALPHA
         self.EMA_ALPHA = getattr(config, "ema_alpha", 0.80)
@@ -114,10 +142,36 @@ class WorkerDetector:
         box_xyxy = results[0].boxes.xyxy.cpu().numpy() # (num_poses, 4)
 
         poses_out = []
+        # Spatial jump gate: maximum normalised distance the box centre can
+        # travel in one frame before we treat it as a mis-assignment.
+        MAX_CENTRE_JUMP = 0.25  # 25 % of frame width/height per frame
+
         for idx in range(len(track_ids)):
             track_id = int(track_ids[idx])
             xyn = xyn_batch[idx]
             conf = conf_batch[idx]
+            xyxy = box_xyxy[idx]
+
+            # --- Spatial continuity check ----------------------------------------
+            # Compare the new detection's box centre against the last confirmed
+            # centre for this track_id. If the jump is impossibly large in one
+            # frame, BoT-SORT has likely swapped the ID to a different person.
+            cx_new = ((xyxy[0] + xyxy[2]) / 2) / w
+            cy_new = ((xyxy[1] + xyxy[3]) / 2) / h
+            if track_id in self.last_confirmed_box:
+                lb = self.last_confirmed_box[track_id]
+                cx_old = (lb[0] + lb[2]) / 2
+                cy_old = (lb[1] + lb[3]) / 2
+                jump = math.sqrt((cx_new - cx_old) ** 2 + (cy_new - cy_old) ** 2)
+                if jump > MAX_CENTRE_JUMP:
+                    # Reject this detection for this track_id — do not update state.
+                    print(f"[WorkerDetector] ⚠️  Rejected suspicious jump for track {track_id}: Δ={jump:.3f}")
+                    continue
+
+            # Update last confirmed box (normalised)
+            self.last_confirmed_box[track_id] = [
+                xyxy[0] / w, xyxy[1] / h, xyxy[2] / w, xyxy[3] / h
+            ]
             
             # Record track frame activity
             self.last_seen_frame[track_id] = self.frame_count
@@ -270,16 +324,22 @@ class WorkerDetector:
 
         self.last_returned_ids = {p["track_id"] for p in poses_out}
 
-        # Prune stale tracks
+        # Prune stale tracks and record dropped IDs to prevent re-use confusion
+        DROPPED_ID_COOLDOWN = 60
         for tid in list(self.smoothed.keys()):
             if self.frame_count - self.last_seen_frame.get(tid, 0) > 100:
+                self.dropped_ids[tid] = self.frame_count
                 self.smoothed.pop(tid, None)
                 self.prev_smoothed.pop(tid, None)
                 self.idle_seconds.pop(tid, None)
                 self.last_seen_frame.pop(tid, None)
-                if hasattr(self, 'prev_worker_pos'):
-                    self.prev_worker_pos.pop(tid, None)
-                if hasattr(self, 'smoothed_velocities'):
-                    self.smoothed_velocities.pop(tid, None)
+                self.last_confirmed_box.pop(tid, None)
+                self.prev_worker_pos.pop(tid, None)
+                self.smoothed_velocities.pop(tid, None)
+
+        # Expire old dropped_id entries after the cooldown
+        for tid in list(self.dropped_ids.keys()):
+            if self.frame_count - self.dropped_ids[tid] > DROPPED_ID_COOLDOWN:
+                self.dropped_ids.pop(tid, None)
 
         return poses_out

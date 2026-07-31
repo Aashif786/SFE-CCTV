@@ -10,6 +10,12 @@ from datetime import datetime, timezone
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+import cv2
+import torch
+# Limit worker thread pools to prevent CPU saturation across multi-stream processing
+cv2.setNumThreads(2)
+torch.set_num_threads(2)
+
 # Database setup
 from .db.database import engine, Base, SessionLocal
 from .db.models import WorkerSessionDB

@@ -37,6 +37,7 @@ export default function SettingsPage() {
   const [yoloImgsz, setYoloImgsz] = useState(960);
   const [emaAlpha, setEmaAlpha] = useState(80);
   const [maxTrackedPeople, setMaxTrackedPeople] = useState(10);
+  const [aiStreamFps, setAiStreamFps] = useState(15);
 
   // 2. Tracker (BoT-SORT)
   const [trackHighThresh, setTrackHighThresh] = useState(30);
@@ -82,6 +83,7 @@ export default function SettingsPage() {
         setYoloImgsz(data.yolo_imgsz ?? 960);
         setEmaAlpha(toPercent(data.ema_alpha ?? 0.80));
         setMaxTrackedPeople(data.max_tracked_people ?? 10);
+        setAiStreamFps(data.ai_stream_fps ?? 15);
 
         // Tracker
         setTrackHighThresh(toPercent(data.tracker_track_high_thresh ?? 0.30));
@@ -133,6 +135,7 @@ export default function SettingsPage() {
         yolo_imgsz: yoloImgsz,
         ema_alpha: fromPercent(emaAlpha),
         max_tracked_people: maxTrackedPeople,
+        ai_stream_fps: aiStreamFps,
 
         // Tracker
         tracker_track_high_thresh: fromPercent(trackHighThresh),
@@ -321,7 +324,28 @@ export default function SettingsPage() {
                   </div>
                 </div>
 
-                {/* YOLO Conf */}
+                {/* AI Stream FPS */}
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-4 items-start border-t border-[hsl(var(--border))] pt-4">
+                  <div>
+                    <label className="block text-sm font-semibold text-[hsl(var(--text-primary))]">
+                      AI Stream FPS Cap
+                    </label>
+                    <p className="text-xs text-[hsl(var(--text-muted))] mt-1">
+                      Maximum frames per second sent to the browser per camera feed. Higher values give smoother video but require more GPU and network throughput.
+                    </p>
+                  </div>
+                  <div className="md:col-span-2">
+                    <input
+                      id="ai-stream-fps"
+                      type="number"
+                      min={1}
+                      max={60}
+                      value={aiStreamFps}
+                      onChange={(e) => setAiStreamFps(Number(e.target.value))}
+                      className="w-full bg-[hsl(var(--bg-input))] border border-[hsl(var(--border-strong))] rounded-lg px-4 py-2 text-[hsl(var(--text-primary))] text-sm focus:outline-none focus:border-emerald-500 border-solid"
+                    />
+                  </div>
+                </div>
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-4 items-center border-t border-[hsl(var(--border))] pt-4">
                   <div>
                     <label className="block text-sm font-semibold text-[hsl(var(--text-primary))]">
