@@ -57,6 +57,7 @@ export default function SettingsPage() {
   const [hikvisionPassword, setHikvisionPassword] = useState("");
 
   // 4. Server & Streaming
+  const [trackingFps, setTrackingFps] = useState(5.0);
   const [rtspPort, setRtspPort] = useState(554);
   const [streamTransport, setStreamTransport] = useState("tcp");
   const [streamTimeout, setStreamTimeout] = useState(30);
@@ -102,6 +103,7 @@ export default function SettingsPage() {
         setHikvisionPassword(data.hikvision_password ?? "");
 
         // Streaming / Server
+        setTrackingFps(data.tracking_fps ?? 5.0);
         setRtspPort(data.default_rtsp_port ?? 554);
         setStreamTransport(data.default_stream_transport ?? "tcp");
         setStreamTimeout(data.stream_timeout ?? 30);
@@ -150,6 +152,7 @@ export default function SettingsPage() {
         classifier_velocity_threshold: Number(classifierVelocityThreshold),
 
         // Environment / Creds
+        tracking_fps: Number(trackingFps),
         default_rtsp_port: rtspPort,
         default_stream_transport: streamTransport,
         stream_timeout: streamTimeout,
@@ -828,15 +831,43 @@ export default function SettingsPage() {
               </div>
             )}
 
-            {/* TAB 4: STREAMING & SERVER */}
+{/* TAB 4: STREAMING & SERVER */}
             {activeTab === "server" && (
               <div className="space-y-6">
                 <h3 className="text-xl font-bold text-[hsl(var(--text-primary))] border-b border-[hsl(var(--border))] pb-2">
                   Streaming Engine & RTSP Feeds
                 </h3>
 
-                {/* RTSP Port */}
+                {/* AI Tracking FPS */}
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-4 items-center">
+                  <div>
+                    <label className="block text-sm font-semibold text-[hsl(var(--text-primary))]">
+                      AI Tracking Target FPS
+                    </label>
+                    <p className="text-xs text-[hsl(var(--text-muted))] mt-1">
+                      Target frame rate for YOLO tracking pipeline. Higher FPS increases CPU/GPU load.
+                    </p>
+                  </div>
+                  <div className="md:col-span-2">
+                    <div className="flex items-center gap-4">
+                      <input
+                        type="range"
+                        min="1"
+                        max="30"
+                        step="1"
+                        value={trackingFps}
+                        onChange={(e) => setTrackingFps(Number(e.target.value))}
+                        className="flex-1 h-2 bg-[hsl(var(--border-strong))] rounded-lg appearance-none cursor-pointer accent-emerald-500"
+                      />
+                      <div className="w-16 bg-[hsl(var(--bg-input))] border border-[hsl(var(--border-strong))] rounded-lg px-3 py-1.5 text-center text-sm font-medium text-[hsl(var(--text-primary))] border-solid">
+                        {trackingFps}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                {/* RTSP Port */}
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-4 items-center border-t border-[hsl(var(--border))] pt-4">
                   <div>
                     <label className="block text-sm font-semibold text-[hsl(var(--text-primary))]">
                       Default RTSP Port

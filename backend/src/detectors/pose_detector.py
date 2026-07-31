@@ -40,9 +40,9 @@ class WorkerDetector:
 
     def __init__(self):
         if torch.cuda.is_available():
-            self.device_id = 0
+            self.device_id = 0  # int device ID for YOLO track()
             self.device = "cuda:0"
-            torch.backends.cudnn.benchmark = True
+            torch.backends.cudnn.benchmark = False
             torch.backends.cuda.matmul.allow_tf32 = True
             torch.backends.cudnn.allow_tf32 = True
             print(f"[WorkerDetector] 🚀 GPU Acceleration Enabled: {torch.cuda.get_device_name(0)}")
@@ -52,10 +52,16 @@ class WorkerDetector:
             torch.set_num_threads(4)
             print("[WorkerDetector] ⚠️ Running on CPU mode.")
 
+        # Resolve model path: prefer absolute path from backend dir, fall back to relative
         target_model = getattr(config, "yolo_model", "yolo11m-pose.pt")
-        self.model = YOLO(target_model)
+        _backend_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+        _model_path = os.path.join(_backend_dir, target_model)
+        if not os.path.isfile(_model_path):
+            _model_path = target_model  # fallback: let YOLO resolve it
+        self.model = YOLO(_model_path)
         self.model.to(self.device)
         self.model_name = target_model
+        self._backend_dir = _backend_dir
 
         # Warmup GPU engine to eliminate initial inference latency
         if self.device != "cpu":
@@ -93,7 +99,10 @@ class WorkerDetector:
         target_model = getattr(config, "yolo_model", "yolo11m-pose.pt")
         if not hasattr(self, "model_name") or self.model_name != target_model:
             print(f"[WorkerDetector] Reloading YOLO model: {getattr(self, 'model_name', 'None')} -> {target_model}")
-            self.model = YOLO(target_model)
+            _model_path = os.path.join(self._backend_dir, target_model)
+            if not os.path.isfile(_model_path):
+                _model_path = target_model
+            self.model = YOLO(_model_path)
             self.model.to(self.device)
             self.model_name = target_model
 
@@ -102,7 +111,10 @@ class WorkerDetector:
 
         # Use YOLO's built-in robust tracking (BoT-SORT / ByteTrack)
         # imgsz=640 gives fast 60+ FPS inference latency on CUDA GPUs
-        tracker_config = os.path.join(os.path.dirname(__file__), "..", "..", "custom_tracker.yaml")
+        # Resolve tracker config as absolute path — avoids CWD-dependent failures on Windows
+        tracker_config = os.path.abspath(
+            os.path.join(os.path.dirname(__file__), "..", "..", "custom_tracker.yaml")
+        )
         use_half = (self.device != "cpu")
         results = self.model.track(
             frame,
