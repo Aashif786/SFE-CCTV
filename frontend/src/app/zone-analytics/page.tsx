@@ -21,6 +21,7 @@ import { useCameras } from "@/hooks/useCameras";
 
 interface SummaryMetrics {
   total_visits: number;
+  active_occupants?: number;
   total_occupancy_seconds: number;
   formatted_total_occupancy: string;
   average_dwell_seconds: number;
@@ -131,6 +132,10 @@ export default function ZoneAnalyticsPage() {
 
   useEffect(() => {
     fetchAnalytics();
+    const timer = setInterval(() => {
+      fetchAnalytics();
+    }, 3000);
+    return () => clearInterval(timer);
   }, [fetchAnalytics]);
 
   // Export CSV
@@ -159,8 +164,11 @@ export default function ZoneAnalyticsPage() {
   };
 
   const activeOccupantsCount = useMemo(() => {
+    if (summary?.active_occupants !== undefined) {
+      return summary.active_occupants;
+    }
     return visits.filter((v) => v.is_active).length;
-  }, [visits]);
+  }, [summary, visits]);
 
   return (
     <div className="p-6 sm:p-8 space-y-6 max-w-7xl mx-auto text-[hsl(var(--text-primary))]">

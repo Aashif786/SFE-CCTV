@@ -330,16 +330,22 @@ async def camera_ai_endpoint(websocket: WebSocket, camera_id: int):
                     worker_session = worker_session_manager.get_by_track(str_trk_id)
                     employee_id = worker_session.employee_id if worker_session else None
 
-                    # Calculate bottom-center point of bounding box (foot position)
+                    # Calculate bottom-center point of bounding box (foot position) & lower torso point
                     box_n = p["box"]  # [x1, y1, x2, y2]
                     foot_x = float(box_n[0] + box_n[2]) / 2.0
                     foot_y = float(box_n[3])
+                    torso_y = float(box_n[1]) + 0.8 * float(box_n[3] - box_n[1])
 
                     # Point-in-polygon zone evaluation
                     matched_zone_dict = None
                     for cz in camera_zones:
                         if cz.get("enabled", True) and cz.get("points"):
-                            if is_point_in_polygon(foot_x, foot_y, cz["points"], frame_width=w, frame_height=h):
+                            is_inside = is_point_in_polygon(foot_x, foot_y, cz["points"], frame_width=w, frame_height=h)
+                            if not is_inside:
+                                # Fallback check for lower torso/seat position
+                                is_inside = is_point_in_polygon(foot_x, torso_y, cz["points"], frame_width=w, frame_height=h)
+
+                            if is_inside:
                                 matched_zone_dict = {
                                     "id": cz["id"],
                                     "name": cz["name"],
