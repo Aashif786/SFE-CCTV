@@ -642,7 +642,6 @@ export default function PolygonZoneEditor({ cameraId, onSave }: Props) {
             <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 text-[hsl(var(--text-muted))]">
               <CameraOff className="w-10 h-10 opacity-40" />
               <p className="text-sm">{snapshotError}</p>
-              <p className="text-xs opacity-60">You can still draw zones; they&apos;ll be saved correctly.</p>
             </div>
           )}
           <canvas
