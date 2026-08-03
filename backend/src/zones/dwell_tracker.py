@@ -114,6 +114,34 @@ class ZoneDwellTracker:
                 self._close_visit_in_db(active_visit, now)
                 cam_visits.pop(str_trk_id, None)
 
+            # Check if another track in the same zone on this camera was active within the last 3.0 seconds (Track Stitching)
+            stitched_visit = None
+            for trk_key, v in list(cam_visits.items()):
+                if trk_key != str_trk_id and v.zone_id == current_zone_id:
+                    if (now - v.last_updated).total_seconds() <= 3.0:
+                        stitched_visit = v
+                        cam_visits.pop(trk_key, None)
+                        break
+
+            if stitched_visit:
+                # Reuse existing visit — seamless track ID re-identification
+                stitched_visit.tracking_id = str_trk_id
+                stitched_visit.last_updated = now
+                if person_identifier and not stitched_visit.person_identifier:
+                    stitched_visit.person_identifier = person_identifier
+                    self._update_person_identifier_in_db(stitched_visit.db_visit_id, person_identifier)
+
+                cam_visits[str_trk_id] = stitched_visit
+                dwell_sec = max(0.0, (now - stitched_visit.entry_time).total_seconds())
+                return {
+                    "zone_id": stitched_visit.zone_id,
+                    "zone_name": stitched_visit.zone_name,
+                    "zone_color": stitched_visit.zone_color,
+                    "dwell_seconds": round(dwell_sec, 1),
+                    "formatted_dwell": format_dwell_time(dwell_sec),
+                    "entry_time": stitched_visit.entry_time.isoformat(),
+                }, dwell_sec
+
             # Open new visit
             db_id = self._open_visit_in_db(
                 camera_id=cam_key,
@@ -189,7 +217,7 @@ class ZoneDwellTracker:
                 if visit:
                     self._close_visit_in_db(visit, now)
 
-    def is_visit_active_in_mem(self, db_visit_id: int, max_stale_seconds: float = 5.0) -> bool:
+    def is_visit_active_in_mem(self, db_visit_id: int, max_stale_seconds: float = 3.0) -> bool:
         """Check if a database visit ID is currently tracked active in memory with recent frame updates."""
         now = datetime.now(timezone.utc).replace(tzinfo=None)
         with self._lock:
@@ -200,17 +228,17 @@ class ZoneDwellTracker:
             return False
 
     def get_active_visits_count(
-        self, camera_id: Optional[str] = None, zone_id: Optional[str] = None, max_stale_seconds: float = 5.0
+        self, camera_id: Optional[str] = None, zone_id: Optional[str] = None, max_stale_seconds: float = 3.0
     ) -> int:
         """Get total count of currently active in-memory visits inside zones with recent frame updates."""
         now = datetime.now(timezone.utc).replace(tzinfo=None)
         with self._lock:
             count = 0
             to_remove = []
-            for cam_key, trk_map in self._active_visits.items():
+            for cam_key, trk_map in list(self._active_visits.items()):
                 if camera_id and str(cam_key) != str(camera_id):
                     continue
-                for trk_id, visit in trk_map.items():
+                for trk_id, visit in list(trk_map.items()):
                     if zone_id and str(visit.zone_id) != str(zone_id):
                         continue
                     if (now - visit.last_updated).total_seconds() <= max_stale_seconds:
@@ -218,10 +246,11 @@ class ZoneDwellTracker:
                     else:
                         to_remove.append((cam_key, trk_id, visit))
 
-            # Auto-close stale visits that haven't received a frame update in > 5.0 seconds
+            # Auto-close stale visits that haven't received a frame update in > 3.0 seconds
             for cam_key, trk_id, visit in to_remove:
                 self._close_visit_in_db(visit, visit.last_updated)
-                self._active_visits.get(cam_key, {}).pop(trk_id, None)
+                if cam_key in self._active_visits:
+                    self._active_visits[cam_key].pop(trk_id, None)
 
             return count
 
@@ -262,10 +291,14 @@ class ZoneDwellTracker:
             with SessionLocal() as db:
                 row = db.query(ZoneVisitDB).filter(ZoneVisitDB.id == visit.db_visit_id).first()
                 if row:
-                    row.exit_time = exit_time
-                    row.duration_seconds = round(duration, 2)
-                    if visit.person_identifier:
-                        row.person_identifier = visit.person_identifier
+                    # Fleeting visit filter: if duration is less than 3.0 seconds (fleeting track jitter), purge row
+                    if duration < 3.0:
+                        db.delete(row)
+                    else:
+                        row.exit_time = exit_time
+                        row.duration_seconds = round(duration, 2)
+                        if visit.person_identifier:
+                            row.person_identifier = visit.person_identifier
                     db.commit()
         except Exception as e:
             print(f"⚠️  [DwellTracker] Error closing visit in DB: {e}")
