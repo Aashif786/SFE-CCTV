@@ -217,7 +217,7 @@ class ZoneDwellTracker:
                 if visit:
                     self._close_visit_in_db(visit, now)
 
-    def is_visit_active_in_mem(self, db_visit_id: int, max_stale_seconds: float = 3.0) -> bool:
+    def is_visit_active_in_mem(self, db_visit_id: int, max_stale_seconds: float = 8.0) -> bool:
         """Check if a database visit ID is currently tracked active in memory with recent frame updates."""
         now = datetime.now(timezone.utc).replace(tzinfo=None)
         with self._lock:
@@ -228,7 +228,7 @@ class ZoneDwellTracker:
             return False
 
     def get_active_visits_count(
-        self, camera_id: Optional[str] = None, zone_id: Optional[str] = None, max_stale_seconds: float = 3.0
+        self, camera_id: Optional[str] = None, zone_id: Optional[str] = None, max_stale_seconds: float = 8.0
     ) -> int:
         """Get total count of currently active in-memory visits inside zones with recent frame updates."""
         now = datetime.now(timezone.utc).replace(tzinfo=None)
@@ -246,7 +246,7 @@ class ZoneDwellTracker:
                     else:
                         to_remove.append((cam_key, trk_id, visit))
 
-            # Auto-close stale visits that haven't received a frame update in > 3.0 seconds
+            # Auto-close stale visits that haven't received a frame update in > 8.0 seconds
             for cam_key, trk_id, visit in to_remove:
                 self._close_visit_in_db(visit, visit.last_updated)
                 if cam_key in self._active_visits:
