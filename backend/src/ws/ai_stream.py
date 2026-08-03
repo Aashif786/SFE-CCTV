@@ -400,6 +400,15 @@ async def camera_ai_endpoint(websocket: WebSocket, camera_id: int):
 
                     track_last_time[str_trk_id] = now_time
 
+                # ── Cleanup absent tracks ──
+                # Close active visits for any track on this camera that disappeared from the frame
+                current_frame_track_ids = {str(p["track_id"]) for p in poses}
+                dwell_tracker.cleanup_absent_tracks(
+                    camera_id=str(camera_id),
+                    active_track_ids=current_frame_track_ids,
+                    timestamp=now_time,
+                )
+
                 # Drive session manager
                 if detections_out:
                     sm.process(detections_out[0]["activity"])
