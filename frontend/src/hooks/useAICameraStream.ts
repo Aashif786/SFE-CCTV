@@ -32,6 +32,7 @@ export interface AIDetection {
   track_id: number;
   activity: string;
   activity_colour: string;
+  activity_display_name?: string;
   movement_score: number;
   confidence: number;
   idle_seconds: number;

@@ -47,7 +47,7 @@ from ..config import config
 from ..db.database import SessionLocal
 from ..db.models import Alert, CameraZoneDB
 from ..detectors.pose_detector import WorkerDetector
-from ..activity.classifier import classifier
+from ..activity.classifier import classifier, profile_registry
 from ..identity.correlation import correlation_engine
 from ..identity.session_manager import worker_session_manager
 from ..identity.models import CameraEntryEvent
@@ -64,12 +64,17 @@ from ..state import (
     SessionManager,
 )
 
-# Colour per activity for the overlay label
-ACTIVITY_COLOUR: dict[str, str] = {
-    "working": "#10b981",    # emerald
-    "walking": "#3b82f6",    # blue
-    "idle": "#f59e0b",       # amber
-    "no_person": "#6b7280",  # gray
+# Activity colours — dynamic, fetched from active profile via classifier.get_color().
+# This static fallback is used only on the very first frame before profile initialises.
+_FALLBACK_COLOUR: dict[str, str] = {
+    "working":        "#10b981",
+    "walking":        "#3b82f6",
+    "idle":           "#f59e0b",
+    "using_phone":    "#8b5cf6",
+    "meeting":        "#06b6d4",
+    "away_from_desk": "#f97316",
+    "unknown":        "#6b7280",
+    "no_person":      "#374151",
 }
 
 # Per-camera AI detector instances (separate from webcam detectors in state.py)
@@ -287,6 +292,13 @@ async def camera_ai_endpoint(websocket: WebSocket, camera_id: int):
 
                     keypoints_to_send = p["keypoints"] if p["confidence"] >= config.confidence_threshold else []
 
+                    # Collect peer positions (other tracked workers this frame)
+                    peer_positions = [
+                        other_p["worker_pos"]
+                        for other_p in poses
+                        if other_p["track_id"] != trk_id and other_p["worker_pos"] is not None
+                    ]
+
                     activity = classifier.classify(
                         has_pose=True,
                         confidence=p["confidence"],
@@ -295,7 +307,10 @@ async def camera_ai_endpoint(websocket: WebSocket, camera_id: int):
                         worker_pos=p["worker_pos"],
                         zone=zone,
                         keypoints=p["keypoints"],
+                        idle_seconds=p["idle_seconds"],
+                        peer_positions=peer_positions,
                     )
+                    activity_colour = classifier.get_color(activity)
 
                     idle_sec = p["idle_seconds"]
 
@@ -344,7 +359,8 @@ async def camera_ai_endpoint(websocket: WebSocket, camera_id: int):
                     detections_out.append({
                         "track_id": trk_id,
                         "activity": activity,
-                        "activity_colour": ACTIVITY_COLOUR.get(activity, "#6b7280"),
+                        "activity_colour": activity_colour,
+                        "activity_display_name": classifier.get_display_name(activity),
                         "movement_score": round(p["movement_score"], 5),
                         "confidence": round(p["confidence"], 3),
                         "idle_seconds": round(idle_sec, 1),
@@ -367,7 +383,9 @@ async def camera_ai_endpoint(websocket: WebSocket, camera_id: int):
 
                     # Accumulate per-track activity time
                     if str_trk_id not in track_activity_totals:
-                        track_activity_totals[str_trk_id] = {"working": 0.0, "walking": 0.0, "idle": 0.0, "no_person": 0.0}
+                        # Build initial totals from the active profile's activity IDs
+                        _acts = list(profile_registry.active().activities.keys())
+                        track_activity_totals[str_trk_id] = {a: 0.0 for a in _acts}
 
                     if str_trk_id in track_last_time:
                         dt = (now_time - track_last_time[str_trk_id]).total_seconds()
@@ -407,7 +425,9 @@ async def camera_ai_endpoint(websocket: WebSocket, camera_id: int):
                     "timestamp": datetime.utcnow().isoformat(),
                     "fps": round(fps_measured, 1),
                     "activity": detections_out[0]["activity"] if detections_out else "no_person",
-                    "activity_colour": detections_out[0]["activity_colour"] if detections_out else "#6b7280",
+                    "activity_colour": detections_out[0]["activity_colour"] if detections_out else classifier.get_color("no_person"),
+                    "activity_display_name": detections_out[0]["activity_display_name"] if detections_out else "No Person",
+                    "active_profile": getattr(config, "active_profile", "software_office"),
                     "idle_seconds": detections_out[0]["idle_seconds"] if detections_out else 0.0,
                     "idle_threshold_seconds": config.idle_threshold_seconds,
                     "confidence": detections_out[0]["confidence"] if detections_out else 0.0,

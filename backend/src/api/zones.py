@@ -235,6 +235,77 @@ async def delete_single_camera_zone(camera_id: str, zone_id: str, db: Session = 
     }
 
 
+# ── Single Zone Upsert (used by the Polygon Zone Editor GUI) ────────────────
+
+class SingleZonePayload(BaseModel):
+    zone_id: str = Field(..., description="Unique zone ID within this camera")
+    name: str = Field(..., description="Display name for the zone")
+    color: str = Field(default="#3B82F6", description="Hex colour for the zone overlay")
+    description: Optional[str] = Field(default=None)
+    zone_type: str = Field(default="general", description="workstation|meeting_room|walkway|restricted|general")
+    points: List[List[float]] = Field(..., description="List of [x, y] vertex coordinates")
+    enabled: bool = Field(default=True)
+
+
+@router.post("/api/camera-zones/{camera_id}/zone")
+async def upsert_camera_zone(
+    camera_id: str,
+    payload: SingleZonePayload,
+    db: Session = Depends(get_db),
+):
+    """
+    Create or update a single polygonal zone for a camera.
+    Uses zone_id as the natural key — if it already exists, it is replaced.
+    """
+    if len(payload.points) < 3:
+        raise HTTPException(status_code=400, detail="A polygon must have at least 3 vertices")
+
+    # Validate all points are numeric 2-tuples
+    for i, pt in enumerate(payload.points):
+        if len(pt) < 2:
+            raise HTTPException(status_code=400, detail=f"Point {i} must have x and y coordinates")
+        try:
+            float(pt[0]), float(pt[1])
+        except (ValueError, TypeError):
+            raise HTTPException(status_code=400, detail=f"Point {i} has non-numeric coordinates")
+
+    existing = db.query(CameraZoneDB).filter(
+        CameraZoneDB.camera_id == str(camera_id),
+        CameraZoneDB.zone_id == str(payload.zone_id),
+    ).first()
+
+    points_json = json.dumps([[float(pt[0]), float(pt[1])] for pt in payload.points])
+
+    if existing:
+        existing.name = payload.name
+        existing.color = payload.color
+        existing.description = payload.description
+        existing.points_json = points_json
+        existing.enabled = payload.enabled
+    else:
+        db_zone = CameraZoneDB(
+            camera_id=str(camera_id),
+            zone_id=str(payload.zone_id),
+            name=payload.name,
+            color=payload.color,
+            description=payload.description,
+            points_json=points_json,
+            enabled=payload.enabled,
+        )
+        db.add(db_zone)
+
+    db.commit()
+    zone_cache.invalidate(str(camera_id))
+    zone_cache.invalidate(f"ai-{camera_id}")
+
+    return {
+        "status": "saved",
+        "camera_id": camera_id,
+        "zone_id": payload.zone_id,
+        "name": payload.name,
+    }
+
+
 # ── Zone Analytics & Reporting Endpoints ───────────────────────────────────
 
 @router.get("/api/zone-analytics/summary")

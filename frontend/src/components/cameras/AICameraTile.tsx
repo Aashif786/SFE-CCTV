@@ -21,22 +21,26 @@ import {
   type AIStreamStatus,
 } from "@/hooks/useAICameraStream";
 
-// ── Activity display ────────────────────────────────────────────────────────
-
 const ACTIVITY_LABEL: Record<string, string> = {
-  working: "Working",
-  walking: "Walking",
-  idle: "Idle",
-  no_person: "No Person",
-  unknown: "Unknown",
+  working:        "Working",
+  walking:        "Walking",
+  idle:           "Idle",
+  using_phone:    "Using Phone",
+  meeting:        "Meeting",
+  away_from_desk: "Away From Desk",
+  no_person:      "No Person",
+  unknown:        "Unknown",
 };
 
 const ACTIVITY_DOT: Record<string, string> = {
-  working: "bg-emerald-500 animate-pulse",
-  walking: "bg-blue-500 animate-pulse",
-  idle: "bg-amber-500",
-  no_person: "bg-gray-400",
-  unknown: "bg-violet-500",
+  working:        "bg-emerald-500 animate-pulse",
+  walking:        "bg-blue-500 animate-pulse",
+  idle:           "bg-amber-500",
+  using_phone:    "bg-violet-500 animate-pulse",
+  meeting:        "bg-cyan-500 animate-pulse",
+  away_from_desk: "bg-orange-500",
+  no_person:      "bg-gray-400",
+  unknown:        "bg-gray-500",
 };
 
 // ── Skeleton connections ────────────────────────────────────────────────────

@@ -20,7 +20,7 @@ from typing import Optional
 import cv2
 import numpy as np
 
-from ..config import env_settings
+from ..config import env_settings, config
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -174,14 +174,14 @@ class StreamManager:
                 return cs._buffer[-1]
         return None
 
-    def get_jpeg(self, camera_id: int, quality: int = 50) -> Optional[bytes]:
-        """Return pre-encoded JPEG bytes with zero CPU re-encoding overhead."""
+    def get_jpeg(self, camera_id: int, quality: int = 85) -> Optional[bytes]:
+        """Return pre-encoded JPEG bytes with high visual quality."""
         cs = self._streams.get(camera_id)
         if not cs:
             return None
         with cs._lock:
-            if cs._latest_jpeg:
-                return cs._latest_jpeg
+            if cs._latest_jpeg_ws:
+                return cs._latest_jpeg_ws
             if cs._buffer:
                 frame = cs._buffer[-1]
                 ok, buf = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, quality])
@@ -317,14 +317,18 @@ class StreamManager:
                     if (now - last_jpeg_time) >= jpeg_interval:
                         last_jpeg_time = now
 
-                        # Encode a small downscaled JPEG for WebSocket delivery
+                        # Encode high-resolution JPEG for WebSocket delivery and live viewing.
+                        # Respect target resolution from yolo_imgsz (defaulting to 1280+ HD resolution)
+                        target_max_w = max(1280, getattr(config, "yolo_imgsz", 1280))
                         h_f, w_f = frame.shape[:2]
-                        if w_f > 640:
-                            scale = 640.0 / w_f
-                            small = cv2.resize(frame, (640, int(h_f * scale)), interpolation=cv2.INTER_AREA)
+                        if w_f > target_max_w:
+                            scale = float(target_max_w) / w_f
+                            disp_frame = cv2.resize(frame, (target_max_w, int(h_f * scale)), interpolation=cv2.INTER_AREA)
                         else:
-                            small = frame
-                        ok_ws, buf_ws = cv2.imencode(".jpg", small, [cv2.IMWRITE_JPEG_QUALITY, 40])
+                            disp_frame = frame
+
+                        # Encode crisp, high-quality JPEG (Quality 85)
+                        ok_ws, buf_ws = cv2.imencode(".jpg", disp_frame, [cv2.IMWRITE_JPEG_QUALITY, 85])
 
                         with cs._lock:
                             if ok_ws:

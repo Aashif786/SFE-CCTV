@@ -8,6 +8,25 @@ from ..config import config
 
 HIP_L, HIP_R = 23, 24
 TRACKED_JOINTS = [0, 15, 16, 27, 28]
+def get_model_filepath(model_name: str) -> str:
+    """Resolve model file path in backend/models/ directory with automatic fallback."""
+    _backend_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+    _models_dir = os.path.join(_backend_dir, "models")
+    os.makedirs(_models_dir, exist_ok=True)
+    
+    # 1. Check in backend/models/
+    p_models = os.path.join(_models_dir, model_name)
+    if os.path.isfile(p_models):
+        return p_models
+        
+    # 2. Check in backend/
+    p_backend = os.path.join(_backend_dir, model_name)
+    if os.path.isfile(p_backend):
+        return p_backend
+        
+    # Default to backend/models/ for ultralytics auto-download
+    return p_models
+
 
 class WorkerDetector:
     """Detects worker pose using YOLO multi-person pose estimation."""
@@ -17,25 +36,25 @@ class WorkerDetector:
         (11, 23), (12, 24), (23, 25), (25, 27), (24, 26), (26, 28),
     ]
 
-    # Map YOLO 17 keypoints to MediaPipe 33 keypoints format
+    # Keypoint mapping: YOLO pose (17 keypoints) -> MediaPipe Pose (33 keypoints)
     YOLO_TO_MP = {
-        0: 0,   # Nose
-        1: 2,   # L Eye
-        2: 5,   # R Eye
-        3: 7,   # L Ear
-        4: 8,   # R Ear
-        5: 11,  # L Shoulder
-        6: 12,  # R Shoulder
-        7: 13,  # L Elbow
-        8: 14,  # R Elbow
-        9: 15,  # L Wrist
-        10: 16, # R Wrist
-        11: 23, # L Hip
-        12: 24, # R Hip
-        13: 25, # L Knee
-        14: 26, # R Knee
-        15: 27, # L Ankle
-        16: 28  # R Ankle
+        0: 0,    # nose -> nose
+        1: 2,    # left_eye -> left_eye
+        2: 5,    # right_eye -> right_eye
+        3: 7,    # left_ear -> left_ear
+        4: 8,    # right_ear -> right_ear
+        5: 11,   # left_shoulder -> left_shoulder
+        6: 12,   # right_shoulder -> right_shoulder
+        7: 13,   # left_elbow -> left_elbow
+        8: 14,   # right_elbow -> right_elbow
+        9: 15,   # left_wrist -> left_wrist
+        10: 16,  # right_wrist -> right_wrist
+        11: 23,  # left_hip -> left_hip
+        12: 24,  # right_hip -> right_hip
+        13: 25,  # left_knee -> left_knee
+        14: 26,  # right_knee -> right_knee
+        15: 27,  # left_ankle -> left_ankle
+        16: 28,  # right_ankle -> right_ankle
     }
 
     def __init__(self):
@@ -52,12 +71,9 @@ class WorkerDetector:
             torch.set_num_threads(4)
             print("[WorkerDetector] ⚠️ Running on CPU mode.")
 
-        # Resolve model path: prefer absolute path from backend dir, fall back to relative
+        # Resolve model path from backend/models/
         target_model = getattr(config, "yolo_model", "yolo11m-pose.pt")
-        _backend_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
-        _model_path = os.path.join(_backend_dir, target_model)
-        if not os.path.isfile(_model_path):
-            _model_path = target_model  # fallback: let YOLO resolve it
+        _model_path = get_model_filepath(target_model)
         self.model = YOLO(_model_path)
         self.model.to(self.device)
         self.model_name = target_model
@@ -83,12 +99,8 @@ class WorkerDetector:
         self.last_returned_ids: set[int] = set()
 
         # Track stability: record the last confirmed box for each track_id
-        # to use as a spatial gate against suspicious re-assignments.
         self.last_confirmed_box: dict[int, list[float]] = {}
-        # Track ID -> the frame it was last seen. Used to detect re-use of
-        # recently-dropped IDs (the most common cause of apparent swap).
-        self.dropped_ids: dict[int, int] = {}  # track_id -> frame_number it was dropped
-        DROPPED_ID_COOLDOWN = 60  # frames to reject a re-appearing ID as suspicious
+        self.dropped_ids: dict[int, int] = {}
 
     @staticmethod
     def _dist_xy(a: list[float], b: list[float]) -> float:
@@ -101,15 +113,11 @@ class WorkerDetector:
         self.frame_count += 1
         h, w, _ = frame.shape
 
-        # Dynamic reload YOLO model — reset tracker state on model swap to
-        # prevent the Kalman filter from using stale predictions from the old
-        # model's output space, which is the #1 cause of track swaps.
+        # Dynamic reload YOLO model
         target_model = getattr(config, "yolo_model", "yolo11m-pose.pt")
         if not hasattr(self, "model_name") or self.model_name != target_model:
             print(f"[WorkerDetector] Reloading YOLO model: {getattr(self, 'model_name', 'None')} -> {target_model}")
-            _model_path = os.path.join(self._backend_dir, target_model)
-            if not os.path.isfile(_model_path):
-                _model_path = target_model
+            _model_path = get_model_filepath(target_model)
             self.model = YOLO(_model_path)
             self.model.to(self.device)
             self.model_name = target_model
@@ -129,7 +137,6 @@ class WorkerDetector:
 
         # Use YOLO's built-in robust tracking (BoT-SORT / ByteTrack)
         # imgsz=640 gives fast 60+ FPS inference latency on CUDA GPUs
-        # Resolve tracker config as absolute path — avoids CWD-dependent failures on Windows
         tracker_config = os.path.abspath(
             os.path.join(os.path.dirname(__file__), "..", "..", "custom_tracker.yaml")
         )
@@ -160,8 +167,8 @@ class WorkerDetector:
 
         poses_out = []
         # Spatial jump gate: maximum normalised distance the box centre can
-        # travel in one frame before we treat it as a mis-assignment.
-        MAX_CENTRE_JUMP = 0.25  # 25 % of frame width/height per frame
+        # travel in one frame before logging a warning (increased to 50% frame width).
+        MAX_CENTRE_JUMP = 0.50
 
         for idx in range(len(track_ids)):
             track_id = int(track_ids[idx])
@@ -170,9 +177,6 @@ class WorkerDetector:
             xyxy = box_xyxy[idx]
 
             # --- Spatial continuity check ----------------------------------------
-            # Compare the new detection's box centre against the last confirmed
-            # centre for this track_id. If the jump is impossibly large in one
-            # frame, BoT-SORT has likely swapped the ID to a different person.
             cx_new = ((xyxy[0] + xyxy[2]) / 2) / w
             cy_new = ((xyxy[1] + xyxy[3]) / 2) / h
             if track_id in self.last_confirmed_box:
@@ -181,11 +185,9 @@ class WorkerDetector:
                 cy_old = (lb[1] + lb[3]) / 2
                 jump = math.sqrt((cx_new - cx_old) ** 2 + (cy_new - cy_old) ** 2)
                 if jump > MAX_CENTRE_JUMP:
-                    # Reject this detection for this track_id — do not update state.
-                    print(f"[WorkerDetector] ⚠️  Rejected suspicious jump for track {track_id}: Δ={jump:.3f}")
-                    continue
+                    print(f"[WorkerDetector] ℹ️ Rapid position jump for track {track_id}: Δ={jump:.3f}")
 
-            # Update last confirmed box (normalised)
+            # ALWAYS update last confirmed box (normalised) so position state advances cleanly
             self.last_confirmed_box[track_id] = [
                 xyxy[0] / w, xyxy[1] / h, xyxy[2] / w, xyxy[3] / h
             ]
