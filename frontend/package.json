@@ -3,9 +3,9 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "dev": "next dev",
-    "build": "rm -rf .next && next build",
-    "clean": "rm -rf .next",
+    "dev": "rm -rf .next tsconfig.tsbuildinfo && next dev",
+    "build": "rm -rf .next tsconfig.tsbuildinfo && next build",
+    "clean": "rm -rf .next tsconfig.tsbuildinfo",
     "start": "next start",
     "lint": "next lint"
   },
