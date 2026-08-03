@@ -64,7 +64,8 @@ export default function CameraTile({ camera, onRefresh, onOpenSettings }: Camera
 
     if (isOnline) {
       setImgError(false);
-      img.src = `${streamUrl}?t=${streamKey}`;
+      // Force fresh timestamp on mount & expand so browser opens a clean new MJPEG connection
+      img.src = `${streamUrl}?t=${Date.now()}`;
     } else {
       img.src = "";
       img.removeAttribute("src");
@@ -106,7 +107,10 @@ export default function CameraTile({ camera, onRefresh, onOpenSettings }: Camera
     document.body.removeChild(link);
   }, [camera.id, camera.name, getSnapshotUrl]);
 
-  const handleFullscreen = useCallback(() => setIsExpanded((v) => !v), []);
+  const handleFullscreen = useCallback(() => {
+    setStreamKey(Date.now());
+    setIsExpanded((v) => !v);
+  }, []);
 
   // ── Render ────────────────────────────────────────────────────────────
 
