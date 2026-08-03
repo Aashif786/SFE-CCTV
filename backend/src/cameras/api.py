@@ -335,11 +335,27 @@ async def mjpeg_stream(camera_id: int):
 
 
 @router.get("/api/cameras/{camera_id}/snapshot", summary="Camera snapshot")
-async def camera_snapshot(camera_id: int):
-    """Return the latest frame as a single JPEG image."""
+async def camera_snapshot(camera_id: int, format: str = "jpeg"):
+    """
+    Return the latest frame from a camera.
+
+    Query params:
+      ?format=jpeg  (default) — returns raw JPEG image/jpeg
+      ?format=json  — returns {"camera_id": ..., "image": "data:image/jpeg;base64,..."}
+                      used by the Polygon Zone Editor so it can load the frame as a
+                      canvas background without a separate endpoint.
+    """
+    import base64 as _b64
     jpeg = stream_manager.get_jpeg(camera_id, quality=90)
     if jpeg is None:
+        if format == "json":
+            raise HTTPException(status_code=404, detail=f"No frame available for camera {camera_id}. Is the stream online?")
         raise HTTPException(status_code=404, detail="No frame available")
+
+    if format == "json":
+        b64 = "data:image/jpeg;base64," + _b64.b64encode(jpeg).decode("ascii")
+        return {"camera_id": camera_id, "image": b64}
+
     return Response(content=jpeg, media_type="image/jpeg")
 
 

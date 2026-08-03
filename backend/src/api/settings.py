@@ -17,8 +17,18 @@ from ..config import config, SETTINGS_FILE, SettingsPayload, sync_tracker_config
 from ..identity.api import _provider
 from ..identity.correlation import correlation_engine
 from ..cameras.stream_manager import stream_manager
+from ..activity.classifier import profile_registry
 
 router = APIRouter(tags=["settings"])
+
+
+@router.get("/api/activity/profiles")
+async def get_activity_profiles():
+    """Return all registered activity profiles with their activity definitions."""
+    return {
+        "active_profile": getattr(config, "active_profile", "software_office"),
+        "profiles": profile_registry.list_profiles(),
+    }
 
 
 @router.get("/api/settings")
@@ -53,6 +63,9 @@ async def get_settings():
 
         # Classifier
         "classifier_velocity_threshold": config.classifier_velocity_threshold,
+
+        # Activity Profile
+        "active_profile": getattr(config, "active_profile", "software_office"),
 
         # Tracking pipeline
         "tracking_fps": config.tracking_fps,
@@ -102,8 +115,11 @@ async def save_settings(payload: SettingsPayload):
     # Classifier settings
     config.classifier_velocity_threshold = payload.classifier_velocity_threshold
 
+    # Activity Profile
+    config.active_profile = payload.active_profile
+
     # Tracking FPS
-    config.tracking_fps = max(1.0, min(30.0, payload.tracking_fps))
+    config.tracking_fps = max(1.0, min(60.0, payload.tracking_fps))
 
     # Write to settings.json
     try:
@@ -135,6 +151,8 @@ async def save_settings(payload: SettingsPayload):
                 "tracker_appearance_thresh": config.tracker_appearance_thresh,
 
                 "classifier_velocity_threshold": config.classifier_velocity_threshold,
+
+                "active_profile": config.active_profile,
 
                 "tracking_fps": config.tracking_fps,
 

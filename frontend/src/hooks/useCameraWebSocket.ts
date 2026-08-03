@@ -12,11 +12,14 @@ export interface Detection {
 }
 
 const ACTIVITY_LABEL: Record<string, string> = {
-  working:       "Working",
-  walking:       "Walking",
-  idle:          "Idle",
-  no_person:     "No Person",
-  unknown:       "Unknown",
+  working:        "Working",
+  walking:        "Walking",
+  idle:           "Idle",
+  using_phone:    "Using Phone",
+  meeting:        "Meeting",
+  away_from_desk: "Away From Desk",
+  no_person:      "No Person",
+  unknown:        "Unknown",
 };
 
 interface UseCameraWebSocketProps {
@@ -57,8 +60,8 @@ export function useCameraWebSocket({
 
     // Pre-allocate the offscreen capture canvas once per mount
     const offscreen = document.createElement("canvas");
-    offscreen.width = 640;
-    offscreen.height = 480;
+    offscreen.width = 1280;
+    offscreen.height = 720;
     captureCanvasRef.current = offscreen;
     captureCtxRef.current = offscreen.getContext("2d");
 
@@ -66,7 +69,11 @@ export function useCameraWebSocket({
       if (clipUrl) return; // Skip webcam if clip is provided
       try {
         stream = await navigator.mediaDevices.getUserMedia({
-          video: { width: 640, height: 480, facingMode: "user" },
+          video: {
+            width: { ideal: 1920 },
+            height: { ideal: 1080 },
+            facingMode: "user"
+          },
         });
         if (!isMounted) {
           stream.getTracks().forEach((t) => t.stop());
@@ -171,6 +178,45 @@ export function useCameraWebSocket({
               ctx.fillText("Workstation", px + 6, py + 16);
             }
           }
+
+          // ── Draw polygon zones overlay ──────────────────────────────────
+          const zones: Array<{ id: string; name: string; color: string; points: [number, number][]; enabled?: boolean }> = data.zones ?? [];
+          zones.forEach(zone => {
+            if (!zone.points || zone.points.length < 3) return;
+            if (zone.enabled === false) return;
+            const pts = zone.points;
+            const color = zone.color ?? "#3b82f6";
+            ctx.beginPath();
+            pts.forEach(([nx, ny], i) => {
+              const px = nx <= 1.0 ? nx * canvas.width : nx;
+              const py = ny <= 1.0 ? ny * canvas.height : ny;
+              if (i === 0) ctx.moveTo(px, py);
+              else ctx.lineTo(px, py);
+            });
+            ctx.closePath();
+            // Semi-transparent fill
+            ctx.globalAlpha = 0.12;
+            ctx.fillStyle = color;
+            ctx.fill();
+            ctx.globalAlpha = 1;
+            // Dashed stroke
+            ctx.strokeStyle = color;
+            ctx.lineWidth = 1.5;
+            ctx.setLineDash([5, 3]);
+            ctx.stroke();
+            ctx.setLineDash([]);
+            // Zone label at centroid
+            const cx = pts.reduce((s, [x]) => s + (x <= 1.0 ? x * canvas.width : x), 0) / pts.length;
+            const cy = pts.reduce((s, [, y]) => s + (y <= 1.0 ? y * canvas.height : y), 0) / pts.length;
+            ctx.font = "bold 10px Inter, Arial, sans-serif";
+            ctx.textAlign = "center";
+            ctx.textBaseline = "middle";
+            ctx.fillStyle = "rgba(0,0,0,0.6)";
+            ctx.fillText(zone.name, cx + 1, cy + 1);
+            ctx.fillStyle = color;
+            ctx.fillText(zone.name, cx, cy);
+            ctx.textAlign = "left";
+          });
 
           // ── Draw each tracked person ────────────────────────────────────
           const dets: Detection[] = data.detections ?? [];
@@ -287,10 +333,19 @@ export function useCameraWebSocket({
       const video = videoRef.current;
       if (!video || (!video.srcObject && !video.src)) return;
       const cx = captureCtxRef.current;
-      if (!cx || !captureCanvasRef.current) return;
-      cx.drawImage(video, 0, 0, 640, 480);
-      const imageData = captureCanvasRef.current
-        .toDataURL("image/jpeg", 0.7)
+      const canvas = captureCanvasRef.current;
+      if (!cx || !canvas) return;
+
+      const vW = video.videoWidth || 1280;
+      const vH = video.videoHeight || 720;
+      if (canvas.width !== vW || canvas.height !== vH) {
+        canvas.width = vW;
+        canvas.height = vH;
+      }
+
+      cx.drawImage(video, 0, 0, vW, vH);
+      const imageData = canvas
+        .toDataURL("image/jpeg", 0.85)
         .split(",")[1];
       wsRef.current?.send(JSON.stringify({ image: imageData, camera_id: cameraId }));
     }

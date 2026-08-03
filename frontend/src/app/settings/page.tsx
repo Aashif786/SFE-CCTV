@@ -1,7 +1,7 @@
 "use client";
 import { useEffect, useState } from "react";
 import { 
-  CheckCircle2, Loader2, Cpu, Eye, EyeOff, Sliders, Shield, HelpCircle, Network
+  CheckCircle2, Loader2, Cpu, Eye, EyeOff, Sliders, Shield, HelpCircle, Network, Activity
 } from "lucide-react";
 
 const API = "http://localhost:8000";
@@ -19,7 +19,7 @@ const toPercent = (val: number) => Math.round((val || 0) * 100);
 const fromPercent = (pct: number) => Number((pct / 100).toFixed(4));
 
 export default function SettingsPage() {
-  const [activeTab, setActiveTab] = useState<"ai" | "tracker" | "identity" | "server">("ai");
+  const [activeTab, setActiveTab] = useState<"ai" | "tracker" | "identity" | "server" | "profile">("ai");
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
@@ -67,6 +67,15 @@ export default function SettingsPage() {
   const [maxCameras, setMaxCameras] = useState(50);
   const [classifierVelocityThreshold, setClassifierVelocityThreshold] = useState(0.05);
 
+  // 5. Activity Profile
+  const [activeProfile, setActiveProfile] = useState("software_office");
+  const [profilesData, setProfilesData] = useState<{
+    id: string;
+    display_name: string;
+    activities: { id: string; display_name: string; color: string; icon: string; description: string; productive: boolean }[];
+  }[]>([]);
+  const [profilesLoading, setProfilesLoading] = useState(false);
+
   useEffect(() => {
     fetch(`${API}/api/settings`)
       .then((r) => {
@@ -113,9 +122,20 @@ export default function SettingsPage() {
         setFrameBufferSize(data.frame_buffer_size ?? 5);
         setMaxCameras(data.max_cameras ?? 50);
         setClassifierVelocityThreshold(data.classifier_velocity_threshold ?? 0.05);
+        setActiveProfile(data.active_profile ?? "software_office");
       })
       .catch(() => setError("Could not reach backend settings API. Ensure backend is active."))
       .finally(() => setLoading(false));
+
+    // Fetch profiles from dedicated endpoint
+    setProfilesLoading(true);
+    fetch(`${API}/api/activity/profiles`)
+      .then(r => r.json())
+      .then(data => {
+        setProfilesData(data.profiles ?? []);
+      })
+      .catch(() => {})
+      .finally(() => setProfilesLoading(false));
   }, []);
 
   const handleSave = async () => {
@@ -153,6 +173,9 @@ export default function SettingsPage() {
 
         // Classifier
         classifier_velocity_threshold: Number(classifierVelocityThreshold),
+
+        // Activity Profile
+        active_profile: activeProfile,
 
         // Environment / Creds
         tracking_fps: Number(trackingFps),
@@ -233,6 +256,16 @@ export default function SettingsPage() {
           }`}
         >
           <Network className="w-4 h-4" /> Streaming & Server
+        </button>
+        <button
+          onClick={() => setActiveTab("profile")}
+          className={`flex items-center gap-2 px-4 py-2 text-sm font-semibold rounded-t-lg transition-all whitespace-nowrap ${
+            activeTab === "profile"
+              ? "border-b-2 border-violet-500 text-violet-500"
+              : "text-[hsl(var(--text-muted))] hover:text-[hsl(var(--text-primary))]"
+          }`}
+        >
+          <Activity className="w-4 h-4" /> Activity Profile
         </button>
       </div>
 
@@ -353,13 +386,15 @@ export default function SettingsPage() {
                       id="ai-stream-fps"
                       type="number"
                       min={1}
-                      max={30}
+                      max={60}
                       value={aiStreamFps}
-                      onChange={(e) => setAiStreamFps(Number(e.target.value))}
+                      onChange={(e) => setAiStreamFps(Math.min(60, Math.max(1, Number(e.target.value))))}
                       className="w-full bg-[hsl(var(--bg-input))] border border-[hsl(var(--border-strong))] rounded-lg px-4 py-2 text-[hsl(var(--text-primary))] text-sm focus:outline-none focus:border-emerald-500 border-solid"
                     />
                   </div>
                 </div>
+
+                {/* YOLO Confidence */}
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-4 items-center border-t border-[hsl(var(--border))] pt-4">
                   <div>
                     <label className="block text-sm font-semibold text-[hsl(var(--text-primary))]">
@@ -373,8 +408,8 @@ export default function SettingsPage() {
                     <input
                       id="yolo-conf-slider"
                       type="range"
-                      min={10}
-                      max={90}
+                      min={5}
+                      max={95}
                       value={yoloConf}
                       onChange={(e) => setYoloConf(Number(e.target.value))}
                       className="flex-1 accent-emerald-500 cursor-pointer"
@@ -399,7 +434,7 @@ export default function SettingsPage() {
                     <input
                       id="yolo-iou-slider"
                       type="range"
-                      min={40}
+                      min={20}
                       max={95}
                       value={yoloIou}
                       onChange={(e) => setYoloIou(Number(e.target.value))}
@@ -425,7 +460,7 @@ export default function SettingsPage() {
                     <input
                       id="ema-alpha-slider"
                       type="range"
-                      min={10}
+                      min={5}
                       max={95}
                       value={emaAlpha}
                       onChange={(e) => setEmaAlpha(Number(e.target.value))}
@@ -451,10 +486,10 @@ export default function SettingsPage() {
                     <input
                       id="idle-threshold"
                       type="number"
-                      min={3}
-                      max={300}
+                      min={1}
+                      max={600}
                       value={idleThreshold}
-                      onChange={(e) => setIdleThreshold(Number(e.target.value))}
+                      onChange={(e) => setIdleThreshold(Math.min(600, Math.max(1, Number(e.target.value))))}
                       className="w-full bg-[hsl(var(--bg-input))] border border-[hsl(var(--border-strong))] rounded-lg px-4 py-2 text-[hsl(var(--text-primary))] text-sm focus:outline-none focus:border-emerald-500 border-solid"
                     />
                   </div>
@@ -700,10 +735,10 @@ export default function SettingsPage() {
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-4 items-center border-t border-[hsl(var(--border))] pt-4">
                   <div>
                     <label className="block text-sm font-semibold text-[hsl(var(--text-primary))]">
-                      Re-ID Spatial overlap gate
+                      Re-ID Spatial Overlap Gate
                     </label>
                     <p className="text-xs text-[hsl(var(--text-muted))] mt-1">
-                      Minimum spatial overlap (IoU) to allow visual features evaluation. 0% runs Re-ID globally across frames.
+                      Minimum spatial overlap (IoU) to evaluate visual features. Higher values (50%) enable Re-ID during worker collisions.
                     </p>
                   </div>
                   <div className="md:col-span-2 flex items-center gap-4">
@@ -711,7 +746,7 @@ export default function SettingsPage() {
                       id="proximity-thresh-slider"
                       type="range"
                       min={0}
-                      max={60}
+                      max={90}
                       value={proximityThresh}
                       onChange={(e) => setProximityThresh(Number(e.target.value))}
                       className="flex-1 accent-emerald-500 cursor-pointer"
@@ -736,7 +771,7 @@ export default function SettingsPage() {
                     <input
                       id="appearance-thresh-slider"
                       type="range"
-                      min={50}
+                      min={10}
                       max={90}
                       value={appearanceThresh}
                       onChange={(e) => setAppearanceThresh(Number(e.target.value))}
@@ -880,7 +915,7 @@ export default function SettingsPage() {
                       AI Tracking Target FPS
                     </label>
                     <p className="text-xs text-[hsl(var(--text-muted))] mt-1">
-                      Target frame rate for YOLO tracking pipeline. Higher FPS increases CPU/GPU load.
+                      Target frame rate for YOLO tracking pipeline. Higher FPS increases throughput up to 60 FPS.
                     </p>
                   </div>
                   <div className="md:col-span-2">
@@ -888,7 +923,7 @@ export default function SettingsPage() {
                       <input
                         type="range"
                         min="1"
-                        max="30"
+                        max="60"
                         step="1"
                         value={trackingFps}
                         onChange={(e) => setTrackingFps(Number(e.target.value))}
@@ -1051,6 +1086,105 @@ export default function SettingsPage() {
                       className="w-full bg-[hsl(var(--bg-input))] border border-[hsl(var(--border-strong))] rounded-lg px-4 py-2 text-[hsl(var(--text-primary))] text-sm focus:outline-none focus:border-emerald-500 border-solid"
                     />
                   </div>
+                </div>
+              </div>
+            )}
+
+            {/* TAB 5: ACTIVITY PROFILE */}
+            {activeTab === "profile" && (
+              <div className="space-y-6">
+                <div>
+                  <h3 className="text-xl font-bold text-[hsl(var(--text-primary))] border-b border-[hsl(var(--border))] pb-2">
+                    Activity Profile
+                  </h3>
+                  <p className="text-sm text-[hsl(var(--text-muted))] mt-2">
+                    Select the deployment profile that best matches your environment. Each profile defines its own activity detection rules optimized for that industry.
+                  </p>
+                </div>
+
+                {/* Profile Selector */}
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-4 items-start">
+                  <div>
+                    <label className="block text-sm font-semibold text-[hsl(var(--text-primary))]">Active Profile</label>
+                    <p className="text-xs text-[hsl(var(--text-muted))] mt-1">
+                      Changes take effect immediately without restarting the AI stream.
+                    </p>
+                  </div>
+                  <div className="md:col-span-2">
+                    {profilesLoading ? (
+                      <div className="flex items-center gap-2 text-[hsl(var(--text-muted))] text-sm py-2">
+                        <Loader2 className="w-4 h-4 animate-spin" /> Loading profiles…
+                      </div>
+                    ) : (
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                        {profilesData.map(profile => (
+                          <button
+                            key={profile.id}
+                            onClick={() => setActiveProfile(profile.id)}
+                            className={`flex flex-col gap-1 text-left p-4 rounded-xl border-2 transition-all ${
+                              activeProfile === profile.id
+                                ? "border-violet-500 bg-violet-500/10"
+                                : "border-[hsl(var(--border))] bg-[hsl(var(--bg-input))] hover:border-violet-400/50"
+                            }`}
+                          >
+                            <span className="font-semibold text-sm text-[hsl(var(--text-primary))]">
+                              {profile.display_name}
+                            </span>
+                            <span className="text-xs text-[hsl(var(--text-muted))]">
+                              {profile.activities.length} activities
+                            </span>
+                          </button>
+                        ))}
+                        {profilesData.length === 0 && (
+                          <p className="text-sm text-[hsl(var(--text-muted))] col-span-2">
+                            No profiles available. Check backend connection.
+                          </p>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                </div>
+
+                {/* Activities for selected profile */}
+                {profilesData.filter(p => p.id === activeProfile).map(profile => (
+                  <div key={profile.id} className="space-y-3">
+                    <h4 className="text-sm font-semibold text-[hsl(var(--text-secondary))] uppercase tracking-wider">
+                      Activities in &quot;{profile.display_name}&quot;
+                    </h4>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                      {profile.activities.map(activity => (
+                        <div
+                          key={activity.id}
+                          className="flex items-start gap-3 p-3 rounded-xl bg-[hsl(var(--bg-input))] border border-[hsl(var(--border))]"
+                        >
+                          <div
+                            className="w-4 h-4 rounded-full mt-0.5 flex-shrink-0"
+                            style={{ backgroundColor: activity.color }}
+                          />
+                          <div className="min-w-0">
+                            <div className="flex items-center gap-2">
+                              <span className="text-sm font-semibold text-[hsl(var(--text-primary))]">
+                                {activity.icon} {activity.display_name}
+                              </span>
+                              {activity.productive && (
+                                <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded-full bg-emerald-500/15 text-emerald-500 border border-emerald-500/20">
+                                  Productive
+                                </span>
+                              )}
+                            </div>
+                            <p className="text-xs text-[hsl(var(--text-muted))] mt-0.5 leading-relaxed">
+                              {activity.description}
+                            </p>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                ))}
+
+                {/* Future Profiles Notice */}
+                <div className="p-4 rounded-xl bg-violet-500/5 border border-violet-500/20 text-sm text-[hsl(var(--text-muted))]">
+                  <span className="font-semibold text-violet-400">Coming soon:</span> Manufacturing, Warehouse, Retail, Healthcare, Security Operations, and Laboratory profiles.
                 </div>
               </div>
             )}

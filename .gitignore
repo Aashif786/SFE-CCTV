@@ -32,7 +32,9 @@ frontend/dist/
 *.swp
 *.swo
 
-#Misc
-dump/
+# Model weights & binaries
+*.pt
+*.onnx
 backend/*.pt
+backend/models/
 test_clips/

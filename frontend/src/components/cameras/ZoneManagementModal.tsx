@@ -15,6 +15,7 @@ import {
   Info,
 } from "lucide-react";
 import type { LiveCamera, CameraInfo } from "@/hooks/useCameras";
+import PolygonZoneEditor from "./PolygonZoneEditor";
 
 interface ZoneItem {
   id: string;
@@ -44,7 +45,7 @@ export default function ZoneManagementModal({
   const [successMsg, setSuccessMsg] = useState<string | null>(null);
   const [dragOver, setDragOver] = useState(false);
   const [rawJsonText, setRawJsonText] = useState<string>("");
-  const [activeTab, setActiveTab] = useState<"list" | "upload">("list");
+  const [activeTab, setActiveTab] = useState<"list" | "upload" | "editor">("list");
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const fetchZones = useCallback(async () => {
@@ -226,7 +227,9 @@ export default function ZoneManagementModal({
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-in fade-in duration-200">
-      <div className="bg-[hsl(var(--bg-card))] border border-[hsl(var(--border))] rounded-2xl w-full max-w-2xl overflow-hidden shadow-2xl flex flex-col max-h-[90vh]">
+      <div className={`bg-[hsl(var(--bg-card))] border border-[hsl(var(--border))] rounded-2xl w-full overflow-hidden shadow-2xl flex flex-col ${
+        activeTab === "editor" ? "max-w-6xl h-[90vh]" : "max-w-2xl max-h-[90vh]"
+      }`}>
         {/* Header */}
         <div className="px-6 py-4 border-b border-[hsl(var(--border))] flex items-center justify-between bg-[hsl(var(--bg-table-head))]">
           <div className="flex items-center gap-3">
@@ -273,6 +276,17 @@ export default function ZoneManagementModal({
           >
             <Upload className="w-4 h-4" />
             Upload / Replace JSON
+          </button>
+          <button
+            onClick={() => setActiveTab("editor")}
+            className={`py-3 px-4 text-xs font-bold border-b-2 transition-colors flex items-center gap-2 ${
+              activeTab === "editor"
+                ? "border-blue-500 text-blue-600 dark:text-blue-400"
+                : "border-transparent text-[hsl(var(--text-muted))] hover:text-[hsl(var(--text-primary))]"
+            }`}
+          >
+            <Plus className="w-4 h-4" />
+            Polygon Editor
           </button>
         </div>
 
@@ -484,6 +498,20 @@ export default function ZoneManagementModal({
                 <p>• Unique IDs: Each zone must have a distinct non-empty ID</p>
                 <p>• Coordinates: Points can be normalized (0.0 – 1.0) or pixel values</p>
               </div>
+            </div>
+          )}
+
+          {/* TAB: POLYGON EDITOR */}
+          {activeTab === "editor" && (
+            <div className="h-full flex flex-col">
+              <PolygonZoneEditor
+                cameraId={String(camera.id)}
+                onSave={() => {
+                  fetchZones();
+                  setSuccessMsg("Zones saved successfully!");
+                  onZonesUpdated?.();
+                }}
+              />
             </div>
           )}
         </div>
