@@ -271,11 +271,20 @@ export default function SettingsPage() {
                       onChange={(e) => setYoloModel(e.target.value)}
                       className="w-full bg-[hsl(var(--bg-input))] border border-[hsl(var(--border-strong))] rounded-lg px-4 py-2 text-[hsl(var(--text-primary))] text-sm focus:outline-none focus:border-emerald-500 border-solid"
                     >
-                      <option value="yolo11n-pose.pt">YOLO11 Nano Pose (Fastest, lightest)</option>
-                      <option value="yolo11s-pose.pt">YOLO11 Small Pose (Medium speed & size)</option>
-                      <option value="yolo11m-pose.pt">YOLO11 Medium Pose (Balanced accuracy & speed)</option>
-                      <option value="yolo11l-pose.pt">YOLO11 Large Pose (Highly accurate, heavy)</option>
-                      <option value="yolo11x-pose.pt">YOLO11 Extra Large Pose (Maximum accuracy, slow)</option>
+                      <optgroup label="⚡ YOLOv8 Pose (Ultra-High Speed)">
+                        <option value="yolov8n-pose.pt">YOLOv8 Nano Pose (Ultra Fast ~100+ FPS)</option>
+                        <option value="yolov8s-pose.pt">YOLOv8 Small Pose (Fast ~90+ FPS)</option>
+                        <option value="yolov8m-pose.pt">YOLOv8 Medium Pose (Balanced ~60+ FPS)</option>
+                        <option value="yolov8l-pose.pt">YOLOv8 Large Pose (High Accuracy)</option>
+                        <option value="yolov8x-pose.pt">YOLOv8 Extra Large Pose (Max Precision)</option>
+                      </optgroup>
+                      <optgroup label="🚀 YOLO11 Pose (Next-Gen Accuracy)">
+                        <option value="yolo11n-pose.pt">YOLO11 Nano Pose (Fastest ~85+ FPS)</option>
+                        <option value="yolo11s-pose.pt">YOLO11 Small Pose (Fast ~95+ FPS)</option>
+                        <option value="yolo11m-pose.pt">YOLO11 Medium Pose (Balanced ~60+ FPS)</option>
+                        <option value="yolo11l-pose.pt">YOLO11 Large Pose (Heavy)</option>
+                        <option value="yolo11x-pose.pt">YOLO11 Extra Large Pose (Maximum Accuracy)</option>
+                      </optgroup>
                     </select>
                   </div>
                 </div>
@@ -297,9 +306,11 @@ export default function SettingsPage() {
                       onChange={(e) => setYoloImgsz(Number(e.target.value))}
                       className="w-full bg-[hsl(var(--bg-input))] border border-[hsl(var(--border-strong))] rounded-lg px-4 py-2 text-[hsl(var(--text-primary))] text-sm focus:outline-none focus:border-emerald-500 border-solid"
                     >
-                      <option value={640}>640px (Low resolution - Fast)</option>
-                      <option value={960}>960px (Standard optimized)</option>
-                      <option value={1280}>1280px (High definition - Distant detection)</option>
+                      <option value={320}>320px (Ultra Fast / Minimum Latency)</option>
+                      <option value={480}>480px (Fast Mobile / Lightweight)</option>
+                      <option value={640}>640px (Standard Optimal - Recommended)</option>
+                      <option value={960}>960px (Standard High Detail)</option>
+                      <option value={1280}>1280px (High Definition - Distant Detection)</option>
                     </select>
                   </div>
                 </div>
@@ -342,7 +353,7 @@ export default function SettingsPage() {
                       id="ai-stream-fps"
                       type="number"
                       min={1}
-                      max={60}
+                      max={30}
                       value={aiStreamFps}
                       onChange={(e) => setAiStreamFps(Number(e.target.value))}
                       className="w-full bg-[hsl(var(--bg-input))] border border-[hsl(var(--border-strong))] rounded-lg px-4 py-2 text-[hsl(var(--text-primary))] text-sm focus:outline-none focus:border-emerald-500 border-solid"

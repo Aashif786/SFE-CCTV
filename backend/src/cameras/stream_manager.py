@@ -284,8 +284,13 @@ class StreamManager:
                 print(f"[StreamManager] 🟢 Camera {cs.camera_id} ONLINE")
 
                 consecutive_failures = 0
-                last_jpeg_time = 0.0  # Track when we last encoded a JPEG
-                jpeg_interval = 0.1   # Only encode JPEGs at ~10 FPS max
+                last_jpeg_time = 0.0
+                # Encode WS JPEGs slightly faster than the AI stream FPS cap so
+                # the AI loop never picks up a stale frame.  E.g. if ai_stream_fps
+                # is 20, encode at 25 FPS = 40ms interval.  Clamped to 5-30 FPS.
+                from ..config import config as _cfg
+                _ai_fps = max(5, min(30, getattr(_cfg, 'ai_stream_fps', 15)))
+                jpeg_interval = 1.0 / (_ai_fps * 1.25)  # 25% faster than AI loop
 
                 while not cs._stop_event.is_set():
                     ret, frame = cap.read()

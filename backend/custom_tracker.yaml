@@ -10,8 +10,8 @@ fuse_score: True
 # GMC Optimization
 gmc_method: none
 
-# ReID
+# ReID (GPU Native Acceleration)
 with_reid: True
-model: /home/zoro/~projects/caldim/SFE-CCTV/backend/yolo26m-reid.onnx
-proximity_thresh: 0.0
-appearance_thresh: 0.75
+model: auto
+proximity_thresh: 0.13
+appearance_thresh: 0.5
