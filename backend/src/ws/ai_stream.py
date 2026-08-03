@@ -470,8 +470,9 @@ async def camera_ai_endpoint(websocket: WebSocket, camera_id: int):
     except Exception as e:
         print(f"❌ [AI-WS] Fatal error for camera {camera_id}: {e}")
     finally:
-        # Cleanup
-        dwell_tracker.close_all_camera_visits(str(camera_id))
+        # Note: Do NOT close active zone visits on WS disconnect so active occupants
+        # remain tracked when switching tabs or viewing Zone Analytics dashboard.
+        # Active visits close when the track leaves the zone ROI or exits camera view.
 
         if cam_key in session_managers:
             session_managers[cam_key].close_on_disconnect()

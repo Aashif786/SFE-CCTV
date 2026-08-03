@@ -35,7 +35,7 @@ from sqlalchemy.orm import Session
 from ..db.database import get_db
 from ..db.models import CameraZoneDB, WorkstationZone, ZoneVisitDB
 from ..state import invalidate_zone_cache
-from ..zones.dwell_tracker import format_dwell_time
+from ..zones.dwell_tracker import dwell_tracker, format_dwell_time
 from ..zones.polygon_eval import validate_zone_config, zone_cache
 
 router = APIRouter(tags=["zones"])
@@ -335,14 +335,22 @@ async def get_zone_analytics_summary(
 
     if start_date:
         try:
-            dt_start = datetime.fromisoformat(start_date)
-            query = query.filter(ZoneVisitDB.entry_time >= dt_start)
+            clean_str = start_date.replace("Z", "+00:00")
+            dt_start = datetime.fromisoformat(clean_str)
+            if dt_start.tzinfo is not None:
+                dt_start = dt_start.astimezone(timezone.utc).replace(tzinfo=None)
+            query = query.filter(
+                (ZoneVisitDB.entry_time >= dt_start) | (ZoneVisitDB.exit_time.is_(None))
+            )
         except Exception:
             pass
 
     if end_date:
         try:
-            dt_end = datetime.fromisoformat(end_date)
+            clean_str = end_date.replace("Z", "+00:00")
+            dt_end = datetime.fromisoformat(clean_str)
+            if dt_end.tzinfo is not None:
+                dt_end = dt_end.astimezone(timezone.utc).replace(tzinfo=None)
             query = query.filter(ZoneVisitDB.entry_time <= dt_end)
         except Exception:
             pass
@@ -392,6 +400,11 @@ async def get_zone_analytics_summary(
             ps["last_entry"] = v.entry_time
         if v.exit_time is None:
             ps["is_inside"] = True
+
+    # Synchronize active occupants count with live in-memory dwell tracker
+    active_in_mem = dwell_tracker.get_active_visits_count(camera_id=camera_id, zone_id=zone_id)
+    if active_occupants_count < active_in_mem:
+        active_occupants_count = active_in_mem
 
     avg_dwell_sec = (total_occupancy_sec / total_visits) if total_visits > 0 else 0.0
 

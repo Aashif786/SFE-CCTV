@@ -165,6 +165,21 @@ class ZoneDwellTracker:
                 for visit in visits.values():
                     self._close_visit_in_db(visit, now)
 
+    def get_active_visits_count(
+        self, camera_id: Optional[str] = None, zone_id: Optional[str] = None
+    ) -> int:
+        """Get total count of currently active in-memory visits inside zones."""
+        with self._lock:
+            count = 0
+            for cam_key, trk_map in self._active_visits.items():
+                if camera_id and str(cam_key) != str(camera_id):
+                    continue
+                for visit in trk_map.values():
+                    if zone_id and str(visit.zone_id) != str(zone_id):
+                        continue
+                    count += 1
+            return count
+
     # ── Database Helpers ───────────────────────────────────────────────────
 
     def _open_visit_in_db(
