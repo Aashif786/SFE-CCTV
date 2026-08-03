@@ -140,13 +140,11 @@ class WorkerDetector:
         tracker_config = os.path.abspath(
             os.path.join(os.path.dirname(__file__), "..", "..", "custom_tracker.yaml")
         )
-        use_half = (self.device != "cpu")
         results = self.model.track(
             frame,
             persist=True,
             verbose=False,
             device=self.device_id,
-            half=use_half,
             conf=getattr(config, "yolo_conf", 0.30),
             iou=getattr(config, "yolo_iou", 0.90),
             imgsz=getattr(config, "yolo_imgsz", 640),
