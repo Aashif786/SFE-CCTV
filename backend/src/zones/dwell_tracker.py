@@ -227,6 +227,17 @@ class ZoneDwellTracker:
                         return (now - visit.last_updated).total_seconds() <= max_stale_seconds
             return False
 
+    def get_active_db_visit_ids(self, max_stale_seconds: float = 8.0) -> set[int]:
+        """Return set of database visit IDs currently active in memory."""
+        now = datetime.now(timezone.utc).replace(tzinfo=None)
+        active_ids = set()
+        with self._lock:
+            for trk_map in self._active_visits.values():
+                for visit in trk_map.values():
+                    if visit.db_visit_id > 0 and (now - visit.last_updated).total_seconds() <= max_stale_seconds:
+                        active_ids.add(visit.db_visit_id)
+        return active_ids
+
     def get_active_visits_count(
         self, camera_id: Optional[str] = None, zone_id: Optional[str] = None, max_stale_seconds: float = 8.0
     ) -> int:

@@ -130,7 +130,7 @@ export default function ZoneAnalyticsPage() {
         visitParams.append("status", visitStatusFilter);
       }
       if (logSearch.trim()) {
-        visitParams.append("person_identifier", logSearch.trim());
+        visitParams.append("search", logSearch.trim());
       }
       visitParams.append("limit", String(pageSize));
       visitParams.append("offset", String(page * pageSize));
