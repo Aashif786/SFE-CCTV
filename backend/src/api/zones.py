@@ -503,30 +503,51 @@ async def get_zone_visits(
     person_identifier: Optional[str] = Query(None),
     tracking_id: Optional[str] = Query(None),
     status: Optional[str] = Query(None),
+    search: Optional[str] = Query(None),
     start_date: Optional[str] = Query(None),
     limit: int = Query(20, ge=1, le=1000),
     offset: int = Query(0, ge=0),
     db: Session = Depends(get_db),
 ):
-    """Fetch paginated historical zone visit logs with advanced filtering."""
+    """Fetch paginated historical zone visit logs with advanced search and live status filtering."""
     query = db.query(ZoneVisitDB)
 
     if camera_id:
         query = query.filter(ZoneVisitDB.camera_id == str(camera_id))
     if zone_id:
         query = query.filter(ZoneVisitDB.zone_id == str(zone_id))
-    if person_identifier:
-        term = f"%{person_identifier.strip()}%"
+
+    # Robust multi-field search across employee ID, track ID, zone ID, and camera ID
+    search_term = (search or person_identifier or "").strip()
+    if search_term:
+        clean_term = search_term.replace("Track-", "").replace("track-", "").strip()
+        term_pattern = f"%{clean_term}%"
         query = query.filter(
-            (ZoneVisitDB.person_identifier.ilike(term)) |
-            (ZoneVisitDB.tracking_id.ilike(term))
+            (ZoneVisitDB.person_identifier.ilike(term_pattern)) |
+            (ZoneVisitDB.tracking_id.ilike(term_pattern)) |
+            (ZoneVisitDB.zone_id.ilike(term_pattern)) |
+            (ZoneVisitDB.camera_id.ilike(term_pattern))
         )
+
     if tracking_id:
         query = query.filter(ZoneVisitDB.tracking_id == str(tracking_id))
+
+    # Active vs Completed status filter aligned strictly with live in-memory dwell tracker
+    active_db_ids = dwell_tracker.get_active_db_visit_ids()
     if status == "active":
-        query = query.filter(ZoneVisitDB.exit_time.is_(None))
+        if active_db_ids:
+            query = query.filter(
+                (ZoneVisitDB.id.in_(active_db_ids)) | (ZoneVisitDB.exit_time.is_(None))
+            )
+        else:
+            query = query.filter(ZoneVisitDB.exit_time.is_(None) & (ZoneVisitDB.id == -1))
     elif status == "completed":
-        query = query.filter(ZoneVisitDB.exit_time.isnot(None))
+        if active_db_ids:
+            query = query.filter(
+                ZoneVisitDB.exit_time.isnot(None) & (~ZoneVisitDB.id.in_(active_db_ids))
+            )
+        else:
+            query = query.filter(ZoneVisitDB.exit_time.isnot(None))
 
     if start_date:
         try:
