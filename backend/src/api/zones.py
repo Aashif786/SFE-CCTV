@@ -502,11 +502,13 @@ async def get_zone_visits(
     zone_id: Optional[str] = Query(None),
     person_identifier: Optional[str] = Query(None),
     tracking_id: Optional[str] = Query(None),
-    limit: int = Query(50, ge=1, le=1000),
+    status: Optional[str] = Query(None),
+    start_date: Optional[str] = Query(None),
+    limit: int = Query(20, ge=1, le=1000),
     offset: int = Query(0, ge=0),
     db: Session = Depends(get_db),
 ):
-    """Fetch paginated historical zone visit logs."""
+    """Fetch paginated historical zone visit logs with advanced filtering."""
     query = db.query(ZoneVisitDB)
 
     if camera_id:
@@ -514,9 +516,27 @@ async def get_zone_visits(
     if zone_id:
         query = query.filter(ZoneVisitDB.zone_id == str(zone_id))
     if person_identifier:
-        query = query.filter(ZoneVisitDB.person_identifier == str(person_identifier))
+        term = f"%{person_identifier.strip()}%"
+        query = query.filter(
+            (ZoneVisitDB.person_identifier.ilike(term)) |
+            (ZoneVisitDB.tracking_id.ilike(term))
+        )
     if tracking_id:
         query = query.filter(ZoneVisitDB.tracking_id == str(tracking_id))
+    if status == "active":
+        query = query.filter(ZoneVisitDB.exit_time.is_(None))
+    elif status == "completed":
+        query = query.filter(ZoneVisitDB.exit_time.isnot(None))
+
+    if start_date:
+        try:
+            clean_str = start_date.replace("Z", "+00:00")
+            dt_start = datetime.fromisoformat(clean_str)
+            if dt_start.tzinfo is not None:
+                dt_start = dt_start.astimezone(timezone.utc).replace(tzinfo=None)
+            query = query.filter(ZoneVisitDB.entry_time >= dt_start)
+        except Exception:
+            pass
 
     total_count = query.count()
     rows = query.order_by(ZoneVisitDB.entry_time.desc()).offset(offset).limit(limit).all()
