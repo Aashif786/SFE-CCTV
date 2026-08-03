@@ -330,21 +330,33 @@ async def camera_ai_endpoint(websocket: WebSocket, camera_id: int):
                     worker_session = worker_session_manager.get_by_track(str_trk_id)
                     employee_id = worker_session.employee_id if worker_session else None
 
-                    # Calculate bottom-center point of bounding box (foot position) & lower torso point
+                    # Calculate candidate points for robust zone evaluation:
+                    # 1. Foot position (bottom center)
+                    # 2. Bounding box center
+                    # 3. Lower torso / seat position (75% height)
+                    # 4. Upper torso / head position (25% height)
                     box_n = p["box"]  # [x1, y1, x2, y2]
                     foot_x = float(box_n[0] + box_n[2]) / 2.0
                     foot_y = float(box_n[3])
-                    torso_y = float(box_n[1]) + 0.8 * float(box_n[3] - box_n[1])
+                    center_y = float(box_n[1] + box_n[3]) / 2.0
+                    torso_y = float(box_n[1]) + 0.75 * float(box_n[3] - box_n[1])
+                    head_y = float(box_n[1]) + 0.25 * float(box_n[3] - box_n[1])
 
-                    # Point-in-polygon zone evaluation
+                    candidate_points = [
+                        (foot_x, foot_y),
+                        (foot_x, center_y),
+                        (foot_x, torso_y),
+                        (foot_x, head_y),
+                    ]
+
+                    # Point-in-polygon zone evaluation across body points
                     matched_zone_dict = None
                     for cz in camera_zones:
                         if cz.get("enabled", True) and cz.get("points"):
-                            is_inside = is_point_in_polygon(foot_x, foot_y, cz["points"], frame_width=w, frame_height=h)
-                            if not is_inside:
-                                # Fallback check for lower torso/seat position
-                                is_inside = is_point_in_polygon(foot_x, torso_y, cz["points"], frame_width=w, frame_height=h)
-
+                            is_inside = any(
+                                is_point_in_polygon(cx, cy, cz["points"], frame_width=w, frame_height=h)
+                                for cx, cy in candidate_points
+                            )
                             if is_inside:
                                 matched_zone_dict = {
                                     "id": cz["id"],

@@ -322,6 +322,8 @@ async def get_zone_analytics_summary(
     Supports filtering by camera_id, zone_id, person_identifier, and date range.
     Includes active open visits with real-time live dwell duration.
     """
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
+
     # 0. Auto-close orphan DB visits that are no longer active in live memory
     open_db_visits = db.query(ZoneVisitDB).filter(ZoneVisitDB.exit_time.is_(None)).all()
     closed_stale = False

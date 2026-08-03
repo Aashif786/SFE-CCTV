@@ -77,17 +77,22 @@ app.websocket("/ws")(websocket_endpoint)
 app.websocket("/ws/camera/{camera_id}")(camera_ai_endpoint)
 
 
+from .zones.background_tracker import background_tracker
+
+
 # ---------------------------------------------------------------------------
 # Lifecycle Events
 # ---------------------------------------------------------------------------
 @app.on_event("startup")
 def startup_cameras():
-    """Seed demo cameras on first run, then start all enabled streams."""
+    """Seed demo cameras on first run, then start all enabled streams and background tracker."""
     seed_cameras()
     stream_manager.start_all_enabled()
+    background_tracker.start()
 
 
 @app.on_event("shutdown")
 def shutdown_cameras():
-    """Stop all camera streams on server shutdown."""
+    """Stop all camera streams and background tracker on server shutdown."""
+    background_tracker.stop()
     stream_manager.stop_all()
