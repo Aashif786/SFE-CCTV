@@ -351,8 +351,8 @@ export default function ZoneAnalyticsPage() {
       {/* Per-Zone Breakdown & Per-Person Breakdown */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         {/* Zone Breakdown */}
-        <div className="p-6 rounded-2xl border border-[hsl(var(--border))] bg-[hsl(var(--bg-card))] shadow-sm space-y-4">
-          <div className="flex items-center justify-between">
+        <div className="p-6 rounded-2xl border border-[hsl(var(--border))] bg-[hsl(var(--bg-card))] shadow-sm flex flex-col h-[420px]">
+          <div className="flex items-center justify-between shrink-0 mb-4">
             <h3 className="text-base font-bold flex items-center gap-2">
               <Layers className="w-5 h-5 text-violet-500" />
               Zone Dwell Breakdown
@@ -365,7 +365,7 @@ export default function ZoneAnalyticsPage() {
               No zone dwell data available for selected filters.
             </p>
           ) : (
-            <div className="space-y-3">
+            <div className="space-y-3 overflow-y-auto flex-1 pr-1.5 custom-scrollbar">
               {perZone.map((z) => (
                 <div
                   key={z.zone_id}
@@ -411,8 +411,8 @@ export default function ZoneAnalyticsPage() {
         </div>
 
         {/* Person Breakdown */}
-        <div className="p-6 rounded-2xl border border-[hsl(var(--border))] bg-[hsl(var(--bg-card))] shadow-sm space-y-4">
-          <div className="flex items-center justify-between">
+        <div className="p-6 rounded-2xl border border-[hsl(var(--border))] bg-[hsl(var(--bg-card))] shadow-sm flex flex-col h-[420px]">
+          <div className="flex items-center justify-between shrink-0 mb-4">
             <h3 className="text-base font-bold flex items-center gap-2">
               <Users className="w-5 h-5 text-emerald-500" />
               Person Dwell Metrics
@@ -425,22 +425,22 @@ export default function ZoneAnalyticsPage() {
               No person identity dwell data recorded yet.
             </p>
           ) : (
-            <div className="overflow-x-auto">
-              <table className="w-full text-xs">
-                <thead>
+            <div className="overflow-y-auto flex-1 pr-1.5 custom-scrollbar">
+              <table className="w-full text-xs border-separate border-spacing-0">
+                <thead className="sticky top-0 bg-[hsl(var(--bg-card))] z-10">
                   <tr className="border-b border-[hsl(var(--border))] text-[hsl(var(--text-muted))] text-left">
-                    <th className="pb-2 font-bold uppercase">Person / Employee</th>
-                    <th className="pb-2 font-bold uppercase text-center">Visits</th>
-                    <th className="pb-2 font-bold uppercase text-right">Avg Dwell</th>
-                    <th className="pb-2 font-bold uppercase text-right">Total Time</th>
+                    <th className="pb-3 pt-1 font-bold uppercase bg-[hsl(var(--bg-card))] border-b border-[hsl(var(--border))]">Person / Employee</th>
+                    <th className="pb-3 pt-1 font-bold uppercase text-center bg-[hsl(var(--bg-card))] border-b border-[hsl(var(--border))]">Visits</th>
+                    <th className="pb-3 pt-1 font-bold uppercase text-right bg-[hsl(var(--bg-card))] border-b border-[hsl(var(--border))]">Avg Dwell</th>
+                    <th className="pb-3 pt-1 font-bold uppercase text-right bg-[hsl(var(--bg-card))] border-b border-[hsl(var(--border))]">Total Time</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-[hsl(var(--border))]/50">
                   {perPerson.map((p) => (
                     <tr key={p.person_identifier}>
                       <td className="py-2.5 font-bold text-[hsl(var(--text-primary))] flex items-center gap-2">
-                        <UserCheck className="w-4 h-4 text-emerald-500" />
-                        {p.person_identifier}
+                        <UserCheck className="w-4 h-4 text-emerald-500 shrink-0" />
+                        <span>{p.person_identifier}</span>
                       </td>
                       <td className="py-2.5 text-center font-medium">{p.visit_count}</td>
                       <td className="py-2.5 text-right font-mono">{p.formatted_average_dwell}</td>
