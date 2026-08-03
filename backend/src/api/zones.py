@@ -322,7 +322,20 @@ async def get_zone_analytics_summary(
     Supports filtering by camera_id, zone_id, person_identifier, and date range.
     Includes active open visits with real-time live dwell duration.
     """
-    now = datetime.now(timezone.utc).replace(tzinfo=None)
+    # 0. Auto-close orphan DB visits that are no longer active in live memory
+    open_db_visits = db.query(ZoneVisitDB).filter(ZoneVisitDB.exit_time.is_(None)).all()
+    closed_stale = False
+    for ov in open_db_visits:
+        if not dwell_tracker.is_visit_active_in_mem(ov.id):
+            ov.exit_time = ov.entry_time or now
+            ov.duration_seconds = 0.0
+            closed_stale = True
+    if closed_stale:
+        try:
+            db.commit()
+            db.expire_all()
+        except Exception:
+            db.rollback()
 
     query = db.query(ZoneVisitDB)
 
@@ -357,7 +370,6 @@ async def get_zone_analytics_summary(
 
     all_visits = query.all()
     total_visits = len(all_visits)
-    active_occupants_count = 0
     total_occupancy_sec = 0.0
 
     # Map for zone stats & person stats
@@ -365,12 +377,11 @@ async def get_zone_analytics_summary(
     person_stats: Dict[str, Dict[str, Any]] = {}
 
     for v in all_visits:
-        # Check if visit is completed or active open visit
-        if v.exit_time is not None and v.duration_seconds is not None:
-            dur = v.duration_seconds
-        else:
-            active_occupants_count += 1
+        is_active = (v.exit_time is None) and dwell_tracker.is_visit_active_in_mem(v.id)
+        if is_active:
             dur = max(0.0, (now - v.entry_time).total_seconds())
+        else:
+            dur = v.duration_seconds or 0.0
 
         total_occupancy_sec += dur
 
@@ -396,15 +407,13 @@ async def get_zone_analytics_summary(
         ps = person_stats[plabel]
         ps["visit_count"] += 1
         ps["total_occupancy_seconds"] += dur
-        if v.entry_time > ps["last_entry"]:
+        if v.entry_time and (ps["last_entry"] is None or v.entry_time > ps["last_entry"]):
             ps["last_entry"] = v.entry_time
-        if v.exit_time is None:
+        if is_active:
             ps["is_inside"] = True
 
-    # Synchronize active occupants count with live in-memory dwell tracker
-    active_in_mem = dwell_tracker.get_active_visits_count(camera_id=camera_id, zone_id=zone_id)
-    if active_occupants_count < active_in_mem:
-        active_occupants_count = active_in_mem
+    # Synchronize active occupants count strictly with live in-memory dwell tracker
+    active_occupants_count = dwell_tracker.get_active_visits_count(camera_id=camera_id, zone_id=zone_id)
 
     avg_dwell_sec = (total_occupancy_sec / total_visits) if total_visits > 0 else 0.0
 

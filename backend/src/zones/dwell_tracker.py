@@ -38,6 +38,7 @@ class ActiveZoneVisit:
     person_identifier: Optional[str]
     entry_time: datetime
     db_visit_id: int
+    last_updated: datetime
 
 
 class ZoneDwellTracker:
@@ -92,6 +93,7 @@ class ZoneDwellTracker:
 
             # Case 2: In same zone as active visit
             if active_visit and active_visit.zone_id == current_zone_id:
+                active_visit.last_updated = now
                 dwell_sec = max(0.0, (now - active_visit.entry_time).total_seconds())
                 # Update person identifier if newly resolved
                 if person_identifier and not active_visit.person_identifier:
@@ -130,6 +132,7 @@ class ZoneDwellTracker:
                 person_identifier=person_identifier,
                 entry_time=now,
                 db_visit_id=db_id,
+                last_updated=now,
             )
             cam_visits[str_trk_id] = new_visit
 
@@ -165,19 +168,61 @@ class ZoneDwellTracker:
                 for visit in visits.values():
                     self._close_visit_in_db(visit, now)
 
+    def cleanup_absent_tracks(
+        self,
+        camera_id: str,
+        active_track_ids: set[str],
+        timestamp: Optional[datetime] = None,
+    ) -> None:
+        """Close active visits for tracks on a camera that are no longer detected in the frame."""
+        cam_key = str(camera_id)
+        now = timestamp or datetime.now(timezone.utc).replace(tzinfo=None)
+
+        with self._lock:
+            if cam_key not in self._active_visits:
+                return
+
+            cam_visits = self._active_visits[cam_key]
+            absent_ids = [trk_id for trk_id in cam_visits.keys() if trk_id not in active_track_ids]
+            for trk_id in absent_ids:
+                visit = cam_visits.pop(trk_id, None)
+                if visit:
+                    self._close_visit_in_db(visit, now)
+
+    def is_visit_active_in_mem(self, db_visit_id: int, max_stale_seconds: float = 5.0) -> bool:
+        """Check if a database visit ID is currently tracked active in memory with recent frame updates."""
+        now = datetime.now(timezone.utc).replace(tzinfo=None)
+        with self._lock:
+            for trk_map in self._active_visits.values():
+                for visit in trk_map.values():
+                    if visit.db_visit_id == db_visit_id:
+                        return (now - visit.last_updated).total_seconds() <= max_stale_seconds
+            return False
+
     def get_active_visits_count(
-        self, camera_id: Optional[str] = None, zone_id: Optional[str] = None
+        self, camera_id: Optional[str] = None, zone_id: Optional[str] = None, max_stale_seconds: float = 5.0
     ) -> int:
-        """Get total count of currently active in-memory visits inside zones."""
+        """Get total count of currently active in-memory visits inside zones with recent frame updates."""
+        now = datetime.now(timezone.utc).replace(tzinfo=None)
         with self._lock:
             count = 0
+            to_remove = []
             for cam_key, trk_map in self._active_visits.items():
                 if camera_id and str(cam_key) != str(camera_id):
                     continue
-                for visit in trk_map.values():
+                for trk_id, visit in trk_map.items():
                     if zone_id and str(visit.zone_id) != str(zone_id):
                         continue
-                    count += 1
+                    if (now - visit.last_updated).total_seconds() <= max_stale_seconds:
+                        count += 1
+                    else:
+                        to_remove.append((cam_key, trk_id, visit))
+
+            # Auto-close stale visits that haven't received a frame update in > 5.0 seconds
+            for cam_key, trk_id, visit in to_remove:
+                self._close_visit_in_db(visit, visit.last_updated)
+                self._active_visits.get(cam_key, {}).pop(trk_id, None)
+
             return count
 
     # ── Database Helpers ───────────────────────────────────────────────────
