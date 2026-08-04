@@ -240,10 +240,11 @@ export default function LiveCamerasPage() {
     if (activePanel !== "cctv") {
       setVisuallyCCTVCollapsed(true);
     } else {
+      refetch();
       const t = setTimeout(() => setVisuallyCCTVCollapsed(false), 310);
       return () => clearTimeout(t);
     }
-  }, [activePanel, isDragging]);
+  }, [activePanel, isDragging, refetch]);
 
   // Sync visual AI collapsed state — delay expanded content until after width animation
   useEffect(() => {

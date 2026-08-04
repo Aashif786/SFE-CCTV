@@ -330,16 +330,34 @@ async def camera_ai_endpoint(websocket: WebSocket, camera_id: int):
                     worker_session = worker_session_manager.get_by_track(str_trk_id)
                     employee_id = worker_session.employee_id if worker_session else None
 
-                    # Calculate bottom-center point of bounding box (foot position)
+                    # Calculate candidate points for robust zone evaluation:
+                    # 1. Foot position (bottom center)
+                    # 2. Bounding box center
+                    # 3. Lower torso / seat position (75% height)
+                    # 4. Upper torso / head position (25% height)
                     box_n = p["box"]  # [x1, y1, x2, y2]
                     foot_x = float(box_n[0] + box_n[2]) / 2.0
                     foot_y = float(box_n[3])
+                    center_y = float(box_n[1] + box_n[3]) / 2.0
+                    torso_y = float(box_n[1]) + 0.75 * float(box_n[3] - box_n[1])
+                    head_y = float(box_n[1]) + 0.25 * float(box_n[3] - box_n[1])
 
-                    # Point-in-polygon zone evaluation
+                    candidate_points = [
+                        (foot_x, foot_y),
+                        (foot_x, center_y),
+                        (foot_x, torso_y),
+                        (foot_x, head_y),
+                    ]
+
+                    # Point-in-polygon zone evaluation across body points
                     matched_zone_dict = None
                     for cz in camera_zones:
                         if cz.get("enabled", True) and cz.get("points"):
-                            if is_point_in_polygon(foot_x, foot_y, cz["points"], frame_width=w, frame_height=h):
+                            is_inside = any(
+                                is_point_in_polygon(cx, cy, cz["points"], frame_width=w, frame_height=h)
+                                for cx, cy in candidate_points
+                            )
+                            if is_inside:
                                 matched_zone_dict = {
                                     "id": cz["id"],
                                     "name": cz["name"],
@@ -393,6 +411,15 @@ async def camera_ai_endpoint(websocket: WebSocket, camera_id: int):
                             track_activity_totals[str_trk_id][activity] += dt
 
                     track_last_time[str_trk_id] = now_time
+
+                # ── Cleanup absent tracks ──
+                # Close active visits for any track on this camera that disappeared from the frame
+                current_frame_track_ids = {str(p["track_id"]) for p in poses}
+                dwell_tracker.cleanup_absent_tracks(
+                    camera_id=str(camera_id),
+                    active_track_ids=current_frame_track_ids,
+                    timestamp=now_time,
+                )
 
                 # Drive session manager
                 if detections_out:
@@ -464,9 +491,6 @@ async def camera_ai_endpoint(websocket: WebSocket, camera_id: int):
     except Exception as e:
         print(f"❌ [AI-WS] Fatal error for camera {camera_id}: {e}")
     finally:
-        # Cleanup
-        dwell_tracker.close_all_camera_visits(str(camera_id))
-
         if cam_key in session_managers:
             session_managers[cam_key].close_on_disconnect()
 

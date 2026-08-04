@@ -226,18 +226,18 @@ export default function ZoneManagementModal({
   );
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-in fade-in duration-200">
-      <div className={`bg-[hsl(var(--bg-card))] border border-[hsl(var(--border))] rounded-2xl w-full overflow-hidden shadow-2xl flex flex-col ${
-        activeTab === "editor" ? "max-w-6xl h-[90vh]" : "max-w-2xl max-h-[90vh]"
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-black/70 backdrop-blur-sm animate-in fade-in duration-200">
+      <div className={`bg-[hsl(var(--bg-card))] border border-[hsl(var(--border))] rounded-2xl w-full overflow-hidden shadow-2xl flex flex-col transition-all duration-200 ${
+        activeTab === "editor" ? "w-[96vw] max-w-[1700px] h-[94vh]" : "max-w-2xl max-h-[90vh]"
       }`}>
         {/* Header */}
-        <div className="px-6 py-4 border-b border-[hsl(var(--border))] flex items-center justify-between bg-[hsl(var(--bg-table-head))]">
+        <div className="px-6 py-3.5 border-b border-[hsl(var(--border))] flex items-center justify-between bg-[hsl(var(--bg-table-head))] shrink-0">
           <div className="flex items-center gap-3">
-            <div className="w-9 h-9 rounded-xl bg-violet-500/10 border border-violet-500/20 text-violet-500 flex items-center justify-center">
-              <Layers className="w-5 h-5" />
+            <div className="w-8 h-8 rounded-xl bg-violet-500/10 border border-violet-500/20 text-violet-500 flex items-center justify-center">
+              <Layers className="w-4 h-4" />
             </div>
             <div>
-              <h3 className="text-base font-bold text-[hsl(var(--text-primary))]">
+              <h3 className="text-sm sm:text-base font-bold text-[hsl(var(--text-primary))]">
                 Zone Configuration
               </h3>
               <p className="text-xs text-[hsl(var(--text-muted))]">
@@ -247,17 +247,17 @@ export default function ZoneManagementModal({
           </div>
           <button
             onClick={onClose}
-            className="p-2 rounded-xl text-[hsl(var(--text-muted))] hover:text-[hsl(var(--text-primary))] hover:bg-[hsl(var(--bg-card))] transition-colors"
+            className="p-1.5 rounded-xl text-[hsl(var(--text-muted))] hover:text-[hsl(var(--text-primary))] hover:bg-[hsl(var(--bg-card))] transition-colors"
           >
             <X className="w-5 h-5" />
           </button>
         </div>
 
         {/* Tab Switcher */}
-        <div className="flex border-b border-[hsl(var(--border))] bg-[hsl(var(--bg-page))] px-6">
+        <div className="flex border-b border-[hsl(var(--border))] bg-[hsl(var(--bg-page))] px-6 shrink-0">
           <button
             onClick={() => setActiveTab("list")}
-            className={`py-3 px-4 text-xs font-bold border-b-2 transition-colors flex items-center gap-2 ${
+            className={`py-2.5 px-4 text-xs font-bold border-b-2 transition-colors flex items-center gap-2 ${
               activeTab === "list"
                 ? "border-violet-500 text-violet-600 dark:text-violet-400"
                 : "border-transparent text-[hsl(var(--text-muted))] hover:text-[hsl(var(--text-primary))]"
@@ -268,7 +268,7 @@ export default function ZoneManagementModal({
           </button>
           <button
             onClick={() => setActiveTab("upload")}
-            className={`py-3 px-4 text-xs font-bold border-b-2 transition-colors flex items-center gap-2 ${
+            className={`py-2.5 px-4 text-xs font-bold border-b-2 transition-colors flex items-center gap-2 ${
               activeTab === "upload"
                 ? "border-violet-500 text-violet-600 dark:text-violet-400"
                 : "border-transparent text-[hsl(var(--text-muted))] hover:text-[hsl(var(--text-primary))]"
@@ -279,7 +279,7 @@ export default function ZoneManagementModal({
           </button>
           <button
             onClick={() => setActiveTab("editor")}
-            className={`py-3 px-4 text-xs font-bold border-b-2 transition-colors flex items-center gap-2 ${
+            className={`py-2.5 px-4 text-xs font-bold border-b-2 transition-colors flex items-center gap-2 ${
               activeTab === "editor"
                 ? "border-blue-500 text-blue-600 dark:text-blue-400"
                 : "border-transparent text-[hsl(var(--text-muted))] hover:text-[hsl(var(--text-primary))]"
@@ -292,21 +292,22 @@ export default function ZoneManagementModal({
 
         {/* Feedback Banners */}
         {error && (
-          <div className="mx-6 mt-4 p-3.5 rounded-xl bg-red-500/10 border border-red-500/20 text-red-600 dark:text-red-400 text-xs flex items-start gap-2.5">
+          <div className="mx-6 mt-3 p-3 rounded-xl bg-red-500/10 border border-red-500/20 text-red-600 dark:text-red-400 text-xs flex items-start gap-2.5 shrink-0">
             <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" />
             <span className="font-medium">{error}</span>
           </div>
         )}
 
         {successMsg && (
-          <div className="mx-6 mt-4 p-3.5 rounded-xl bg-emerald-500/10 border border-emerald-500/20 text-emerald-600 dark:text-emerald-400 text-xs flex items-center gap-2.5">
+          <div className="mx-6 mt-3 p-3 rounded-xl bg-emerald-500/10 border border-emerald-500/20 text-emerald-600 dark:text-emerald-400 text-xs flex items-center gap-2.5 shrink-0">
             <CheckCircle2 className="w-4 h-4 shrink-0" />
             <span className="font-medium">{successMsg}</span>
           </div>
         )}
 
         {/* Tab Content */}
-        <div className="p-6 overflow-y-auto flex-1">
+        <div className={`flex-1 min-h-0 ${activeTab === "editor" ? "p-3 sm:p-4 flex flex-col overflow-hidden" : "p-6 overflow-y-auto"}`}>
+
           {activeTab === "list" && (
             <div className="space-y-4">
               {/* Controls bar */}

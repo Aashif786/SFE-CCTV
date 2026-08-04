@@ -23,7 +23,7 @@ GET    /api/zone-analytics/visits         — paginated historical visit logs wi
 from __future__ import annotations
 
 import json
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, Depends, File, HTTPException, Query, Request, Response, UploadFile
@@ -35,7 +35,7 @@ from sqlalchemy.orm import Session
 from ..db.database import get_db
 from ..db.models import CameraZoneDB, WorkstationZone, ZoneVisitDB
 from ..state import invalidate_zone_cache
-from ..zones.dwell_tracker import format_dwell_time
+from ..zones.dwell_tracker import dwell_tracker, format_dwell_time
 from ..zones.polygon_eval import validate_zone_config, zone_cache
 
 router = APIRouter(tags=["zones"])
@@ -320,7 +320,25 @@ async def get_zone_analytics_summary(
     """
     Get aggregated zone dwell metrics and visit counts.
     Supports filtering by camera_id, zone_id, person_identifier, and date range.
+    Includes active open visits with real-time live dwell duration.
     """
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
+
+    # 0. Auto-close orphan DB visits that are no longer active in live memory
+    open_db_visits = db.query(ZoneVisitDB).filter(ZoneVisitDB.exit_time.is_(None)).all()
+    closed_stale = False
+    for ov in open_db_visits:
+        if not dwell_tracker.is_visit_active_in_mem(ov.id):
+            ov.exit_time = ov.entry_time or now
+            ov.duration_seconds = 0.0
+            closed_stale = True
+    if closed_stale:
+        try:
+            db.commit()
+            db.expire_all()
+        except Exception:
+            db.rollback()
+
     query = db.query(ZoneVisitDB)
 
     if camera_id:
@@ -332,23 +350,73 @@ async def get_zone_analytics_summary(
 
     if start_date:
         try:
-            dt_start = datetime.fromisoformat(start_date)
-            query = query.filter(ZoneVisitDB.entry_time >= dt_start)
+            clean_str = start_date.replace("Z", "+00:00")
+            dt_start = datetime.fromisoformat(clean_str)
+            if dt_start.tzinfo is not None:
+                dt_start = dt_start.astimezone(timezone.utc).replace(tzinfo=None)
+            query = query.filter(
+                (ZoneVisitDB.entry_time >= dt_start) | (ZoneVisitDB.exit_time.is_(None))
+            )
         except Exception:
             pass
 
     if end_date:
         try:
-            dt_end = datetime.fromisoformat(end_date)
+            clean_str = end_date.replace("Z", "+00:00")
+            dt_end = datetime.fromisoformat(clean_str)
+            if dt_end.tzinfo is not None:
+                dt_end = dt_end.astimezone(timezone.utc).replace(tzinfo=None)
             query = query.filter(ZoneVisitDB.entry_time <= dt_end)
         except Exception:
             pass
 
-    total_visits = query.count()
+    all_visits = query.all()
+    total_visits = len(all_visits)
+    total_occupancy_sec = 0.0
 
-    # Calculate total duration seconds
-    dur_query = query.filter(ZoneVisitDB.duration_seconds.isnot(None))
-    total_occupancy_sec = dur_query.with_entities(func.sum(ZoneVisitDB.duration_seconds)).scalar() or 0.0
+    # Map for zone stats & person stats
+    zone_stats: Dict[str, Dict[str, Any]] = {}
+    person_stats: Dict[str, Dict[str, Any]] = {}
+
+    for v in all_visits:
+        is_active = (v.exit_time is None) and dwell_tracker.is_visit_active_in_mem(v.id)
+        if is_active:
+            dur = max(0.0, (now - v.entry_time).total_seconds())
+        else:
+            dur = v.duration_seconds or 0.0
+
+        total_occupancy_sec += dur
+
+        # Accumulate per zone
+        zid = v.zone_id
+        if zid not in zone_stats:
+            zone_stats[zid] = {"visit_count": 0, "total_duration": 0.0}
+        zone_stats[zid]["visit_count"] += 1
+        zone_stats[zid]["total_duration"] += dur
+
+        # Accumulate per person
+        plabel = v.person_identifier or f"Track #{v.tracking_id}"
+        if plabel not in person_stats:
+            person_stats[plabel] = {
+                "person_identifier": plabel,
+                "raw_person_id": v.person_identifier,
+                "tracking_id": v.tracking_id,
+                "visit_count": 0,
+                "total_occupancy_seconds": 0.0,
+                "last_entry": v.entry_time,
+                "is_inside": False,
+            }
+        ps = person_stats[plabel]
+        ps["visit_count"] += 1
+        ps["total_occupancy_seconds"] += dur
+        if v.entry_time and (ps["last_entry"] is None or v.entry_time > ps["last_entry"]):
+            ps["last_entry"] = v.entry_time
+        if is_active:
+            ps["is_inside"] = True
+
+    # Synchronize active occupants count strictly with live in-memory dwell tracker
+    active_occupants_count = dwell_tracker.get_active_visits_count(camera_id=camera_id, zone_id=zone_id)
+
     avg_dwell_sec = (total_occupancy_sec / total_visits) if total_visits > 0 else 0.0
 
     # Fetch all configured zones from CameraZoneDB for this camera (or all cameras)
@@ -357,39 +425,21 @@ async def get_zone_analytics_summary(
         zone_q = zone_q.filter(CameraZoneDB.camera_id == str(camera_id))
     all_configured_zones = zone_q.all()
 
-    # Per Zone visit grouping from ZoneVisitDB
-    zone_grouping = db.query(
-        ZoneVisitDB.zone_id,
-        func.count(ZoneVisitDB.id).label("visit_count"),
-        func.sum(ZoneVisitDB.duration_seconds).label("total_duration"),
-        func.avg(ZoneVisitDB.duration_seconds).label("avg_duration"),
-    )
-    if camera_id:
-        zone_grouping = zone_grouping.filter(ZoneVisitDB.camera_id == str(camera_id))
-    zone_grouping = zone_grouping.group_by(ZoneVisitDB.zone_id).all()
-
-    visit_stats_map = {}
-    for row in zone_grouping:
-        visit_stats_map[row.zone_id] = {
-            "visit_count": row.visit_count,
-            "total_duration": row.total_duration or 0.0,
-            "avg_duration": row.avg_duration or 0.0,
-        }
-
     per_zone_metrics = []
     seen_zone_ids = set()
 
     # 1. Include all configured zones from CameraZoneDB
     for cz in all_configured_zones:
         seen_zone_ids.add(cz.zone_id)
-        stats = visit_stats_map.get(cz.zone_id, {"visit_count": 0, "total_duration": 0.0, "avg_duration": 0.0})
+        stats = zone_stats.get(cz.zone_id, {"visit_count": 0, "total_duration": 0.0})
         tot_dur = stats["total_duration"]
-        avg_dur = stats["avg_duration"]
+        v_count = stats["visit_count"]
+        avg_dur = (tot_dur / v_count) if v_count > 0 else 0.0
         per_zone_metrics.append({
             "zone_id": cz.zone_id,
             "zone_name": cz.name,
             "zone_color": cz.color,
-            "visit_count": stats["visit_count"],
+            "visit_count": v_count,
             "total_occupancy_seconds": round(tot_dur, 1),
             "formatted_total_occupancy": format_dwell_time(tot_dur),
             "average_dwell_seconds": round(avg_dur, 1),
@@ -397,93 +447,45 @@ async def get_zone_analytics_summary(
         })
 
     # 2. Include any historical zones from visits that might no longer be in CameraZoneDB
-    for row in zone_grouping:
-        if row.zone_id not in seen_zone_ids:
-            tot_dur = row.total_duration or 0.0
-            avg_dur = row.avg_duration or 0.0
+    for zid, stats in zone_stats.items():
+        if zid not in seen_zone_ids:
+            tot_dur = stats["total_duration"]
+            v_count = stats["visit_count"]
+            avg_dur = (tot_dur / v_count) if v_count > 0 else 0.0
             per_zone_metrics.append({
-                "zone_id": row.zone_id,
-                "zone_name": row.zone_id,
+                "zone_id": zid,
+                "zone_name": zid,
                 "zone_color": "#3B82F6",
-                "visit_count": row.visit_count,
+                "visit_count": v_count,
                 "total_occupancy_seconds": round(tot_dur, 1),
                 "formatted_total_occupancy": format_dwell_time(tot_dur),
                 "average_dwell_seconds": round(avg_dur, 1),
                 "formatted_average_dwell": format_dwell_time(avg_dur),
             })
 
-    # Per Person / Track breakdown for selected camera and zone
-    person_label_expr = func.coalesce(
-        ZoneVisitDB.person_identifier,
-        'Track #' + ZoneVisitDB.tracking_id
-    )
-
-    person_grouping = db.query(
-        person_label_expr.label("person_label"),
-        ZoneVisitDB.tracking_id,
-        ZoneVisitDB.person_identifier,
-        func.count(ZoneVisitDB.id).label("visit_count"),
-        func.sum(ZoneVisitDB.duration_seconds).label("total_duration"),
-        func.avg(ZoneVisitDB.duration_seconds).label("avg_duration"),
-        func.max(ZoneVisitDB.entry_time).label("last_entry"),
-    )
-
-    if camera_id:
-        person_grouping = person_grouping.filter(ZoneVisitDB.camera_id == str(camera_id))
-    if zone_id:
-        person_grouping = person_grouping.filter(ZoneVisitDB.zone_id == str(zone_id))
-    if start_date:
-        try:
-            dt_start = datetime.fromisoformat(start_date)
-            person_grouping = person_grouping.filter(ZoneVisitDB.entry_time >= dt_start)
-        except Exception:
-            pass
-    if end_date:
-        try:
-            dt_end = datetime.fromisoformat(end_date)
-            person_grouping = person_grouping.filter(ZoneVisitDB.entry_time <= dt_end)
-        except Exception:
-            pass
-
-    person_rows = person_grouping.group_by(
-        person_label_expr,
-        ZoneVisitDB.tracking_id,
-        ZoneVisitDB.person_identifier,
-    ).order_by(func.count(ZoneVisitDB.id).desc()).all()
-
+    # Convert person_stats map to list sorted by visit count
     per_person_metrics = []
-    for row in person_rows:
-        tot_dur = row.total_duration or 0.0
-        avg_dur = row.avg_duration or 0.0
-
-        # Check if currently inside zone (open visit)
-        active_check = db.query(ZoneVisitDB).filter(
-            ZoneVisitDB.tracking_id == row.tracking_id,
-            ZoneVisitDB.exit_time.is_(None),
-        )
-        if camera_id:
-            active_check = active_check.filter(ZoneVisitDB.camera_id == str(camera_id))
-        if zone_id:
-            active_check = active_check.filter(ZoneVisitDB.zone_id == str(zone_id))
-
-        is_inside = active_check.first() is not None
-
+    for ps in sorted(person_stats.values(), key=lambda x: x["visit_count"], reverse=True):
+        tot_dur = ps["total_occupancy_seconds"]
+        v_count = ps["visit_count"]
+        avg_dur = (tot_dur / v_count) if v_count > 0 else 0.0
         per_person_metrics.append({
-            "person_identifier": row.person_label,
-            "raw_person_id": row.person_identifier,
-            "tracking_id": row.tracking_id,
-            "visit_count": row.visit_count,
+            "person_identifier": ps["person_identifier"],
+            "raw_person_id": ps["raw_person_id"],
+            "tracking_id": ps["tracking_id"],
+            "visit_count": v_count,
             "total_occupancy_seconds": round(tot_dur, 1),
             "formatted_total_occupancy": format_dwell_time(tot_dur),
             "average_dwell_seconds": round(avg_dur, 1),
             "formatted_average_dwell": format_dwell_time(avg_dur),
-            "last_entry": row.last_entry.isoformat() if row.last_entry else None,
-            "is_inside": is_inside,
+            "last_entry": ps["last_entry"].isoformat() if ps["last_entry"] else None,
+            "is_inside": ps["is_inside"],
         })
 
     return {
         "summary": {
             "total_visits": total_visits,
+            "active_occupants": active_occupants_count,
             "total_occupancy_seconds": round(total_occupancy_sec, 1),
             "formatted_total_occupancy": format_dwell_time(total_occupancy_sec),
             "average_dwell_seconds": round(avg_dwell_sec, 1),
@@ -500,21 +502,62 @@ async def get_zone_visits(
     zone_id: Optional[str] = Query(None),
     person_identifier: Optional[str] = Query(None),
     tracking_id: Optional[str] = Query(None),
-    limit: int = Query(50, ge=1, le=1000),
+    status: Optional[str] = Query(None),
+    search: Optional[str] = Query(None),
+    start_date: Optional[str] = Query(None),
+    limit: int = Query(20, ge=1, le=1000),
     offset: int = Query(0, ge=0),
     db: Session = Depends(get_db),
 ):
-    """Fetch paginated historical zone visit logs."""
+    """Fetch paginated historical zone visit logs with advanced search and live status filtering."""
     query = db.query(ZoneVisitDB)
 
     if camera_id:
         query = query.filter(ZoneVisitDB.camera_id == str(camera_id))
     if zone_id:
         query = query.filter(ZoneVisitDB.zone_id == str(zone_id))
-    if person_identifier:
-        query = query.filter(ZoneVisitDB.person_identifier == str(person_identifier))
+
+    # Robust multi-field search across employee ID, track ID, zone ID, and camera ID
+    search_term = (search or person_identifier or "").strip()
+    if search_term:
+        clean_term = search_term.replace("Track-", "").replace("track-", "").strip()
+        term_pattern = f"%{clean_term}%"
+        query = query.filter(
+            (ZoneVisitDB.person_identifier.ilike(term_pattern)) |
+            (ZoneVisitDB.tracking_id.ilike(term_pattern)) |
+            (ZoneVisitDB.zone_id.ilike(term_pattern)) |
+            (ZoneVisitDB.camera_id.ilike(term_pattern))
+        )
+
     if tracking_id:
         query = query.filter(ZoneVisitDB.tracking_id == str(tracking_id))
+
+    # Active vs Completed status filter aligned strictly with live in-memory dwell tracker
+    active_db_ids = dwell_tracker.get_active_db_visit_ids()
+    if status == "active":
+        if active_db_ids:
+            query = query.filter(
+                (ZoneVisitDB.id.in_(active_db_ids)) | (ZoneVisitDB.exit_time.is_(None))
+            )
+        else:
+            query = query.filter(ZoneVisitDB.exit_time.is_(None) & (ZoneVisitDB.id == -1))
+    elif status == "completed":
+        if active_db_ids:
+            query = query.filter(
+                ZoneVisitDB.exit_time.isnot(None) & (~ZoneVisitDB.id.in_(active_db_ids))
+            )
+        else:
+            query = query.filter(ZoneVisitDB.exit_time.isnot(None))
+
+    if start_date:
+        try:
+            clean_str = start_date.replace("Z", "+00:00")
+            dt_start = datetime.fromisoformat(clean_str)
+            if dt_start.tzinfo is not None:
+                dt_start = dt_start.astimezone(timezone.utc).replace(tzinfo=None)
+            query = query.filter(ZoneVisitDB.entry_time >= dt_start)
+        except Exception:
+            pass
 
     total_count = query.count()
     rows = query.order_by(ZoneVisitDB.entry_time.desc()).offset(offset).limit(limit).all()

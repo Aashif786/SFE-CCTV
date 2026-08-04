@@ -28,6 +28,8 @@ import {
   CameraOff,
   Pencil,
   ChevronDown,
+  Undo2,
+  RotateCcw,
 } from "lucide-react";
 
 const API = "http://localhost:8000";
@@ -107,11 +109,22 @@ export default function PolygonZoneEditor({ cameraId, onSave }: Props) {
 
   const [dragging, setDragging] = useState<{ zoneId: string; vertexIdx: number } | null>(null);
   const [hoverVertex, setHoverVertex] = useState<{ zoneId: string; vertexIdx: number } | null>(null);
+  const [cursorPos, setCursorPos] = useState<Vertex | null>(null);
+  const [isNearStartPoint, setIsNearStartPoint] = useState(false);
 
   const [saving, setSaving] = useState(false);
   const [saveStatus, setSaveStatus] = useState<"idle" | "saved" | "error">("idle");
 
   const [editingNameId, setEditingNameId] = useState<string | null>(null);
+
+  // ── Helper actions ──────────────────────────────────────────────────────────
+  const undoLastPoint = useCallback(() => {
+    setCurrentPoly(prev => prev.slice(0, -1));
+  }, []);
+
+  const clearCurrentPoly = useCallback(() => {
+    setCurrentPoly([]);
+  }, []);
 
   // ── Load snapshot ──────────────────────────────────────────────────────────
 
@@ -158,10 +171,20 @@ export default function PolygonZoneEditor({ cameraId, onSave }: Props) {
         setDrawing(false);
         setCurrentPoly([]);
       }
+      // Undo with Ctrl+Z / Cmd+Z / Backspace while drawing
+      if (drawing && currentPoly.length > 0) {
+        if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "z") {
+          e.preventDefault();
+          undoLastPoint();
+        } else if (e.key === "Backspace" && (e.target as HTMLElement)?.tagName !== "INPUT") {
+          e.preventDefault();
+          undoLastPoint();
+        }
+      }
     };
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
-  });
+  }, [drawing, currentPoly, undoLastPoint]);
 
   // ── Draw loop ──────────────────────────────────────────────────────────────
 
@@ -243,7 +266,24 @@ export default function PolygonZoneEditor({ cameraId, onSave }: Props) {
         if (i === 0) ctx.moveTo(x, y);
         else ctx.lineTo(x, y);
       });
-      ctx.strokeStyle = "#ffffff";
+
+      // Rubber-banding preview line to mouse cursor or start point
+      if (cursorPos) {
+        const lastPt = currentPoly[currentPoly.length - 1];
+        const lastX = lastPt.x * W;
+        const lastY = lastPt.y * H;
+
+        if (currentPoly.length >= 3 && isNearStartPoint) {
+          // Connect to start point preview line
+          const startPt = currentPoly[0];
+          ctx.lineTo(startPt.x * W, startPt.y * H);
+        } else {
+          // Connect to cursor
+          ctx.lineTo(cursorPos.x * W, cursorPos.y * H);
+        }
+      }
+
+      ctx.strokeStyle = isNearStartPoint ? "#10b981" : "#ffffff";
       ctx.lineWidth = 2;
       ctx.setLineDash([4, 3]);
       ctx.stroke();
@@ -252,18 +292,40 @@ export default function PolygonZoneEditor({ cameraId, onSave }: Props) {
       // Vertices for in-progress polygon
       currentPoly.forEach((pt, i) => {
         const x = pt.x * W, y = pt.y * H;
+        const isFirst = i === 0;
+
         ctx.beginPath();
-        ctx.arc(x, y, i === 0 ? 7 : 5, 0, Math.PI * 2);
-        ctx.fillStyle = i === 0 ? "#10b981" : "#ffffff";
-        ctx.fill();
-        ctx.strokeStyle = "#000";
-        ctx.lineWidth = 1.5;
-        ctx.stroke();
+        if (isFirst && currentPoly.length >= 3 && isNearStartPoint) {
+          // Pulsing snap target indicator on start point
+          const pulseRadius = 10 + 3 * Math.sin(Date.now() / 150);
+          ctx.arc(x, y, pulseRadius, 0, Math.PI * 2);
+          ctx.fillStyle = "rgba(16, 185, 129, 0.4)";
+          ctx.fill();
+          ctx.strokeStyle = "#10b981";
+          ctx.lineWidth = 2;
+          ctx.stroke();
+
+          // Tooltip badge above start point
+          ctx.font = "bold 11px Inter, sans-serif";
+          ctx.textAlign = "center";
+          ctx.textBaseline = "bottom";
+          ctx.fillStyle = "#10b981";
+          ctx.fillRect(x - 55, y - 28, 110, 20);
+          ctx.fillStyle = "#ffffff";
+          ctx.fillText("Click to close zone", x, y - 13);
+        } else {
+          ctx.arc(x, y, isFirst ? 7 : 5, 0, Math.PI * 2);
+          ctx.fillStyle = isFirst ? "#10b981" : "#ffffff";
+          ctx.fill();
+          ctx.strokeStyle = "#000";
+          ctx.lineWidth = 1.5;
+          ctx.stroke();
+        }
       });
     }
 
     animRef.current = requestAnimationFrame(draw);
-  }, [zones, selectedZoneId, drawing, currentPoly, hoverVertex]);
+  }, [zones, selectedZoneId, drawing, currentPoly, hoverVertex, cursorPos, isNearStartPoint]);
 
   useEffect(() => {
     animRef.current = requestAnimationFrame(draw);
@@ -314,6 +376,11 @@ export default function PolygonZoneEditor({ cameraId, onSave }: Props) {
     }
 
     if (drawing) {
+      // Connect to start point and close zone if near start vertex
+      if (currentPoly.length >= 3 && isNearStartPoint) {
+        finishCurrentPolygon();
+        return;
+      }
       // Add vertex to current polygon
       setCurrentPoly(prev => [...prev, pt]);
       return;
@@ -337,6 +404,7 @@ export default function PolygonZoneEditor({ cameraId, onSave }: Props) {
     const W = canvasRef.current!.width;
     const H = canvasRef.current!.height;
     const pt = getCanvasPoint(e);
+    setCursorPos(pt);
 
     if (dragging) {
       setZones(prev =>
@@ -354,7 +422,16 @@ export default function PolygonZoneEditor({ cameraId, onSave }: Props) {
       return;
     }
 
-    // Hover detection
+    // Check snap-to-start point when drawing
+    if (drawing && currentPoly.length >= 3) {
+      const startPt = currentPoly[0];
+      const dist = distToPoint(pt.x * W, pt.y * H, startPt.x, startPt.y, W, H);
+      setIsNearStartPoint(dist <= 16);
+    } else {
+      setIsNearStartPoint(false);
+    }
+
+    // Hover detection for existing zone vertices
     for (const zone of zones) {
       for (let vi = 0; vi < zone.points.length; vi++) {
         const v = zone.points[vi];
@@ -365,6 +442,11 @@ export default function PolygonZoneEditor({ cameraId, onSave }: Props) {
       }
     }
     setHoverVertex(null);
+  };
+
+  const handleCanvasMouseLeave = () => {
+    setCursorPos(null);
+    setIsNearStartPoint(false);
   };
 
   const handleCanvasMouseUp = () => { setDragging(null); };
@@ -410,6 +492,7 @@ export default function PolygonZoneEditor({ cameraId, onSave }: Props) {
     setSelectedZoneId(newZone.id);
     setCurrentPoly([]);
     setDrawing(false);
+    setIsNearStartPoint(false);
   };
 
   const deleteZone = (id: string) => {
@@ -483,17 +566,34 @@ export default function PolygonZoneEditor({ cameraId, onSave }: Props) {
         {drawing ? (
           <>
             <span className="text-xs text-amber-400 font-medium animate-pulse">
-              🖊️ Click on the image to place vertices. Press <kbd className="px-1 py-0.5 rounded bg-white/10 text-xs">Enter</kbd> or
+              🖊️ Click image to place points. Click starting point to close zone.
             </span>
             <button
               onClick={finishCurrentPolygon}
               disabled={currentPoly.length < 3}
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-emerald-500 text-white text-xs font-semibold hover:bg-emerald-400 disabled:opacity-40 transition-all"
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-emerald-500 text-white text-xs font-semibold hover:bg-emerald-400 disabled:opacity-40 transition-all shadow-sm"
+              title="Close and finish zone (Enter)"
             >
-              <Check className="w-3 h-3" /> Finish Zone ({currentPoly.length} pts)
+              <Check className="w-3.5 h-3.5" /> Finish Zone ({currentPoly.length} pts)
             </button>
             <button
-              onClick={() => { setDrawing(false); setCurrentPoly([]); }}
+              onClick={undoLastPoint}
+              disabled={currentPoly.length === 0}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-[hsl(var(--border-strong))] bg-[hsl(var(--bg-card))] text-xs text-[hsl(var(--text-primary))] hover:bg-[hsl(var(--bg-input))] disabled:opacity-40 transition-all"
+              title="Undo last placed point (Ctrl+Z / Backspace)"
+            >
+              <Undo2 className="w-3.5 h-3.5 text-blue-400" /> Undo Point
+            </button>
+            <button
+              onClick={clearCurrentPoly}
+              disabled={currentPoly.length === 0}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-[hsl(var(--border-strong))] bg-[hsl(var(--bg-card))] text-xs text-[hsl(var(--text-primary))] hover:bg-[hsl(var(--bg-input))] disabled:opacity-40 transition-all"
+              title="Clear all points of current drawing"
+            >
+              <RotateCcw className="w-3.5 h-3.5 text-amber-400" /> Clear
+            </button>
+            <button
+              onClick={() => { setDrawing(false); setCurrentPoly([]); setIsNearStartPoint(false); }}
               className="px-3 py-1.5 rounded-lg border border-[hsl(var(--border))] text-xs text-[hsl(var(--text-muted))] hover:text-[hsl(var(--text-primary))] transition-all"
             >
               Cancel
@@ -502,16 +602,16 @@ export default function PolygonZoneEditor({ cameraId, onSave }: Props) {
         ) : (
           <button
             onClick={startNewZone}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-blue-500 text-white text-xs font-semibold hover:bg-blue-400 transition-all"
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-blue-500 text-white text-xs font-semibold hover:bg-blue-400 transition-all shadow-sm"
           >
-            <Plus className="w-3 h-3" /> New Zone
+            <Plus className="w-3.5 h-3.5" /> New Zone
           </button>
         )}
 
         <div className="ml-auto flex items-center gap-2">
           {saveStatus === "saved" && (
             <span className="flex items-center gap-1 text-xs text-emerald-400 font-semibold">
-              <Check className="w-3 h-3" /> Saved
+              <Check className="w-3.5 h-3.5" /> Saved
             </span>
           )}
           {saveStatus === "error" && (
@@ -520,9 +620,9 @@ export default function PolygonZoneEditor({ cameraId, onSave }: Props) {
           <button
             onClick={handleSave}
             disabled={saving}
-            className="flex items-center gap-1.5 px-4 py-1.5 rounded-lg bg-emerald-500 text-white text-xs font-semibold hover:bg-emerald-400 disabled:opacity-50 transition-all"
+            className="flex items-center gap-1.5 px-4 py-1.5 rounded-lg bg-emerald-500 text-white text-xs font-semibold hover:bg-emerald-400 disabled:opacity-50 transition-all shadow-sm"
           >
-            {saving ? <Loader2 className="w-3 h-3 animate-spin" /> : <Save className="w-3 h-3" />}
+            {saving ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Save className="w-3.5 h-3.5" />}
             Save All Zones
           </button>
         </div>
@@ -542,7 +642,6 @@ export default function PolygonZoneEditor({ cameraId, onSave }: Props) {
             <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 text-[hsl(var(--text-muted))]">
               <CameraOff className="w-10 h-10 opacity-40" />
               <p className="text-sm">{snapshotError}</p>
-              <p className="text-xs opacity-60">You can still draw zones; they&apos;ll be saved correctly.</p>
             </div>
           )}
           <canvas
@@ -552,10 +651,11 @@ export default function PolygonZoneEditor({ cameraId, onSave }: Props) {
             className="max-w-full max-h-full object-contain rounded-lg shadow-lg"
             style={{
               aspectRatio: `${canvasDims.width} / ${canvasDims.height}`,
-              cursor: drawing ? "crosshair" : dragging ? "grabbing" : hoverVertex ? "grab" : "default",
+              cursor: isNearStartPoint ? "pointer" : drawing ? "crosshair" : dragging ? "grabbing" : hoverVertex ? "grab" : "default",
             }}
             onMouseDown={handleCanvasMouseDown}
             onMouseMove={handleCanvasMouseMove}
+            onMouseLeave={handleCanvasMouseLeave}
             onMouseUp={handleCanvasMouseUp}
             onDoubleClick={handleCanvasDblClick}
           />
@@ -675,7 +775,7 @@ export default function PolygonZoneEditor({ cameraId, onSave }: Props) {
 
       {/* Help footer */}
       <p className="text-[10px] text-[hsl(var(--text-muted))] text-center">
-        Click to add vertices · Drag vertices to reposition · Double-click to delete a vertex · Press Esc to cancel drawing
+        Click image to add vertices · Click starting point or press Enter to close zone · Ctrl+Z to undo point · Drag vertices to reposition · Double-click to delete vertex
       </p>
     </div>
   );

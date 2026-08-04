@@ -98,4 +98,22 @@
     @apply bg-[hsl(var(--bg-page))] text-[hsl(var(--text-primary))];
     transition: background-color 0.25s ease, color 0.25s ease;
   }
+  select option {
+    background-color: hsl(var(--bg-card));
+    color: hsl(var(--text-primary));
+  }
+  ::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+  }
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  ::-webkit-scrollbar-thumb {
+    background: hsl(var(--border-strong));
+    border-radius: 9999px;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background: hsl(var(--text-muted));
+  }
 }
