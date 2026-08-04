@@ -1,5 +1,6 @@
 "use client";
 import { useEffect, useState, useCallback } from "react";
+import { formatTime } from "@/lib/dateUtils";
 import { Clock, RefreshCw, BarChart2, Trash2 } from "lucide-react";
 
 const API = "http://localhost:8000";
@@ -130,7 +131,7 @@ export default function ActivitySummaryPage() {
           >
             <RefreshCw className={`w-4 h-4 ${loading ? "animate-spin" : ""}`} />
             <span className="text-xs text-[hsl(var(--text-muted))]">
-              {mounted ? lastRefresh.toLocaleTimeString() : "--:--:--"}
+              {mounted ? formatTime(lastRefresh) : "--:--:--"}
             </span>
           </button>
         </div>

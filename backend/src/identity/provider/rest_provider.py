@@ -34,7 +34,7 @@ class RESTSimulatorProvider(IdentityEventProvider):
             event_id=str(uuid.uuid4()),
             employee_id=payload.employee_id,
             event_type="ENTRY",
-            timestamp=payload.timestamp or datetime.now(timezone.utc).replace(tzinfo=None),
+            timestamp=payload.timestamp or datetime.now(timezone.utc),
             entry_gate=payload.entry_gate,
             provider=self.PROVIDER_NAME,
             correlation_status="WAITING_FOR_TRACK",

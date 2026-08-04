@@ -1,5 +1,6 @@
 "use client";
 import { useEffect, useState } from "react";
+import { formatTime } from "@/lib/dateUtils";
 import { AlertCircle, CheckCircle2 } from "lucide-react";
 
 interface Alert {
@@ -69,7 +70,7 @@ export default function AlertsPage() {
                   className="hover:bg-[hsl(var(--bg-table-head))]/60 transition-colors text-[hsl(var(--text-secondary))]"
                 >
                   <td className="px-6 py-4 text-[hsl(var(--text-muted))] text-xs font-mono">
-                    {new Date(alert.timestamp).toLocaleTimeString()}
+                    {formatTime(alert.timestamp)}
                   </td>
                   <td className="px-6 py-4">
                     <span className="flex items-center gap-2 text-red-500 dark:text-red-400 font-medium">

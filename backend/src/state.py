@@ -32,7 +32,7 @@ class SessionManager:
         self._FLUSH_EVERY: int = 10  # ~2 s at 5 fps
 
     def _utcnow(self) -> datetime:
-        return datetime.now(timezone.utc).replace(tzinfo=None)
+        return datetime.now(timezone.utc)
 
     def process(self, activity: str) -> None:
         self._flush_frames += 1

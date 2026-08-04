@@ -1,5 +1,6 @@
 "use client";
 import { useEffect, useState, useCallback } from "react";
+import { formatTime, formatElapsed } from "@/lib/dateUtils";
 import {
   Clock, Wifi, RefreshCw, CheckCircle2, XCircle, Loader2, AlertTriangle, UserX
 } from "lucide-react";
@@ -50,15 +51,8 @@ const STATUS_ICON = {
   CLOSED:            <XCircle className="w-3 h-3" />,
 };
 
-function fmtTime(iso: string) {
-  return new Date(iso + "Z").toLocaleTimeString();
-}
-
-function elapsed(iso: string) {
-  const secs = Math.round((Date.now() - new Date(iso + "Z").getTime()) / 1000);
-  if (secs < 60) return `${secs}s ago`;
-  return `${Math.floor(secs / 60)}m ${secs % 60}s ago`;
-}
+const fmtTime = formatTime;
+const elapsed = formatElapsed;
 
 // ── Main page ─────────────────────────────────────────────────────────────
 

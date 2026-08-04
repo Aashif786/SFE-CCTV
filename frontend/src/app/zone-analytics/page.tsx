@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect, useCallback, useMemo } from "react";
+import { formatDateTime } from "@/lib/dateUtils";
 import {
   Clock,
   Layers,
@@ -451,10 +452,10 @@ export default function ZoneAnalyticsPage() {
                       </span>
                     </td>
                     <td className="px-4 py-3 text-[hsl(var(--text-secondary))]">
-                      {v.entry_time ? new Date(v.entry_time).toLocaleString() : "—"}
+                      {v.entry_time ? formatDateTime(v.entry_time) : "—"}
                     </td>
                     <td className="px-4 py-3 text-[hsl(var(--text-secondary))]">
-                      {v.exit_time ? new Date(v.exit_time).toLocaleString() : "—"}
+                      {v.exit_time ? formatDateTime(v.exit_time) : "—"}
                     </td>
                     <td className="px-4 py-3 text-right font-mono font-bold text-violet-500">
                       {v.formatted_duration}
