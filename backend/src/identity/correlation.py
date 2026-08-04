@@ -45,7 +45,7 @@ REBIND_WINDOW_SECONDS = 8.0  # max seconds after session close to allow re-bindi
 
 
 def _utcnow() -> datetime:
-    return datetime.now(timezone.utc).replace(tzinfo=None)
+    return datetime.now(timezone.utc)
 
 
 class CorrelationEngine:

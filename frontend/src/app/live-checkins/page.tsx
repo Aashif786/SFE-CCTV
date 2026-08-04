@@ -1,5 +1,6 @@
 "use client";
 import { useEffect, useState, useCallback } from "react";
+import { formatDateTime } from "@/lib/dateUtils";
 import {
   UserCheck, Shield, Clock, Wifi, RefreshCw,
   CheckCircle2, AlertCircle, Loader2, Server
@@ -197,7 +198,7 @@ export default function LiveCheckinsPage() {
                         {event.employee_name || "—"}
                       </td>
                       <td className="py-3.5 pr-4 text-xs text-[hsl(var(--text-muted))]">
-                        {new Date(event.timestamp).toLocaleDateString()} &middot; {new Date(event.timestamp).toLocaleTimeString()}
+                        {formatDateTime(event.timestamp)}
                       </td>
                       <td className="py-3.5 pr-4">
                         <span className={`text-[10px] font-black px-2 py-0.5 rounded border inline-block ${

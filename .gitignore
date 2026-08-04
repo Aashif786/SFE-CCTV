@@ -13,6 +13,9 @@ backend/.env
 .env
 backend/settings.json
 !backend/settings.example.json
+*.db
+*.sqlite
+*.sqlite3
 backend/start_legacy.sh
 backend/models/*.task
 

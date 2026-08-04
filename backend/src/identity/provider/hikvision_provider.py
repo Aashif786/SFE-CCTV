@@ -278,9 +278,9 @@ class HikvisionProvider(IdentityEventProvider):
                 # Hikvision format: 2026-07-13T12:56:02+05:30
                 event_ts = datetime.fromisoformat(ev_time)
                 # Convert to UTC for internal storage
-                event_ts_utc = event_ts.astimezone(timezone.utc).replace(tzinfo=None)
+                event_ts_utc = event_ts.astimezone(timezone.utc)
             except (ValueError, TypeError):
-                event_ts_utc = datetime.now(timezone.utc).replace(tzinfo=None)
+                event_ts_utc = datetime.now(timezone.utc)
 
             import uuid
 

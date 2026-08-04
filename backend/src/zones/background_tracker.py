@@ -116,7 +116,7 @@ class BackgroundZoneTracker:
                     h, w, _ = frame.shape
 
                     camera_zones = self._get_zones_for_camera(str(cid))
-                    now_time = datetime.now(timezone.utc).replace(tzinfo=None)
+                    now_time = datetime.now(timezone.utc)
                     active_track_ids = set()
 
                     for p in poses:

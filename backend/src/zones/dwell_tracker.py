@@ -73,7 +73,7 @@ class ZoneDwellTracker:
         """
         cam_key = str(camera_id)
         str_trk_id = str(track_id)
-        now = timestamp or datetime.now(timezone.utc).replace(tzinfo=None)
+        now = timestamp or datetime.now(timezone.utc)
 
         with self._lock:
             if cam_key not in self._active_visits:
