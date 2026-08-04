@@ -218,6 +218,31 @@ class WorkerSessionManager:
         total = sum(agg.values())
 
         with SessionLocal() as db:
+            from ..db.models import EmployeeZoneDB, ZoneVisitDB
+
+            # Fetch assigned work zones for this employee
+            assigned_zones = db.query(EmployeeZoneDB).filter(
+                EmployeeZoneDB.employee_id == session.employee_id,
+                EmployeeZoneDB.is_designated == True,
+            ).all()
+            assigned_zone_ids = {az.zone_id for az in assigned_zones}
+
+            # Fetch completed zone visits for this employee during the session window
+            zone_visits = db.query(ZoneVisitDB).filter(
+                ZoneVisitDB.person_identifier == session.employee_id,
+                ZoneVisitDB.entry_time >= session.start_time,
+            ).all()
+
+            desig_sec = 0.0
+            outside_sec = 0.0
+            common_sec = 0.0
+
+            for zv in zone_visits:
+                dur = zv.duration_seconds or 0.0
+                if not assigned_zone_ids or zv.zone_id in assigned_zone_ids:
+                    desig_sec += dur
+                else:
+                    outside_sec += dur
 
             # Upsert into EmployeeDailySummary
             summary = (
@@ -236,7 +261,12 @@ class WorkerSessionManager:
                     working_seconds=0.0,
                     idle_seconds=0.0,
                     walking_seconds=0.0,
+                    designated_zone_seconds=0.0,
+                    outside_zone_seconds=0.0,
+                    common_area_seconds=0.0,
+                    break_seconds=0.0,
                     total_seconds=0.0,
+                    productivity_score=100.0,
                     check_in_count=0,
                     first_seen=None,
                     last_seen=None,
@@ -244,11 +274,21 @@ class WorkerSessionManager:
                 db.add(summary)
 
             # Accumulate (not overwrite) so multiple check-ins stack up
-            summary.working_seconds      += agg["working"]
-            summary.idle_seconds         += agg["idle"]
-            summary.walking_seconds      += agg["walking"]
-            summary.total_seconds        += total
-            summary.check_in_count       += 1
+            summary.working_seconds         += agg["working"]
+            summary.idle_seconds            += agg["idle"]
+            summary.walking_seconds         += agg["walking"]
+            summary.designated_zone_seconds += desig_sec
+            summary.outside_zone_seconds    += outside_sec
+            summary.common_area_seconds     += common_sec
+            summary.total_seconds           += total
+            summary.check_in_count          += 1
+
+            tot_sec = summary.total_seconds if summary.total_seconds > 0 else 1.0
+            summary.productivity_score = round(
+                (summary.designated_zone_seconds / tot_sec) * 100.0, 1
+            ) if summary.designated_zone_seconds > 0 else (
+                round((summary.working_seconds / tot_sec) * 100.0, 1) if summary.working_seconds > 0 else 0.0
+            )
 
             # Track earliest/latest appearance today
             if summary.first_seen is None or session.start_time < summary.first_seen:
@@ -261,7 +301,7 @@ class WorkerSessionManager:
             print(
                 f"[Identity] 📊 Daily summary updated for {session.employee_id} "
                 f"| +working={agg['working']:.1f}s  +idle={agg['idle']:.1f}s  "
-                f"+walking={agg['walking']:.1f}s"
+                f"+designated_zone={desig_sec:.1f}s  score={summary.productivity_score}%"
             )
 
     # ------------------------------------------------------------------

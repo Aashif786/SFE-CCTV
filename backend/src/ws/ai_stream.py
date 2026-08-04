@@ -51,8 +51,9 @@ from ..activity.classifier import classifier, profile_registry
 from ..identity.correlation import correlation_engine
 from ..identity.session_manager import worker_session_manager
 from ..identity.models import CameraEntryEvent
+from ..identity.tracking_strategy import TrackingStrategyFactory
 from ..zones.polygon_eval import is_point_in_polygon, zone_cache
-from ..zones.dwell_tracker import dwell_tracker
+from ..zones.dwell_tracker import dwell_tracker, _to_utc
 from ..state import (
     session_managers,
     prev_track_ids,
@@ -81,6 +82,20 @@ _FALLBACK_COLOUR: dict[str, str] = {
 _ai_detectors: dict[int, WorkerDetector] = {}
 _ai_detector_lock = asyncio.Lock()
 
+# Set of active AI WebSocket camera IDs
+_active_ws_cameras: set[int] = set()
+
+
+def is_ai_stream_active(camera_id: int) -> bool:
+    """Return True if an active AI WebSocket stream is currently running for camera_id."""
+    return camera_id in _active_ws_cameras
+
+
+def get_shared_detector(camera_id: int) -> Optional[WorkerDetector]:
+    """Return in-memory WorkerDetector instance for camera_id if active."""
+    return _ai_detectors.get(camera_id)
+
+
 # Default FPS cap — overridden at runtime by config.ai_stream_fps
 _DEFAULT_AI_STREAM_FPS = 15
 
@@ -107,6 +122,7 @@ async def camera_ai_endpoint(websocket: WebSocket, camera_id: int):
         return
 
     print(f"🧠 [AI-WS] Connected for camera {camera_id}")
+    _active_ws_cameras.add(camera_id)
 
     cam_key = f"ai-{camera_id}"
 
@@ -290,6 +306,15 @@ async def camera_ai_endpoint(websocket: WebSocket, camera_id: int):
                     trk_id = p["track_id"]
                     str_trk_id = str(trk_id)
 
+                    # Resolve identity
+                    worker_session = worker_session_manager.get_by_track(str_trk_id)
+                    employee_id = worker_session.employee_id if worker_session else None
+
+                    # Apply active tracking strategy (TRACK_ALL vs TRACK_SPECIFIC)
+                    tracking_strategy = TrackingStrategyFactory.get_strategy()
+                    if not tracking_strategy.should_track(str_trk_id, str(camera_id), person_identifier=employee_id):
+                        continue
+
                     keypoints_to_send = p["keypoints"] if p["confidence"] >= config.confidence_threshold else []
 
                     # Collect peer positions (other tracked workers this frame)
@@ -309,6 +334,9 @@ async def camera_ai_endpoint(websocket: WebSocket, camera_id: int):
                         keypoints=p["keypoints"],
                         idle_seconds=p["idle_seconds"],
                         peer_positions=peer_positions,
+                        net_displacement=p.get("net_displacement", 0.0),
+                        is_seated=p.get("is_seated", False),
+                        hands_off_seconds=p.get("hands_off_seconds", 0.0),
                     )
                     activity_colour = classifier.get_color(activity)
 
@@ -406,7 +434,7 @@ async def camera_ai_endpoint(websocket: WebSocket, camera_id: int):
                         track_activity_totals[str_trk_id] = {a: 0.0 for a in _acts}
 
                     if str_trk_id in track_last_time:
-                        dt = (now_time - track_last_time[str_trk_id]).total_seconds()
+                        dt = (_to_utc(now_time) - _to_utc(track_last_time[str_trk_id])).total_seconds()
                         if dt < 2.0:
                             track_activity_totals[str_trk_id][activity] += dt
 
@@ -513,5 +541,7 @@ async def camera_ai_endpoint(websocket: WebSocket, camera_id: int):
         # Release detector to free GPU memory
         async with _ai_detector_lock:
             _ai_detectors.pop(camera_id, None)
+
+        _active_ws_cameras.discard(camera_id)
 
         print(f"🧠 [AI-WS] Cleaned up resources for camera {camera_id}")

@@ -18,7 +18,7 @@ torch.set_num_threads(2)
 
 # Database setup
 from .db.database import engine, Base, SessionLocal
-from .db.models import WorkerSessionDB
+from .db.models import WorkerSessionDB, EmployeeDB, EmployeeZoneDB, EmployeeDailySummary
 
 # Sub-routers
 from .identity.api import router as identity_router

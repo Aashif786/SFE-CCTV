@@ -23,6 +23,8 @@ from ..db.models import CameraZoneDB, Camera
 from ..detectors.pose_detector import WorkerDetector
 from .dwell_tracker import dwell_tracker
 from .polygon_eval import is_point_in_polygon
+from ..ws.ai_stream import is_ai_stream_active, get_shared_detector
+from ..identity.tracking_strategy import TrackingStrategyFactory
 
 
 class BackgroundZoneTracker:
@@ -99,19 +101,25 @@ class BackgroundZoneTracker:
                     if self._stop_event.is_set():
                         break
 
+                    # Skip duplicate background inference if an active WebSocket stream is running for this camera
+                    if is_ai_stream_active(cid):
+                        continue
+
                     frame = stream_manager.get_frame(cid)
                     if frame is None:
                         continue
 
-                    # Lazy-init detector for this camera
-                    if cid not in self._detectors:
-                        try:
-                            self._detectors[cid] = WorkerDetector()
-                        except Exception as e:
-                            print(f"⚠️ [BackgroundZoneTracker] Failed to init detector for cam {cid}: {e}")
-                            continue
+                    # Reuse shared detector or lazy-init
+                    detector = get_shared_detector(cid)
+                    if detector is None:
+                        if cid not in self._detectors:
+                            try:
+                                self._detectors[cid] = WorkerDetector()
+                            except Exception as e:
+                                print(f"⚠️ [BackgroundZoneTracker] Failed to init detector for cam {cid}: {e}")
+                                continue
+                        detector = self._detectors[cid]
 
-                    detector = self._detectors[cid]
                     poses = detector.update(frame)
                     h, w, _ = frame.shape
 
@@ -122,6 +130,11 @@ class BackgroundZoneTracker:
                     for p in poses:
                         trk_id = p["track_id"]
                         str_trk_id = str(trk_id)
+
+                        tracking_strategy = TrackingStrategyFactory.get_strategy()
+                        if not tracking_strategy.should_track(str_trk_id, str(cid)):
+                            continue
+
                         active_track_ids.add(str_trk_id)
 
                         box_n = p["box"]  # [x1, y1, x2, y2]

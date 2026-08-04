@@ -44,6 +44,14 @@ from .session_manager import worker_session_manager
 REBIND_WINDOW_SECONDS = 8.0  # max seconds after session close to allow re-binding
 
 
+def _to_utc(dt: Optional[datetime]) -> datetime:
+    if dt is None:
+        return datetime.now(timezone.utc)
+    if dt.tzinfo is None:
+        return dt.replace(tzinfo=timezone.utc)
+    return dt.astimezone(timezone.utc)
+
+
 def _utcnow() -> datetime:
     return datetime.now(timezone.utc)
 
@@ -96,7 +104,7 @@ class CorrelationEngine:
             matched_delay: float = 0.0
 
             for track_event in list(self._unmatched_tracks):
-                delay = abs((track_event.timestamp - event.timestamp).total_seconds())
+                delay = abs((_to_utc(track_event.timestamp) - _to_utc(event.timestamp)).total_seconds())
                 if delay <= self._window:
                     matched_track = track_event
                     matched_delay = delay
@@ -145,7 +153,7 @@ class CorrelationEngine:
             matched_delay: float = 0.0
 
             for ev in list(self._pending):
-                delay = abs((camera_event.timestamp - ev.timestamp).total_seconds())
+                delay = abs((_to_utc(camera_event.timestamp) - _to_utc(ev.timestamp)).total_seconds())
                 if delay <= self._window:
                     matched_event = ev
                     matched_delay = delay
@@ -218,9 +226,10 @@ class CorrelationEngine:
 
     def _expire_stale(self, reference_time: datetime) -> None:
         """Move events older than the window to history with EXPIRED status."""
+        ref_utc = _to_utc(reference_time)
         still_pending: deque[IdentityEvent] = deque()
         for ev in self._pending:
-            delay = abs((reference_time - ev.timestamp).total_seconds())
+            delay = abs((ref_utc - _to_utc(ev.timestamp)).total_seconds())
             if delay > self._window:
                 ev.correlation_status = "EXPIRED"
                 self._history.append(ev)
@@ -233,9 +242,10 @@ class CorrelationEngine:
 
     def _expire_stale_tracks(self, reference_time: datetime) -> None:
         """Drop anonymous tracks from the queue if they are older than the window."""
+        ref_utc = _to_utc(reference_time)
         still_pending: deque[CameraEntryEvent] = deque()
         for ev in list(self._unmatched_tracks):
-            delay = (reference_time - ev.timestamp).total_seconds()
+            delay = (ref_utc - _to_utc(ev.timestamp)).total_seconds()
             if delay <= self._window:
                 still_pending.append(ev)
         self._unmatched_tracks = still_pending

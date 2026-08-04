@@ -178,32 +178,36 @@ class SoftwareOfficeProfile(ActivityProfile):
 
         inside = self._inside_zone(ctx.worker_pos, ctx.zone) if ctx.worker_pos else True
 
-        # Rule 1: fast locomotion → walking
-        if ctx.velocity > ctx.velocity_threshold:
+        # Rule 1: Actual locomotion → walking
+        # Requires velocity > threshold AND sustained spatial net displacement over sliding window.
+        # Seated fidgeting / upper body movement does NOT trigger walking.
+        is_locomotion = (
+            ctx.velocity > ctx.velocity_threshold
+            and ctx.net_displacement > 0.035
+            and not (inside and ctx.is_seated)
+        )
+        if is_locomotion:
             return "walking"
 
         # Rule 2: phone use (wrist near face when not seated at desk)
-        if not inside and _wrist_near_face(ctx.keypoints):
+        if not inside and not ctx.is_seated and _wrist_near_face(ctx.keypoints):
             return "using_phone"
 
         # Rule 3: meeting / collaboration (multiple people in close proximity)
         nearby = _nearby_peers(ctx.worker_pos, ctx.peer_positions)
-        if nearby >= 1 and ctx.velocity <= ctx.velocity_threshold:
+        if nearby >= 1 and not is_locomotion:
             return "meeting"
 
-        # Rule 4: Workstation Presence & Hands-on-Keyboard Heuristic
-        # If seated at workstation:
-        # - Hands on keyboard/desk → working
-        # - Hands off keyboard/desk for > 5.0 seconds → idle
-        if inside:
-            hands_active = _hands_on_keyboard(ctx.keypoints)
-            if not hands_active and ctx.idle_seconds >= 5.0:
-                return "idle"
-            if ctx.idle_seconds >= ctx.idle_threshold_seconds:
+        # Rule 4: Workstation Presence & Hands-on-Desk Heuristic
+        # If seated or inside workstation:
+        # - Hands on desk / near laptop → working (even if sitting still)
+        # - Hands off desk / away from laptop for >= idle_threshold_seconds → idle
+        if inside or ctx.is_seated:
+            if ctx.hands_off_seconds >= ctx.idle_threshold_seconds:
                 return "idle"
             return "working"
 
-        # Rule 5: Outside workstation zone and not walking → away from desk
+        # Rule 5: Outside workstation zone and not walking / not seated → away from desk
         return "away_from_desk"
 
 

@@ -81,7 +81,21 @@ async def delete_zone(camera_id: str, db: Session = Depends(get_db)):
         db.delete(row)
         db.commit()
     invalidate_zone_cache(camera_id)
-    return {"status": "deleted", "camera_id": camera_id}
+@router.get("/api/zones")
+async def list_all_zones(db: Session = Depends(get_db)):
+    """List all configured camera zones across all cameras for employee zone assignment."""
+    rows = db.query(CameraZoneDB).all()
+    out = []
+    for r in rows:
+        out.append({
+            "id": r.zone_id,
+            "zone_id": r.zone_id,
+            "camera_id": r.camera_id,
+            "name": r.name or f"Zone {r.zone_id}",
+            "color": r.color or "#3B82F6",
+            "description": r.description,
+        })
+    return out
 
 
 # ── Polygonal Camera Zone Endpoints ────────────────────────────────────────

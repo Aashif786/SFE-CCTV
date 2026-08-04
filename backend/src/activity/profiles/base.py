@@ -46,6 +46,9 @@ class ClassifyContext:
     movement_sensitivity: float
     velocity_threshold: float
     idle_threshold_seconds: float
+    net_displacement: float = 0.0
+    is_seated: bool = False
+    hands_off_seconds: float = 0.0
 
 
 class ActivityProfile(ABC):

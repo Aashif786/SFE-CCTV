@@ -182,6 +182,10 @@ class DetectionConfig:
     # Classifier parameters
     classifier_velocity_threshold: float = 0.05
 
+    # Person Tracking Modes
+    tracking_mode: str = "TRACK_ALL"         # "TRACK_ALL" | "TRACK_SPECIFIC"
+    tracked_employee_ids: list[str] = []     # Target employees for TRACK_SPECIFIC mode
+
     # Activity profile — selects which ActivityProfile implementation is active
     active_profile: str = "software_office"
 
@@ -212,6 +216,11 @@ if os.path.exists(SETTINGS_FILE):
             if "confidence_threshold" in data: config.confidence_threshold = float(data["confidence_threshold"])
             if "correlation_window_seconds" in data: config.correlation_window_seconds = float(data["correlation_window_seconds"])
             if "identity_provider" in data: config.identity_provider = str(data["identity_provider"])
+
+            # Person Tracking Modes
+            if "tracking_mode" in data: config.tracking_mode = str(data["tracking_mode"])
+            if "tracked_employee_ids" in data and isinstance(data["tracked_employee_ids"], list):
+                config.tracked_employee_ids = [str(x) for x in data["tracked_employee_ids"]]
 
             # YOLO Pose Estimator
             if "yolo_model" in data: config.yolo_model = str(data["yolo_model"])
@@ -248,6 +257,13 @@ if os.path.exists(SETTINGS_FILE):
 class SettingsPayload(BaseModel):
     idle_threshold_seconds: float
     movement_sensitivity: float
+    confidence_threshold: float = Field(default=0.50)
+    correlation_window_seconds: float = Field(default=5.0)
+    identity_provider: str = Field(default="REST_SIMULATOR")
+
+    # Person Tracking Modes
+    tracking_mode: str = Field(default="TRACK_ALL")
+    tracked_employee_ids: list[str] = Field(default_factory=list)
     confidence_threshold: float = Field(default=0.50)
     correlation_window_seconds: float = Field(default=5.0)
     identity_provider: str = Field(default="REST_SIMULATOR")
