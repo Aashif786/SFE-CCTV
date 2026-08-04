@@ -39,7 +39,7 @@ export default function SidebarLayout({ children }: { children: React.ReactNode 
       <aside
         className={`${isSidebarOpen ? 'w-64' : 'w-0'} transition-all duration-300 ease-in-out
           bg-[hsl(var(--bg-sidebar))] border-r border-[hsl(var(--border))]
-          flex flex-col z-20 overflow-hidden shrink-0 shadow-sm`}
+          flex flex-col overflow-hidden shrink-0 shadow-sm relative z-10`}
       >
         {/* Logo */}
         <div className="p-5 flex items-center gap-3 border-b border-[hsl(var(--border))] whitespace-nowrap w-64 shrink-0">
@@ -119,7 +119,8 @@ export default function SidebarLayout({ children }: { children: React.ReactNode 
       </aside>
 
       {/* Main Content */}
-      <main className="flex-1 flex flex-col min-w-0 relative z-10">
+      <main className="flex-1 flex flex-col min-w-0">
+
         {/* Header */}
         <header className="h-16 border-b border-[hsl(var(--border))] flex items-center justify-between px-4 sm:px-8 bg-[hsl(var(--bg-header))]/90 backdrop-blur-sm shrink-0 shadow-sm">
           <div className="flex items-center gap-4">
