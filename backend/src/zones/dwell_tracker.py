@@ -273,6 +273,29 @@ class ZoneDwellTracker:
 
             return count
 
+    def get_all_active_visits_detail(self, max_stale_seconds: float = 15.0) -> list[dict]:
+        """Return detailed list of all currently active track visits across all cameras."""
+        now = _to_utc(None)
+        results = []
+        with self._lock:
+            for cam_key, trk_map in list(self._active_visits.items()):
+                for trk_id, visit in list(trk_map.items()):
+                    stale_sec = (_to_utc(now) - _to_utc(visit.last_updated)).total_seconds()
+                    if stale_sec <= max_stale_seconds:
+                        dwell_sec = max(0.0, (_to_utc(now) - _to_utc(visit.entry_time)).total_seconds())
+                        results.append({
+                            "camera_id": str(cam_key),
+                            "track_id": str(trk_id),
+                            "zone_id": visit.zone_id,
+                            "zone_name": visit.zone_name,
+                            "zone_color": visit.zone_color,
+                            "person_identifier": visit.person_identifier,
+                            "entry_time": visit.entry_time.isoformat(),
+                            "dwell_seconds": round(dwell_sec, 1),
+                            "formatted_dwell": format_dwell_time(dwell_sec),
+                        })
+        return results
+
     # ── Database Helpers ───────────────────────────────────────────────────
 
     def _open_visit_in_db(

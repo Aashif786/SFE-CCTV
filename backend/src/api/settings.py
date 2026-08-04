@@ -40,6 +40,10 @@ async def get_settings():
         "correlation_window_seconds": config.correlation_window_seconds,
         "identity_provider": config.identity_provider,
 
+        # Person Tracking Modes
+        "tracking_mode": getattr(config, "tracking_mode", "TRACK_ALL"),
+        "tracked_employee_ids": getattr(config, "tracked_employee_ids", []),
+
         # YOLO
         "yolo_model": config.yolo_model,
         "yolo_conf": config.yolo_conf,
@@ -91,6 +95,10 @@ async def save_settings(payload: SettingsPayload):
     config.correlation_window_seconds = payload.correlation_window_seconds
     config.identity_provider = payload.identity_provider
 
+    # Person Tracking Modes
+    config.tracking_mode = payload.tracking_mode
+    config.tracked_employee_ids = payload.tracked_employee_ids
+
     # YOLO settings
     config.yolo_model = payload.yolo_model
     config.yolo_conf = payload.yolo_conf
@@ -130,6 +138,9 @@ async def save_settings(payload: SettingsPayload):
                 "confidence_threshold": config.confidence_threshold,
                 "correlation_window_seconds": config.correlation_window_seconds,
                 "identity_provider": config.identity_provider,
+
+                "tracking_mode": config.tracking_mode,
+                "tracked_employee_ids": config.tracked_employee_ids,
 
                 "yolo_model": config.yolo_model,
                 "yolo_conf": config.yolo_conf,

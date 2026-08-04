@@ -51,7 +51,9 @@ export default function SettingsPage() {
   const [proximityThresh, setProximityThresh] = useState(0);
   const [appearanceThresh, setAppearanceThresh] = useState(75);
 
-  // 3. Identity
+  // 3. Identity & Person Tracking Mode
+  const [trackingMode, setTrackingMode] = useState<"TRACK_ALL" | "TRACK_SPECIFIC">("TRACK_ALL");
+  const [trackedEmployeesText, setTrackedEmployeesText] = useState("");
   const [identityProvider, setIdentityProvider] = useState("REST_SIMULATOR");
   const [correlationWindow, setCorrelationWindow] = useState(5);
   const [hikvisionUsername, setHikvisionUsername] = useState("admin");
@@ -107,7 +109,9 @@ export default function SettingsPage() {
         setProximityThresh(toPercent(data.tracker_proximity_thresh ?? 0.0));
         setAppearanceThresh(toPercent(data.tracker_appearance_thresh ?? 0.75));
 
-        // Identity
+        // Person Tracking Mode & Identity
+        setTrackingMode(data.tracking_mode ?? "TRACK_ALL");
+        setTrackedEmployeesText(Array.isArray(data.tracked_employee_ids) ? data.tracked_employee_ids.join(", ") : "");
         setIdentityProvider(data.identity_provider ?? "REST_SIMULATOR");
         setCorrelationWindow(data.correlation_window_seconds ?? 5);
         setHikvisionUsername(data.hikvision_username ?? "admin");
@@ -149,6 +153,10 @@ export default function SettingsPage() {
         confidence_threshold: fromPercent(confidenceThreshold),
         correlation_window_seconds: correlationWindow,
         identity_provider: identityProvider,
+
+        // Person Tracking Mode
+        tracking_mode: trackingMode,
+        tracked_employee_ids: trackedEmployeesText.split(",").map((s) => s.trim()).filter(Boolean),
 
         // YOLO
         yolo_model: yoloModel,
@@ -814,6 +822,64 @@ export default function SettingsPage() {
                 <h3 className="text-xl font-bold text-[hsl(var(--text-primary))] border-b border-[hsl(var(--border))] pb-2">
                   Access Control & Identity Modules
                 </h3>
+
+                {/* Person Tracking Mode Selection */}
+                <div className="border-b border-[hsl(var(--border))] pb-6 space-y-4">
+                  <div>
+                    <label className="block text-base font-bold text-[hsl(var(--text-primary))]">
+                      Person Tracking Mode
+                    </label>
+                    <p className="text-xs text-[hsl(var(--text-muted))] mt-1">
+                      Controls which individuals the AI engine actively tracks, analyzes, and includes in zone productivity metrics.
+                    </p>
+                  </div>
+
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <button
+                      type="button"
+                      onClick={() => setTrackingMode("TRACK_ALL")}
+                      className={`p-4 rounded-xl border text-left transition-all ${
+                        trackingMode === "TRACK_ALL"
+                          ? "border-emerald-500 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 font-medium"
+                          : "border-[hsl(var(--border))] bg-[hsl(var(--bg-input))] text-[hsl(var(--text-secondary))] hover:border-[hsl(var(--border-strong))]"
+                      }`}
+                    >
+                      <div className="font-bold text-sm text-[hsl(var(--text-primary))] flex items-center justify-between">
+                        <span>Track All People (Default)</span>
+                        {trackingMode === "TRACK_ALL" && <CheckCircle2 className="w-4 h-4 text-emerald-500" />}
+                      </div>
+                      <p className="text-xs text-[hsl(var(--text-muted))] mt-2 leading-relaxed">
+                        Every detected person in frame is tracked, analyzed, and logged. Ideal for full security monitoring.
+                      </p>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => setTrackingMode("TRACK_SPECIFIC")}
+                      className={`p-4 rounded-xl border text-left transition-all ${
+                        trackingMode === "TRACK_SPECIFIC"
+                          ? "border-emerald-500 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 font-medium"
+                          : "border-[hsl(var(--border))] bg-[hsl(var(--bg-input))] text-[hsl(var(--text-secondary))] hover:border-[hsl(var(--border-strong))]"
+                      }`}
+                    >
+                      <div className="font-bold text-sm text-[hsl(var(--text-primary))] flex items-center justify-between">
+                        <span>Track Specific People</span>
+                        {trackingMode === "TRACK_SPECIFIC" && <CheckCircle2 className="w-4 h-4 text-emerald-500" />}
+                      </div>
+                      <p className="text-xs text-[hsl(var(--text-muted))] mt-2 leading-relaxed">
+                        Only monitors designated personnel after check-in. Non-checked-in anonymous tracks are ignored to optimize compute.
+                      </p>
+                    </button>
+                  </div>
+
+                  {trackingMode === "TRACK_SPECIFIC" && (
+                    <div className="p-4 rounded-xl bg-emerald-500/10 border border-emerald-500/20 text-xs text-emerald-700 dark:text-emerald-300 flex items-center justify-between">
+                      <div>
+                        <span className="font-bold">Individual Employee Toggles Enabled:</span> Manage which specific employees to track on the new <strong className="underline">Employee Tracking</strong> page.
+                      </div>
+                    </div>
+                  )}
+                </div>
 
                 {/* Provider Type */}
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-4 items-start">

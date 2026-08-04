@@ -66,6 +66,9 @@ class ActivityClassifier:
         keypoints: Optional[List[Tuple[float, float]]] = None,
         idle_seconds: float = 0.0,
         peer_positions: Optional[List[Tuple[float, float]]] = None,
+        net_displacement: float = 0.0,
+        is_seated: bool = False,
+        hands_off_seconds: float = 0.0,
     ) -> str:
         ctx = ClassifyContext(
             has_pose=has_pose,
@@ -80,6 +83,9 @@ class ActivityClassifier:
             movement_sensitivity=getattr(config, "movement_sensitivity", 0.05),
             velocity_threshold=getattr(config, "classifier_velocity_threshold", 0.05),
             idle_threshold_seconds=getattr(config, "idle_threshold_seconds", 10.0),
+            net_displacement=net_displacement,
+            is_seated=is_seated,
+            hands_off_seconds=hands_off_seconds,
         )
         return profile_registry.active().classify(ctx)
 

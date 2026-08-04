@@ -19,6 +19,7 @@ export default function SidebarLayout({ children }: { children: React.ReactNode 
     { href: "/",                    icon: LayoutDashboard,    label: "Dashboard" },
     { href: "/live-cameras",        icon: Video,              label: "Live Cameras" },
     { href: "/camera-management",   icon: SlidersHorizontal,  label: "Camera Management" },
+    { href: "/employee-tracking",   icon: Fingerprint,        label: "Employee Tracking" },
     { href: "/zone-analytics",      icon: Layers,             label: "Zone Analytics" },
     { href: "/live-checkins",       icon: UserCheck,          label: "Live Check-ins" },
     { href: "/doors",               icon: DoorClosed,         label: "Door Configs" },

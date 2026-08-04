@@ -27,6 +27,8 @@ from ..activity.classifier import classifier
 from ..identity.correlation import correlation_engine
 from ..identity.session_manager import worker_session_manager
 from ..identity.models import CameraEntryEvent
+from ..identity.tracking_strategy import TrackingStrategyFactory
+from ..zones.dwell_tracker import _to_utc
 from ..state import (
     detectors,
     session_managers,
@@ -150,6 +152,14 @@ async def websocket_endpoint(websocket: WebSocket):
                 trk_id = p["track_id"]
                 str_trk_id = str(trk_id)
 
+                # Resolve identity
+                worker_session = worker_session_manager.get_by_track(str_trk_id)
+                employee_id = worker_session.employee_id if worker_session else None
+
+                tracking_strategy = TrackingStrategyFactory.get_strategy()
+                if not tracking_strategy.should_track(str_trk_id, str(camera_id), person_identifier=employee_id):
+                    continue
+
                 # Check confidence threshold to decide whether to send skeleton
                 keypoints_to_send = p["keypoints"] if p["confidence"] >= config.confidence_threshold else []
 
@@ -207,7 +217,7 @@ async def websocket_endpoint(websocket: WebSocket):
                     track_activity_totals[str_trk_id] = {"working": 0.0, "walking": 0.0, "idle": 0.0, "no_person": 0.0}
 
                 if str_trk_id in track_last_time:
-                    dt = (now_time - track_last_time[str_trk_id]).total_seconds()
+                    dt = (_to_utc(now_time) - _to_utc(track_last_time[str_trk_id])).total_seconds()
                     if dt < 2.0:  # Cap at 2s to prevent huge spikes if frame drops
                         track_activity_totals[str_trk_id][activity] += dt
 

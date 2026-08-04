@@ -90,6 +90,8 @@ class WorkerDetector:
         self.smoothed: dict[int, list[list[float]]] = {}
         self.prev_smoothed: dict[int, list[list[float]]] = {}
         self.idle_seconds: dict[int, float] = {}
+        self.hands_off_seconds: dict[int, float] = {}
+        self.pos_history: dict[int, list[tuple[float, float]]] = {}
         self.last_seen_frame: dict[int, int] = {} # track_id -> frame_number
         self.prev_worker_pos: dict[int, tuple[float, float]] = {}
         self.smoothed_velocities: dict[int, float] = {}
@@ -98,6 +100,11 @@ class WorkerDetector:
         self.alert_triggered: bool = False
         self.last_returned_ids: set[int] = set()
 
+        # Cache tracker config path once to avoid per-frame I/O resolution overhead
+        self.tracker_config = os.path.abspath(
+            os.path.join(os.path.dirname(__file__), "..", "..", "custom_tracker.yaml")
+        )
+
         # Track stability: record the last confirmed box for each track_id
         self.last_confirmed_box: dict[int, list[float]] = {}
         self.dropped_ids: dict[int, int] = {}
@@ -105,6 +112,62 @@ class WorkerDetector:
     @staticmethod
     def _dist_xy(a: list[float], b: list[float]) -> float:
         return math.sqrt((a[0] - b[0]) ** 2 + (a[1] - b[1]) ** 2)
+
+    @staticmethod
+    def _check_seated_posture(smoothed: list[list[float]]) -> bool:
+        """Return True if hip-knee-ankle keypoint geometry indicates a seated posture."""
+        if not smoothed or len(smoothed) < 27:
+            return False
+        l_sh, r_sh = smoothed[11], smoothed[12]
+        l_hp, r_hp = smoothed[23], smoothed[24]
+        l_kn, r_kn = smoothed[25], smoothed[26]
+
+        sh_ys = [pt[1] for pt in (l_sh, r_sh) if pt[0] > 0.01]
+        hp_ys = [pt[1] for pt in (l_hp, r_hp) if pt[0] > 0.01]
+        kn_ys = [pt[1] for pt in (l_kn, r_kn) if pt[0] > 0.01]
+
+        if not sh_ys or not hp_ys or not kn_ys:
+            return False
+
+        avg_sh_y = sum(sh_ys) / len(sh_ys)
+        avg_hp_y = sum(hp_ys) / len(hp_ys)
+        avg_kn_y = sum(kn_ys) / len(kn_ys)
+
+        torso_h = avg_hp_y - avg_sh_y
+        thigh_vertical_drop = avg_kn_y - avg_hp_y
+
+        if torso_h <= 0.01:
+            return False
+
+        # In standing pose, thigh vertical drop is approx equal or larger than torso height.
+        # In seated pose, thighs are horizontal, so vertical drop ratio is small (< 0.60).
+        return (thigh_vertical_drop / torso_h) < 0.60
+
+    @staticmethod
+    def _check_hands_on_desk(smoothed: list[list[float]]) -> bool:
+        """Return True if hands/wrists are positioned in desk/keyboard area."""
+        if not smoothed or len(smoothed) < 25:
+            return True  # Default to True if incomplete to avoid false idle
+        l_sh, r_sh = smoothed[11], smoothed[12]
+        l_wr, r_wr = smoothed[15], smoothed[16]
+        l_hp, r_hp = smoothed[23], smoothed[24]
+
+        shoulders = [pt for pt in (l_sh, r_sh) if pt[0] > 0.01]
+        wrists = [pt for pt in (l_wr, r_wr) if pt[0] > 0.01]
+        hips = [pt for pt in (l_hp, r_hp) if pt[0] > 0.01]
+
+        if not shoulders or not wrists:
+            return True
+
+        avg_sh_y = sum(pt[1] for pt in shoulders) / len(shoulders)
+        avg_hp_y = sum(pt[1] for pt in hips) / len(hips) if hips else avg_sh_y + 0.4
+
+        for wr in wrists:
+            wr_y = wr[1]
+            if avg_sh_y - 0.05 <= wr_y <= avg_hp_y + 0.15:
+                return True
+
+        return False
 
     def update(self, frame: np.ndarray) -> list[dict]:
         """
@@ -125,6 +188,8 @@ class WorkerDetector:
             self.smoothed.clear()
             self.prev_smoothed.clear()
             self.idle_seconds.clear()
+            self.hands_off_seconds.clear()
+            self.pos_history.clear()
             self.last_seen_frame.clear()
             self.prev_worker_pos.clear()
             self.smoothed_velocities.clear()
@@ -137,9 +202,6 @@ class WorkerDetector:
 
         # Use YOLO's built-in robust tracking (BoT-SORT / ByteTrack)
         # imgsz=640 gives fast 60+ FPS inference latency on CUDA GPUs
-        tracker_config = os.path.abspath(
-            os.path.join(os.path.dirname(__file__), "..", "..", "custom_tracker.yaml")
-        )
         results = self.model.track(
             frame,
             persist=True,
@@ -148,7 +210,7 @@ class WorkerDetector:
             conf=getattr(config, "yolo_conf", 0.30),
             iou=getattr(config, "yolo_iou", 0.90),
             imgsz=getattr(config, "yolo_imgsz", 640),
-            tracker=tracker_config
+            tracker=self.tracker_config
         )
 
         if len(results) == 0 or results[0].boxes is None or results[0].boxes.id is None:
@@ -281,15 +343,23 @@ class WorkerDetector:
             else:
                 movement_score = 0.0
 
-            # ── Idle accumulator ─────────────────────────────────────────────
+            # ── Idle & Hands-off-desk accumulators ─────────────────────────────
             if movement_score > config.movement_sensitivity:
                 self.idle_seconds[track_id] = 0.0
             else:
                 self.idle_seconds[track_id] = self.idle_seconds.get(track_id, 0.0) + 0.2
 
+            hands_on_desk = self._check_hands_on_desk(smoothed)
+            if hands_on_desk:
+                self.hands_off_seconds[track_id] = 0.0
+            else:
+                self.hands_off_seconds[track_id] = self.hands_off_seconds.get(track_id, 0.0) + 0.2
+
+            is_seated = self._check_seated_posture(smoothed)
+
             self.prev_smoothed[track_id] = smoothed
 
-            # ── Derived outputs ──────────────────────────────────────────────
+            # ── Derived outputs & Position history (Locomotion check) ──────────
             keypoints = [(s[0], s[1]) for s in smoothed]
 
             if HIP_L < len(smoothed) and HIP_R < len(smoothed):
@@ -301,24 +371,38 @@ class WorkerDetector:
                 worker_pos = None
                 
             velocity = 0.0
-            if worker_pos and track_id in self.prev_worker_pos:
-                inst_vel = self._dist_xy(worker_pos, self.prev_worker_pos[track_id])
-                self.smoothed_velocities[track_id] = 0.8 * self.smoothed_velocities.get(track_id, 0.0) + 0.2 * inst_vel
-                velocity = self.smoothed_velocities[track_id]
-                
+            net_displacement = 0.0
+
             if worker_pos:
+                if track_id not in self.pos_history:
+                    self.pos_history[track_id] = []
+                self.pos_history[track_id].append(worker_pos)
+                if len(self.pos_history[track_id]) > 15:
+                    self.pos_history[track_id].pop(0)
+
+                oldest_pos = self.pos_history[track_id][0]
+                net_displacement = self._dist_xy(worker_pos, oldest_pos)
+
+                if track_id in self.prev_worker_pos:
+                    inst_vel = self._dist_xy(worker_pos, self.prev_worker_pos[track_id])
+                    self.smoothed_velocities[track_id] = 0.8 * self.smoothed_velocities.get(track_id, 0.0) + 0.2 * inst_vel
+                    velocity = self.smoothed_velocities[track_id]
+                
                 self.prev_worker_pos[track_id] = worker_pos
 
             poses_out.append({
-                "track_id":       track_id,
-                "has_pose":       True,
-                "movement_score": movement_score,
-                "velocity":       velocity,
-                "confidence":     confidence,
-                "worker_pos":     worker_pos,
-                "idle_seconds":   self.idle_seconds[track_id],
-                "keypoints":      keypoints,
-                "box":            box,
+                "track_id":          track_id,
+                "has_pose":          True,
+                "movement_score":    movement_score,
+                "velocity":          velocity,
+                "net_displacement":  net_displacement,
+                "is_seated":         is_seated,
+                "confidence":        confidence,
+                "worker_pos":        worker_pos,
+                "idle_seconds":      self.idle_seconds[track_id],
+                "hands_off_seconds": self.hands_off_seconds[track_id],
+                "keypoints":         keypoints,
+                "box":               box,
             })
 
         # Sort and limit tracked people if max_tracked_people is set
@@ -349,6 +433,8 @@ class WorkerDetector:
                 self.smoothed.pop(tid, None)
                 self.prev_smoothed.pop(tid, None)
                 self.idle_seconds.pop(tid, None)
+                self.hands_off_seconds.pop(tid, None)
+                self.pos_history.pop(tid, None)
                 self.last_seen_frame.pop(tid, None)
                 self.last_confirmed_box.pop(tid, None)
                 self.prev_worker_pos.pop(tid, None)

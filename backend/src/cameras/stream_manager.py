@@ -323,7 +323,7 @@ class StreamManager:
                         h_f, w_f = frame.shape[:2]
                         if w_f > target_max_w:
                             scale = float(target_max_w) / w_f
-                            disp_frame = cv2.resize(frame, (target_max_w, int(h_f * scale)), interpolation=cv2.INTER_AREA)
+                            disp_frame = cv2.resize(frame, (target_max_w, int(h_f * scale)), interpolation=cv2.INTER_LINEAR)
                         else:
                             disp_frame = frame
 

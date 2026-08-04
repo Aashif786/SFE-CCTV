@@ -149,10 +149,52 @@ class EmployeeDailySummary(Base):
     # Total on-camera time (sum of all tracked activities)
     total_seconds         = Column(Float, nullable=False, default=0.0)
 
+    # Designated Work Zone Productivity Metrics
+    designated_zone_seconds = Column(Float, nullable=False, default=0.0)  # Time spent in assigned work zones
+    outside_zone_seconds    = Column(Float, nullable=False, default=0.0)  # Time spent outside assigned work zones
+    common_area_seconds     = Column(Float, nullable=False, default=0.0)  # Time spent in common/shared zones
+    break_seconds           = Column(Float, nullable=False, default=0.0)  # Break time
+    productivity_score      = Column(Float, nullable=False, default=100.0) # Calculated productivity %
+
     # Attendance metadata
     check_in_count = Column(Integer, nullable=False, default=0)  # number of WorkerSessions closed today
     first_seen = Column(DateTime, nullable=True)   # earliest session start today
     last_seen  = Column(DateTime, nullable=True)   # latest session end today
+
+
+class EmployeeDB(Base):
+    """
+    Employee registry table for tracking configuration and zone assignments.
+    """
+    __tablename__ = "employees"
+
+    id = Column(Integer, primary_key=True, index=True)
+    employee_id = Column(String, unique=True, nullable=False, index=True)
+    name = Column(String, nullable=False)
+    department = Column(String, nullable=True, default="Engineering")
+    designation = Column(String, nullable=True, default="Software Engineer")
+    is_tracked = Column(Boolean, nullable=False, default=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
+class EmployeeZoneDB(Base):
+    """
+    Mapping between employees and their designated camera work zones.
+    Used to calculate zone-specific productivity metrics.
+    """
+    __tablename__ = "employee_zones"
+    __table_args__ = (
+        UniqueConstraint("employee_id", "camera_id", "zone_id", name="uq_emp_cam_zone"),
+    )
+
+    id = Column(Integer, primary_key=True, index=True)
+    employee_id = Column(String, nullable=False, index=True)
+    camera_id = Column(String, nullable=False, index=True)
+    zone_id = Column(String, nullable=False, index=True)
+    zone_name = Column(String, nullable=True)
+    is_designated = Column(Boolean, default=True, nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow)
 
 
 class CameraZoneDB(Base):
