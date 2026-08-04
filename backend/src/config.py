@@ -53,6 +53,32 @@ def _load_env_file(filepath: str) -> Dict[str, str]:
 
     return env_dict
 
+def _update_env_file(key: str, val: str):
+    env_path = os.path.join(os.path.dirname(__file__), "..", ".env")
+    if not os.path.exists(env_path):
+        env_path = os.path.join(os.path.dirname(__file__), "..", "..", ".env")
+    if not os.path.exists(env_path):
+        return
+    try:
+        with open(env_path, "r", encoding="utf-8") as f:
+            lines = f.readlines()
+        
+        found = False
+        new_lines = []
+        for line in lines:
+            if line.strip().startswith(f"{key}="):
+                new_lines.append(f"{key}={val}\n")
+                found = True
+            else:
+                new_lines.append(line)
+        if not found:
+            new_lines.append(f"\n{key}={val}\n")
+            
+        with open(env_path, "w", encoding="utf-8") as f:
+            f.writelines(new_lines)
+    except Exception as e:
+        print(f"[Config] Failed to update {key} in .env file: {e}")
+
 class EnvSettings:
     def __init__(self):
         self.reload_doors()
@@ -75,8 +101,20 @@ class EnvSettings:
             except Exception as e:
                 print(f"[Config] Error reading settings.json for EnvSettings: {e}")
 
-        self.hikvision_username = settings_data.get("hikvision_username") or env_vars.get("HIKVISION_USERNAME") or os.environ.get("HIKVISION_USERNAME") or "admin"
-        self.hikvision_password = settings_data.get("hikvision_password") or env_vars.get("HIKVISION_PASSWORD") or os.environ.get("HIKVISION_PASSWORD") or ""
+        # Prioritize .env file / environment variables for sensitive credentials
+        env_user = env_vars.get("HIKVISION_USERNAME") or os.environ.get("HIKVISION_USERNAME")
+        env_pass = env_vars.get("HIKVISION_PASSWORD") or os.environ.get("HIKVISION_PASSWORD")
+
+        json_user = settings_data.get("hikvision_username")
+        json_pass = settings_data.get("hikvision_password")
+
+        if json_user and json_user.startswith("YOUR_"):
+            json_user = None
+        if json_pass and json_pass.startswith("YOUR_"):
+            json_pass = None
+
+        self.hikvision_username = env_user or json_user or "admin"
+        self.hikvision_password = env_pass or json_pass or ""
 
         # Camera streaming configuration
         self.default_rtsp_port = int(settings_data.get("default_rtsp_port") or env_vars.get("DEFAULT_RTSP_PORT") or os.environ.get("DEFAULT_RTSP_PORT", "554"))
@@ -152,6 +190,16 @@ class DetectionConfig:
 
 config = DetectionConfig()
 SETTINGS_FILE = os.path.join(os.path.dirname(__file__), "..", "settings.json")
+EXAMPLE_SETTINGS_FILE = os.path.join(os.path.dirname(__file__), "..", "settings.example.json")
+
+# Auto-generate settings.json from settings.example.json if it doesn't exist locally
+if not os.path.exists(SETTINGS_FILE) and os.path.exists(EXAMPLE_SETTINGS_FILE):
+    try:
+        import shutil
+        shutil.copyfile(EXAMPLE_SETTINGS_FILE, SETTINGS_FILE)
+        print(f"Auto-generated local settings file: {SETTINGS_FILE}")
+    except Exception as e:
+        print(f"Failed to auto-generate settings.json: {e}")
 
 # Load persistent settings if they exist
 if os.path.exists(SETTINGS_FILE):

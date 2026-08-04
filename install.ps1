@@ -33,7 +33,7 @@ if (-not (Get-Command "docker" -ErrorAction SilentlyContinue)) {
 }
 Write-Host "[OK] Docker is installed." -ForegroundColor Green
 
-# 4. Create .env if it doesn't exist
+# 4. Create .env and settings.json if they don't exist
 if (-not (Test-Path ".env")) {
     if (Test-Path "backend\.env.example") {
         Write-Host "[INFO] Creating .env from backend\.env.example..." -ForegroundColor Yellow
@@ -44,6 +44,16 @@ if (-not (Test-Path ".env")) {
 } else {
     Write-Host "[OK] .env file already exists." -ForegroundColor Green
 }
+
+if (-not (Test-Path "backend\settings.json")) {
+    if (Test-Path "backend\settings.example.json") {
+        Write-Host "[INFO] Creating backend\settings.json from backend\settings.example.json..." -ForegroundColor Yellow
+        Copy-Item "backend\settings.example.json" "backend\settings.json"
+    }
+} else {
+    Write-Host "[OK] backend\settings.json already exists." -ForegroundColor Green
+}
+
 
 # 5. Setup Python Virtual Environment and GPU-Accelerated Backend Dependencies
 Write-Host "[INFO] Setting up Python Virtual Environment with CUDA GPU acceleration..." -ForegroundColor Yellow
