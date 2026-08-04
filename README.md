@@ -1,6 +1,6 @@
-# SFE-CCTV — Worker Activity Monitoring System
+# CALVISION — Worker Activity & CCTV Monitoring System
 
-> **Real-time AI-powered worker monitoring via webcam, featuring YOLO-based multi-person pose estimation, Re-ID tracking, idle detection, automated alerting, and a full analytics dashboard.**
+> **Real-time AI-powered worker activity & identity monitoring system. Features YOLO11 pose estimation, BoT-SORT multi-person tracking, Hikvision ISAPI door access integration, RTSP live streaming, automated idle alerts, network device scanning, and a Nix-locked reproducible runtime.**
 
 ---
 
@@ -8,13 +8,14 @@
 
 - [Overview](#overview)
 - [Tech Stack](#tech-stack)
-- [Architecture](#architecture)
+- [System Architecture](#system-architecture)
 - [Project Structure](#project-structure)
-- [How It Works — Full Workflow](#how-it-works--full-workflow)
-- [AI Detection Pipeline](#ai-detection-pipeline)
+- [Key Features](#key-features)
+- [How It Works — Full Pipeline](#how-it-works--full-pipeline)
+- [Nix Reproducible Runtime](#nix-reproducible-runtime)
 - [Database Schema](#database-schema)
 - [API Reference](#api-reference)
-- [Frontend Pages](#frontend-pages)
+- [Frontend Navigation](#frontend-navigation)
 - [Configuration & Settings](#configuration--settings)
 - [Running the System](#running-the-system)
 - [Environment Variables](#environment-variables)
@@ -23,83 +24,74 @@
 
 ## Overview
 
-SFE-CCTV is a **factory/assembly-line worker monitoring system** designed to run using standard webcams as CCTV input. It streams live video to an advanced AI backend that:
+CALVISION is a **production-grade worker activity monitoring and attendance verification system** designed for factories, assembly lines, and high-security facilities. It connects directly to local CCTV IP cameras (RTSP) and Hikvision Access Control door terminals (ISAPI) to:
 
-1. **Detects human poses** in real-time using `Ultralytics YOLO11m-pose`.
-2. **Tracks individuals across frames** using the `BoT-SORT` tracker, leveraging deep appearance (Re-ID) features and Kalman filtering to maintain identity even during occlusions or visual collisions (e.g., people crossing paths or shaking hands).
-3. **Classifies each worker** into specific activities (`working`, `idle`, `walking`, `no_person`) based on joint movement and workstation zone boundaries.
-4. **Persists activity logs, sessions, and fires alerts** automatically when a worker is idle or using a mobile device beyond configured thresholds.
-5. **Serves a live dashboard** to supervisors showing real-time camera feeds with tightly aligned bounding boxes, dynamic skeletons, stats, alert history, and productivity charts.
+1. **Detect Human Poses in Real-Time** using `Ultralytics YOLO11m-pose`.
+2. **Track Workers Across Frames** using `BoT-SORT` with deep appearance (Re-ID) embeddings and Kalman filtering to prevent identity swaps during occlusions or path crossings.
+3. **Correlate Access Scans with AI Camera Tracks** within a dynamic time window to map physical door check-in events to tracked visual bounding boxes.
+4. **Classify Worker Activity States** (`working`, `idle`, `walking`, `no_person`) based on pose movement velocity, keypoint displacement, and workstation zone boundaries.
+5. **Scan & Discover Unconfigured Devices** on local private subnets (`192.168.1.0/24`), automatically discovering RTSP cameras and Hikvision door controllers.
+6. **Guarantee 100% Environment Reproducibility** via Nix (`flake.nix`, `backend/requirements.lock`, `.envrc`) on bare-metal host hardware without Docker containerization overhead.
 
 ---
 
 ## Tech Stack
 
 ### Backend
-
-| Technology | Role |
-|---|---|
-| **Python** (3.12+) | Primary backend runtime |
-| **FastAPI** | High-performance REST API and WebSocket server |
-| **Uvicorn** | ASGI web server for running FastAPI |
-| **Ultralytics YOLO11** | Core AI model (`yolo11m-pose.pt`) for detecting humans and 17 pose keypoints |
-| **BoT-SORT** | Multi-object tracking algorithm (replaces simple IoU/SortTracker) |
-| **OpenCV** | Frame decoding (JPEG to numpy array) |
-| **NumPy** | High-speed array processing |
-| **SQLAlchemy** (2.0) | ORM for relational database access |
-| **Alembic** | Database migrations |
-| **Pydantic** | Data validation and settings management |
-| **pg8000** | Pure-Python PostgreSQL driver |
+| Technology | Version / Tool | Role |
+|---|---|---|
+| **Python** | 3.10+ | Primary backend runtime |
+| **FastAPI** | 0.138+ | High-performance modular REST API & WebSocket server |
+| **Uvicorn** | 0.49+ | ASGI web server |
+| **Ultralytics YOLO11** | `yolo11m-pose.pt` | Multi-person pose estimation & 17 keypoint detection |
+| **BoT-SORT** | `custom_tracker.yaml` | Multi-object tracking with Re-ID embeddings |
+| **OpenCV** | 4.13+ | RTSP stream decoding & frame buffer processing |
+| **SQLAlchemy** | 2.0+ | Relational ORM for PostgreSQL |
+| **Hikvision ISAPI** | REST / Digest Auth | Physical door controller event polling |
+| **Nix Flakes** | `flake.nix` | Pinned host environment & library locking |
 
 ### Frontend
-
-| Technology | Role |
-|---|---|
-| **Next.js** (14 App Router) | Full-stack React framework |
-| **TypeScript** | Type-safe UI component logic |
-| **Tailwind CSS** | Utility-first styling for the dashboard |
-| **Recharts** | Activity and productivity data visualisation |
-| **Lucide React** | Consistent UI iconography |
-| **WebSocket API** | Browser native real-time bidirectional streaming |
-| **Canvas API** | Browser native high-performance skeleton and bounding box rendering |
+| Technology | Version / Tool | Role |
+|---|---|---|
+| **Next.js** | 14 App Router | Full-stack React framework |
+| **TypeScript** | 5.3+ | Type-safe UI & API models |
+| **Tailwind CSS** | 3.4+ | Modern dark/light theme responsive dashboard |
+| **Recharts** | 2.12+ | Interactive productivity charts & activity analytics |
+| **Lucide React** | 0.366+ | Iconography system |
+| **Canvas API** | Browser Native | Ultra-fast keypoint skeleton & bounding box overlay |
 
 ### Infrastructure
-
 | Technology | Role |
 |---|---|
-| **PostgreSQL 15** | Persistent storage for activity logs, employee identities, and alerts |
-| **Docker / Docker Compose** | Local isolated database containerization |
+| **PostgreSQL 15** | Primary relational database (`worker_monitor_db`) |
+| **Nix (`flake.nix` & `.envrc`)** | Native bare-metal system dependency locking |
+| **Docker Compose** | Isolated database service management |
 
 ---
 
-## Architecture
+## System Architecture
 
 ```text
-+-------------------------------------------------------------+
-|                         Browser                             |
-|                                                             |
-|  +--------------+      WebSocket (ws://)     +-----------+  |
-|  | CameraWidget | ---- frames (base64 JPEG)-►|           |  |
-|  |  (Canvas +   | ◄--- AI results (JSON) ----|  FastAPI  |  |
-|  |   Video)     |                            |  Backend  |  |
-|  +--------------+                            |           |  |
-|                                              |  +------+ |  |
-|  +--------------+     HTTP REST (5s poll)    |  | YOLO | |  |
-|  |  Dashboard   | ---- GET /api/stats ------►|  | 11m  | |  |
-|  |  Alerts      | ---- GET /api/alerts -----►|  | Pose | |  |
-|  |  History     | ---- GET /api/history ----►|  | BoT- | |  |
-|  |  Settings    | ---- POST /api/settings --►|  | SORT | |  |
-|  +--------------+                            |  +------+ |  |
-|                                              +-----+-----+  |
-+---------------------------------------------------- | ------+
-                                                      | SQLAlchemy
-                                               +------v------+
-                                               | PostgreSQL  |
-                                               | (Docker)    |
-                                               |             |
-                                               | logs, alerts|
-                                               | sessions    |
-                                               +-------------+
+┌─────────────────────────────────────────────────────────────────────────────────────────┐
+│                                FRONTEND (Next.js 14)                                    │
+│                                                                                         │
+│  ┌─────────────────────────┐     WebSocket (/ws)     ┌──────────────────────────────┐   │
+│  │   Live Camera / Feed    │◄─── base64 frames ─────►│       FastAPI Backend        │   │
+│  │   Canvas Skeleton HUD   │◄─── AI detections ──────│  (Decomposed Modular Server)  │   │
+│  └─────────────────────────┘                         └──────────────┬───────────────┘   │
+│  ┌─────────────────────────┐     HTTP REST           ┌──────────────┴───────────────┐   │
+│  │ Dashboard / Summary     │◄─── GET /api/stats ────►│  • state.py (Shared State)   │   │
+│  │ Door Config / Scanner   │◄─── POST /api/tools ───►│  • ws/handler.py (AI WS)     │   │
+│  └─────────────────────────┘                         │  • api/ (Settings/Zones/Tools│   │
+└──────────────────────────────────────────────────────┴──────────────┬───────────────┴───┘
+                                                                      │
+                ┌─────────────────────────────────────────────────────┼────────────────────────────────────────────────────┐
+                │                                                     │                                                    │
+                ▼                                                     ▼                                                    ▼
+┌───────────────────────────────┐                   ┌───────────────────────────────────┐                ┌───────────────────────────────────┐
+│   PostgreSQL 15 Database      │                   │   RTSP Camera Streams             │                │   Hikvision Door Controllers      │
+│ (logs, alerts, sessions, zones)│                   │  (192.168.1.201 - 215)            │                │  (192.168.1.231 - 235 ISAPI)      │
+└───────────────────────────────┘                   └───────────────────────────────────┘                └───────────────────────────────────┘
 ```
 
 ---
@@ -108,240 +100,208 @@ SFE-CCTV is a **factory/assembly-line worker monitoring system** designed to run
 
 ```text
 SFE-CCTV/
-├── docker-compose.yml          # PostgreSQL container definition
+├── flake.nix                   # Master Nix Flake for native reproducible runtime
+├── shell.nix                   # Classic nix-shell wrapper
+├── default.nix                 # Nix build derivation
+├── .envrc                      # direnv auto-activation configuration
+├── docker-compose.yml          # PostgreSQL 15 database service
+├── custom_tracker.yaml         # BoT-SORT Re-ID tracker parameters
+├── NIX.md                      # Complete Nix system documentation
 │
 ├── backend/
-│   ├── requirements.txt        # Python dependencies
-│   ├── custom_tracker.yaml     # BoT-SORT Re-ID tracker configuration
-│   ├── start.sh                # Smart startup and DB cleanup script
+│   ├── requirements.txt        # High-level Python dependencies
+│   ├── requirements.lock       # Pinned exact package versions
 │   └── src/
-│       ├── main.py             # Core: FastAPI app, YOLO WorkerDetector, WS routes
-│       ├── db/
-│       │   ├── database.py     # SQLAlchemy engine + session factory
-│       │   └── models.py       # ORM models (ActivityLog, Alert, WorkerSessionDB, etc.)
-│       └── identity/           # Multi-camera identity and correlation engine
+│       ├── main.py             # Thin orchestrator (~80 lines)
+│       ├── state.py            # Centralised in-memory state & zone cache
+│       ├── network_scanner.py  # Multi-threaded TCP & ISAPI subnet device discovery
+│       ├── config.py           # Settings singleton & tracker sync logic
+│       ├── api/                # Modular REST route handlers
+│       │   ├── settings.py     # Configuration GET/POST
+│       │   ├── zones.py        # Workstation zone CRUD
+│       │   ├── stats.py        # Dashboard stats, alerts, history & sessions
+│       │   └── tools.py        # Network scanner endpoints
+│       ├── ws/
+│       │   └── handler.py      # Real-time WebSocket detection & tracking pipeline
+│       ├── cameras/            # RTSP stream manager & stream CRUD
+│       ├── detectors/          # YOLO11 pose detector & keypoint normaliser
+│       ├── activity/           # Movement & zone activity classifier
+│       ├── identity/           # Hikvision ISAPI door provider & correlation engine
+│       └── db/                 # SQLAlchemy engine, session factory & ORM models
 │
 └── frontend/
     ├── package.json
     ├── tailwind.config.js
     └── src/
         ├── app/
-        │   ├── layout.tsx      # Root layout: sidebar nav + header
-        │   ├── page.tsx        # Dashboard page (stats + camera grid)
-        │   ├── alerts/         # Alerts management
-        │   ├── history/        # Analytics charts
-        │   ├── identity/       # Identity correlation management
-        │   ├── summary/        # Daily employee summaries
-        │   └── settings/       # Detection configuration form
+        │   ├── layout.tsx              # Sidebar navigation & theme context provider
+        │   ├── page.tsx                # Dashboard with metrics & live feeds
+        │   ├── live-cameras/           # Multi-camera RTSP streaming grid
+        │   ├── camera-management/      # Camera CRUD & connection testing
+        │   ├── live-checkins/          # Real-time door entry logs
+        │   ├── doors/                  # Hikvision ISAPI Door Controllers config
+        │   ├── history/                # Analytics & activity history
+        │   ├── alerts/                 # Idle/mobile alerts table
+        │   ├── sessions/               # Worker session tracking monitor
+        │   ├── summary/                # Daily employee productivity summaries
+        │   ├── settings/               # Thresholds & YOLO tracker tuning
+        │   └── tools/                  # Network Device Scanner (Miscellaneous)
         └── components/
-            └── CameraWidget.tsx  # Core: webcam capture + WS + canvas overlays
+            ├── SidebarLayout.tsx       # Navigation sidebar with Miscellaneous section
+            ├── CameraWidget.tsx        # WebSocket canvas overlay player
+            └── cameras/
+                └── CameraFormModal.tsx # In-place Add/Edit Camera modal
 ```
 
 ---
 
-## How It Works — Full Workflow
+## Key Features
 
-### 1. Browser Captures Camera
-`CameraWidget.tsx` uses the **`getUserMedia` API** to capture the user's webcam at 640x480. A frame is extracted every **200ms (5 fps)** via a hidden `<canvas>` element.
-
-### 2. Frame Streamed to Backend
-Each frame is encoded as a **base64 JPEG** and sent to the backend over a WebSocket connection (dynamic host routing prevents `localhost` lock-in):
-```json
-{ "image": "<base64>", "camera_id": "cam-01" }
-```
-
-### 3. AI Pose Detection & Tracking (Backend)
-The `WorkerDetector` class in `main.py` runs the frame through the YOLO pipeline:
-1. **YOLO Inference**: Frame is evaluated using `yolo11m-pose.pt` at `conf=0.35` and `imgsz=1280` to successfully detect small/distant individuals.
-2. **BoT-SORT Tracking**: Detected boxes and features are passed to the `custom_tracker.yaml` pipeline. It uses a Kalman filter to project movement during occlusions and native YOLO backbone features (`model: auto`) as Re-ID appearance embeddings to securely link IDs across visual collisions (handshakes, crossing paths).
-3. **Keypoint Mapping**: YOLO's 17 keypoints are mapped back to the legacy 33-point MediaPipe structure to maintain frontend compatibility.
-4. **Bounding Box Realignment**: To counteract scale-shifting caused by high-res inference padding, bounding boxes are calculated strictly from the normalized keypoints (`xyn`).
-5. **Heuristic Classification**: Movement score and workstation zones determine if the worker is `working`, `idle`, or `walking`.
-
-### 4. Result Sent Back to Frontend
-The backend responds with multi-person tracking data:
-```json
-{
-  "camera_id": "cam-01",
-  "detection_count": 2,
-  "detections": [
-    {
-      "track_id": 1,
-      "activity": "working",
-      "idle_seconds": 0.0,
-      "keypoints": [[0.45, 0.32], ...],
-      "box": [120, 40, 240, 300],
-      "identity": { "employee_id": "EMP001" }
-    }
-  ]
-}
-```
-
-### 5. Canvas Overlay Rendered
-`CameraWidget.tsx` dynamically renders over the `<video>` element:
-- Tightly-aligned **Bounding boxes** matching activity colors (green=working, blue=walking, red=idle).
-- **Dynamic Skeletons** where stroke weights scale relative to the person's distance from the camera.
-- Tracking ID and Employee ID flags floating above the bounding box.
-
-### 6. Activity Logged to Database
-Every **25 frames** (~5 seconds), the backend aggregates and writes an `ActivityLog` to PostgreSQL to persist the tracking data over time.
-
-### 7. Alerts Triggered Automatically
-If `idle_seconds >= idle_threshold` (default: **10s**) and no alert is already open for this camera/track, a new `Alert` row is inserted.
+- 🎯 **Multi-Person Pose Estimation**: Detects up to 17 human pose keypoints per person simultaneously via `YOLO11m-pose`.
+- 🔍 **Re-ID Deep Feature Tracking**: `BoT-SORT` uses visual appearance embeddings to prevent track swapping when workers cross paths or work closely together.
+- 🚪 **Hikvision ISAPI Door Integration**: Automatically captures RFID/NFC door card scans from physical door terminals and correlates them with camera track IDs within a configurable time window (default: 5.0s).
+- 📡 **Network Device Scanner**: Probes local `/24` subnets (ports 554, 80, 443, 8000) to discover unconfigured cameras and door controllers, with an in-place prefilled **Add Camera** modal.
+- 🛠️ **Refactored Modular Architecture**: Cleanly separated FastAPI backend into specialized sub-routers (`api/settings.py`, `api/zones.py`, `api/stats.py`, `api/tools.py`, `state.py`, `ws/handler.py`).
+- ❄️ **Nix Bare-Metal Reproducibility**: Uses Nix Flakes to lock system dependencies (CUDA, C++, Python 3.10, Node 20, OpenCV) for 100% reproducible execution without Docker containerization overhead.
 
 ---
 
-## AI Detection Pipeline
+## How It Works — Full Pipeline
 
-### Model & Tracking Configuration
-We utilize **YOLO11m-pose** coupled with the **BoT-SORT** multi-object tracker.
-The tracker is highly tuned via `backend/custom_tracker.yaml`:
-- **`track_buffer: 120`**: Maintains memory of lost tracks for ~4 seconds, ensuring IDs are recovered after heavy occlusions.
-- **`with_reid: True`**: Uses the YOLO backbone features to visually recognize individuals rather than relying purely on Intersection-over-Union (IoU), fundamentally solving track-swapping during close physical proximity.
-- **`gmc_method: none`**: Disabled global motion compensation to conserve GPU resources, as CCTV cameras are statically mounted.
+### 1. Frame Streaming & RTSP Ingestion
+Frames are captured either directly from RTSP streams via `StreamManager` or sent via base64 encoded WebSocket frames from `CameraWidget.tsx`.
 
-### Activity Classification Rules
-The `ActivityClassifier` evaluates frames into states top-to-bottom:
+### 2. Pose Detection & BoT-SORT Tracking
+- The `WorkerDetector` runs `yolo11m-pose.pt` at `conf=0.3` to detect bounding boxes and 17 keypoints.
+- Bounding boxes and feature maps are passed to `custom_tracker.yaml` (BoT-SORT with `track_buffer: 120` and `with_reid: True`).
 
-1. **`no_person`**: No people detected in the frame.
-2. **`working`**: Overall movement score is above the sensitivity threshold, and the worker is inside the defined **Workstation Zone**.
-3. **`walking`**: Overall movement score is above the sensitivity threshold, but the worker is outside the zone.
-4. **`idle`**: Overall movement score is below the sensitivity threshold.
+### 3. Identity Correlation
+- Physical door entry events are registered in `CorrelationEngine`.
+- When a new track ID appears on a camera, the engine pairs the track with the earliest unmatched door scan within `correlation_window_seconds`.
+- An active `WorkerSession` is created in memory and saved to PostgreSQL.
 
-### EMA Jitter Filtering
-To prevent natural AI keypoint jitter from registering as "movement" when a worker is perfectly still, we apply an **Exponential Moving Average** (alpha = 0.4) to every landmark each frame:
-```python
-smoothed[t] = 0.4 * raw[t] + 0.6 * smoothed[t-1]
+### 4. Activity Classification
+`ActivityClassifier` evaluates pose metrics per frame:
+- **`working`**: Movement score is above sensitivity and keypoints are inside the workstation zone.
+- **`walking`**: Movement score is above sensitivity but keypoints are outside the zone.
+- **`idle`**: Movement score remains below threshold. If idle duration exceeds `idle_threshold_seconds`, an `Alert` is created.
+- **`no_person`**: No detection in frame.
+
+---
+
+## Nix Reproducible Runtime
+
+This project uses **Nix** as a native bare-metal alternative to Docker containerization. All system libraries (`libGL`, `glib`, `FFmpeg`, `CUDA` tooling) and language environments are locked in `flake.nix` and `backend/requirements.lock`.
+
+### Activating the Environment:
+```bash
+# Enter the pinned native shell environment:
+nix develop
+# or: nix-shell
+```
+
+### Native Helper Commands:
+```bash
+run-backend   # Starts FastAPI backend with live reload
+run-frontend  # Starts Next.js frontend
 ```
 
 ---
 
 ## Database Schema
 
-### `activity_logs`
-Logs periodic snapshots of a worker's activity.
-| Column | Type | Description |
-|---|---|---|
-| `id` | INTEGER PK | Auto-increment |
-| `timestamp` | DATETIME | UTC time of log entry |
-| `camera_id` | VARCHAR | Source camera |
-| `track_id` | VARCHAR | YOLO tracker ID |
-| `activity` | VARCHAR | Classified activity |
-| `idle_seconds` | FLOAT | Accumulated idle time |
-
-### `alerts`
-| Column | Type | Description |
-|---|---|---|
-| `id` | INTEGER PK | Auto-increment |
-| `timestamp` | DATETIME | UTC time alert was created |
-| `message` | VARCHAR | e.g. `"Worker (track 2) idle for 15s"` |
-| `resolved` | BOOLEAN | Manually resolved flag |
-
-### `worker_sessions`
-Stores continuous blocks of presence for a specific tracked individual.
-| Column | Type | Description |
-|---|---|---|
-| `session_id` | VARCHAR PK | UUID for the session |
-| `track_id` | VARCHAR | The AI assigned tracker ID |
-| `employee_id` | VARCHAR | The matched real-world employee |
-
-*(Additional tables include `identity_events`, `employee_daily_summary`, and `workstation_zones`)*
+- **`activity_logs`**: Periodic snapshots (every 25 frames) of camera track activities.
+- **`alerts`**: AI-triggered idle and violation alerts.
+- **`worker_sessions`**: Active and closed worker presence sessions linked to real-world `employee_id`s.
+- **`identity_events`**: Door check-in event audit trail from Hikvision controllers.
+- **`employee_daily_summary`**: Aggregated daily working, walking, and idle durations per employee.
+- **`cameras`**: Configured RTSP camera credentials, stream parameters, and door pairings.
+- **`workstation_zones`**: Per-camera normalized boundary coordinates (`x_min`, `y_min`, `x_max`, `y_max`).
 
 ---
 
 ## API Reference
 
 ### WebSocket
-| Endpoint | Description |
-|---|---|
-| `ws://<host>:8000/ws` | Main real-time channel — send frames, receive multi-person AI tracking results |
+- `WS /ws` — Real-time camera frame processing & tracking result stream.
 
 ### REST Endpoints
-
 | Method | Endpoint | Description |
 |---|---|---|
-| `GET` | `/api/stats` | Live dashboard metrics |
-| `GET` | `/api/alerts` | AI-triggered alerts |
-| `PUT` | `/api/alerts/{id}/resolve` | Mark an alert as resolved |
-| `GET` | `/api/settings` | Current detection config |
-| `POST` | `/api/settings` | Live-update detection thresholds |
-| `GET` | `/api/zones/{camera_id}` | Retrieve workstation zone coordinates |
-| `POST` | `/api/zones/{camera_id}` | Define workstation zone coordinates |
-| `GET` | `/api/identity/events/pending` | Check-in queue |
-| `DELETE`| `/api/identity/employees/daily` | Clear activity summary data |
+| `GET` | `/` | API health status |
+| `GET` | `/api/stats` | System metrics & productivity stats |
+| `GET` | `/api/alerts` | Recent alerts list |
+| `PUT` | `/api/alerts/{id}/resolve` | Resolve an alert |
+| `GET` | `/api/settings` | Get all configuration parameters |
+| `POST` | `/api/settings` | Save settings & update live pipeline |
+| `GET` | `/api/zones/{camera_id}` | Read workstation zone |
+| `POST` | `/api/zones/{camera_id}` | Set workstation zone |
+| `GET` | `/api/cameras` | List configured cameras |
+| `POST` | `/api/cameras` | Create new camera configuration |
+| `POST` | `/api/cameras/{id}/test` | Test RTSP camera connection |
+| `POST` | `/api/tools/scan` | Trigger background network scan |
+| `GET` | `/api/tools/scan/results` | Get discovered unconfigured devices |
+| `GET` | `/api/tools/subnet` | Get local auto-detected subnet |
+| `GET` | `/api/identity/doors/config` | Read Hikvision door controller list |
+| `POST` | `/api/identity/doors/config` | Update door controllers & trigger proxy reload |
 
 ---
 
-## Frontend Pages
+## Frontend Navigation
 
-- **`/` (Dashboard)**: Live metrics auto-polling `/api/stats`, camera grid with live AI overlays.
-- **`/summary`**: Daily summary of identified workers, their total logged hours, and productivity (with a Trash feature).
-- **`/identity`**: Queue for employee check-ins to map real-world IDs to new camera tracks.
-- **`/alerts`**: Table of AI-triggered idle/mobile alerts.
-- **`/history`**: Stacked bar and line charts reflecting activity logs over time.
-- **`/settings`**: Live detection configuration form (Idle Threshold, Movement Sensitivity).
-
----
-
-## Configuration & Settings
-
-Settings are stored as an in-memory singleton (`DetectionConfig`) and updated live via `/api/settings`.
-
-| Parameter | Default | Description |
-|---|---|---|
-| `idle_threshold_seconds` | `10.0` | Seconds of stillness before alert fires |
-| `movement_sensitivity` | `0.05` | Landmark movement threshold (normalised coords) |
-| `correlation_window_seconds`| `5.0` | Window to map a check-in event to a newly spawned track |
+- **Dashboard (`/`)**: Live metric cards, active alerts counter, productivity score, and camera feed player.
+- **Live Cameras (`/live-cameras`)**: Multi-camera grid view for RTSP streams.
+- **Camera Management (`/camera-management`)**: Add, edit, test, or remove cameras.
+- **Live Check-ins (`/live-checkins`)**: Real-time stream of door access events.
+- **Door Configs (`/doors`)**: Configure Hikvision ISAPI door IPs and auto-switch identity provider.
+- **Session Monitor (`/sessions`)**: Track active worker sessions and track ID assignments.
+- **Activity Summary (`/summary`)**: Daily productivity breakdown per employee.
+- **Settings (`/settings`)**: Adjust YOLO confidence, idle thresholds, tracker parameters, and streaming transport.
+- **Network Scanner (`/tools`)**: Discover unconfigured devices on local subnets under the **Miscellaneous** sidebar section.
 
 ---
 
 ## Running the System
 
 ### Prerequisites
-- Python 3.12+
-- Node.js 18+
-- Docker & Docker Compose
-- *CUDA-enabled GPU (Highly Recommended for YOLO11m)*
+- Docker (for PostgreSQL only)
+- *NVIDIA GPU with CUDA support (Recommended for YOLO inference)*
+- **Linux:** [Nix](https://nixos.org/download/) package manager
+- **Windows:** Python 3.10+ and Node.js 20+
 
-### 1. Start the Database
-Starts a PostgreSQL 15 container on port `5432`. Tables auto-create on first backend startup.
+### Setup and Start (Linux)
+The Linux environment relies natively on Nix for 100% reproducible execution.
 ```bash
-docker-compose up -d
+# 1. Clone the repository and run setup (installs dependencies)
+./install.sh
+
+# 2. Start the database, backend API, and frontend
+./start.sh
 ```
 
-### 2. Start the Backend
-The startup script automatically handles environment variables and performs DB session cleanups for stranded sessions.
-```bash
-./backend/start.sh
+### Setup and Start (Windows)
+The Windows environment uses standard Python `venv` and `npm`.
+```powershell
+# 1. Clone the repository and run setup (installs dependencies)
+.\install.ps1
+
+# 2. Start the database, backend API, and frontend
+.\start.ps1
 ```
 
-*(First-time setup)*:
-```bash
-cd backend
-python -m venv venv
-source venv/bin/activate
-pip install -r requirements.txt
-```
-*Note: The YOLO model (`yolo11m-pose.pt`) is automatically downloaded by the `ultralytics` package upon first run.*
-
-Backend runs at: `http://localhost:8000`
-
-### 3. Start the Frontend
-```bash
-cd frontend
-npm install
-npm run dev
-```
-Frontend runs at: `http://localhost:3000`
-
-### 4. Open the Dashboard
-Navigate to **http://localhost:3000** and allow webcam access when prompted.
+### Accessing the Dashboard
+Navigate to **`http://localhost:3000`** in your web browser.
 
 ---
 
 ## Environment Variables
 
-Create a `.env` file in `backend/` to override the default database connection:
+Backend environment configuration (`backend/.env`):
 ```env
-DATABASE_URL=postgresql+pg8000://<user>:<password>@<host>:<port>/<dbname>
+DATABASE_URL=postgresql://postgres:password@localhost:5432/worker_monitor
+DEFAULT_RTSP_PORT=554
+STREAM_RECONNECT_INTERVAL=5
+FRAME_BUFFER_SIZE=5
 ```
+
+## Network path : \\DESKTOP-900004F\Aashif

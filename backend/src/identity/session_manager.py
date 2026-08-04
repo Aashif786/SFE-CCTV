@@ -122,6 +122,29 @@ class WorkerSessionManager:
         self._update_daily_summary(session, activity_totals)
         return session
 
+    def close_sessions_for_employee(self, employee_id: str) -> None:
+        """
+        Force-close any active camera sessions for the given employee.
+        Use this when they physically check out of the building.
+        """
+        active_track_ids = [
+            track_id for track_id, s in self._sessions.items()
+            if s.employee_id == employee_id
+        ]
+        for track_id in active_track_ids:
+            self.close_session(track_id)
+
+        # Ensure any active sessions are also marked closed in the database
+        with SessionLocal() as db:
+            active_rows = db.query(WorkerSessionDB).filter(
+                WorkerSessionDB.employee_id == employee_id,
+                WorkerSessionDB.status == "ACTIVE"
+            ).all()
+            for row in active_rows:
+                row.status = "CLOSED"
+                row.end_time = _utcnow()
+            db.commit()
+
     # ------------------------------------------------------------------
     # Read operations
     # ------------------------------------------------------------------

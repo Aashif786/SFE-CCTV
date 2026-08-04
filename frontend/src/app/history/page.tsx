@@ -1,5 +1,6 @@
 "use client";
 import { useEffect, useState } from "react";
+import { useTheme } from "@/context/ThemeContext";
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, LineChart, Line } from 'recharts';
 
 interface Log {
@@ -11,6 +12,14 @@ interface Log {
 
 export default function HistoryPage() {
   const [data, setData] = useState<any[]>([]);
+  const { theme } = useTheme();
+
+  // Theme-aware chart colors
+  const chartGrid    = theme === 'dark' ? '#374151' : '#e2e8f0';
+  const chartAxis    = theme === 'dark' ? '#9CA3AF' : '#64748b';
+  const tooltipBg    = theme === 'dark' ? '#111827' : '#ffffff';
+  const tooltipBorder = theme === 'dark' ? '#374151' : '#e2e8f0';
+  const tooltipText  = theme === 'dark' ? '#f1f5f9' : '#1e293b';
 
   useEffect(() => {
     const fetchHistory = async () => {
@@ -19,15 +28,11 @@ export default function HistoryPage() {
         if (res.ok) {
           const logs: Log[] = await res.json();
           
-          // Aggregate logs by hour for the chart
           const grouped: Record<string, { active: number, idle: number }> = {};
-          
           logs.forEach(log => {
             const date = new Date(log.timestamp);
-            // Localize time for display
             const hour = date.getHours().toString().padStart(2, '0') + ':00';
             if (!grouped[hour]) grouped[hour] = { active: 0, idle: 0 };
-            
             if (log.status === 'active') {
                grouped[hour].active += 1;
             } else {
@@ -58,19 +63,27 @@ export default function HistoryPage() {
   }, []);
 
   return (
-    <div className="space-y-6">
-      <h2 className="text-2xl font-bold text-white mb-6">Activity History</h2>
+    <div className="p-6 sm:p-8 space-y-8 max-w-7xl mx-auto">
+      <h2 className="text-2xl font-bold text-[hsl(var(--text-primary))]">Activity History</h2>
       
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        <div className="bg-gray-900 border border-gray-800 p-6 rounded-xl">
-          <h3 className="text-lg font-medium text-gray-200 mb-4">Activity vs Idle Time (Events)</h3>
+        <div className="bg-[hsl(var(--bg-card))] border border-[hsl(var(--border))] p-6 rounded-xl shadow-sm">
+          <h3 className="text-lg font-medium text-[hsl(var(--text-primary))] mb-4">Activity vs Idle Time (Events)</h3>
           <div className="h-80">
             <ResponsiveContainer width="100%" height="100%">
               <BarChart data={data}>
-                <CartesianGrid strokeDasharray="3 3" stroke="#374151" />
-                <XAxis dataKey="time" stroke="#9CA3AF" />
-                <YAxis stroke="#9CA3AF" />
-                <Tooltip contentStyle={{ backgroundColor: '#111827', borderColor: '#374151' }} />
+                <CartesianGrid strokeDasharray="3 3" stroke={chartGrid} />
+                <XAxis dataKey="time" stroke={chartAxis} tick={{ fill: chartAxis }} />
+                <YAxis stroke={chartAxis} tick={{ fill: chartAxis }} />
+                <Tooltip
+                  contentStyle={{
+                    backgroundColor: tooltipBg,
+                    borderColor: tooltipBorder,
+                    color: tooltipText,
+                    borderRadius: '8px',
+                  }}
+                  labelStyle={{ color: tooltipText }}
+                />
                 <Bar dataKey="active" stackId="a" fill="#10B981" />
                 <Bar dataKey="idle" stackId="a" fill="#EF4444" />
               </BarChart>
@@ -78,16 +91,24 @@ export default function HistoryPage() {
           </div>
         </div>
         
-        <div className="bg-gray-900 border border-gray-800 p-6 rounded-xl">
-          <h3 className="text-lg font-medium text-gray-200 mb-4">Productivity Trend</h3>
+        <div className="bg-[hsl(var(--bg-card))] border border-[hsl(var(--border))] p-6 rounded-xl shadow-sm">
+          <h3 className="text-lg font-medium text-[hsl(var(--text-primary))] mb-4">Productivity Trend</h3>
           <div className="h-80">
             <ResponsiveContainer width="100%" height="100%">
               <LineChart data={data}>
-                <CartesianGrid strokeDasharray="3 3" stroke="#374151" />
-                <XAxis dataKey="time" stroke="#9CA3AF" />
-                <YAxis stroke="#9CA3AF" />
-                <Tooltip contentStyle={{ backgroundColor: '#111827', borderColor: '#374151' }} />
-                <Line type="monotone" dataKey="active" stroke="#3B82F6" strokeWidth={3} />
+                <CartesianGrid strokeDasharray="3 3" stroke={chartGrid} />
+                <XAxis dataKey="time" stroke={chartAxis} tick={{ fill: chartAxis }} />
+                <YAxis stroke={chartAxis} tick={{ fill: chartAxis }} />
+                <Tooltip
+                  contentStyle={{
+                    backgroundColor: tooltipBg,
+                    borderColor: tooltipBorder,
+                    color: tooltipText,
+                    borderRadius: '8px',
+                  }}
+                  labelStyle={{ color: tooltipText }}
+                />
+                <Line type="monotone" dataKey="active" stroke="#3B82F6" strokeWidth={3} dot={false} />
               </LineChart>
             </ResponsiveContainer>
           </div>
