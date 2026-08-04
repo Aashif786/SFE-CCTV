@@ -7,7 +7,7 @@
     "yolo_model": "yolo11m-pose.pt",
     "yolo_conf": 0.3,
     "yolo_iou": 0.9,
-    "yolo_imgsz": 640,
+    "yolo_imgsz": 480,
     "ema_alpha": 0.8,
     "max_tracked_people": 4,
     "ai_stream_fps": 30,
@@ -18,7 +18,7 @@
     "tracker_match_thresh": 0.8,
     "tracker_fuse_score": true,
     "tracker_gmc_method": "none",
-    "tracker_with_reid": false,
+    "tracker_with_reid": true,
     "tracker_proximity_thresh": 0.13,
     "tracker_appearance_thresh": 0.5,
     "classifier_velocity_threshold": 0.05,
@@ -31,5 +31,5 @@
     "max_cameras": 50,
     "default_stream_transport": "udp",
     "hikvision_username": "admin",
-    "hikvision_password": "Caldim@2025"
+    "hikvision_password": ""
 }

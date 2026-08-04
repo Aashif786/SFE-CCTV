@@ -11,6 +11,8 @@ backend/src/db/__pycache__/
 *$py.class
 backend/.env
 .env
+backend/settings.json
+!backend/settings.example.json
 backend/start_legacy.sh
 backend/models/*.task
 

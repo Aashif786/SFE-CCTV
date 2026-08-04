@@ -13,7 +13,7 @@ import json
 
 from fastapi import APIRouter
 
-from ..config import config, SETTINGS_FILE, SettingsPayload, sync_tracker_config, env_settings
+from ..config import config, SETTINGS_FILE, SettingsPayload, sync_tracker_config, env_settings, _update_env_file
 from ..identity.api import _provider
 from ..identity.correlation import correlation_engine
 from ..cameras.stream_manager import stream_manager
@@ -169,7 +169,13 @@ async def save_settings(payload: SettingsPayload):
     except Exception as e:
         print(f"Failed to persist settings: {e}")
 
-    # Reload the environment config settings (which reads from settings.json)
+    # Update sensitive credentials in .env file
+    if payload.hikvision_username:
+        _update_env_file("HIKVISION_USERNAME", payload.hikvision_username)
+    if payload.hikvision_password:
+        _update_env_file("HIKVISION_PASSWORD", payload.hikvision_password)
+
+    # Reload the environment config settings (which reads from .env & settings.json)
     env_settings.reload_doors()
 
     # Dynamic synchronize tracker configuration file

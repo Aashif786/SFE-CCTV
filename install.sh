@@ -23,7 +23,7 @@ if ! command -v docker &> /dev/null; then
 fi
 echo "✅ Docker is installed."
 
-# 3. Create .env if it doesn't exist
+# 3. Create .env and settings.json if they don't exist
 if [ ! -f .env ]; then
     if [ -f backend/.env.example ]; then
         echo "📝 Creating .env from backend/.env.example..."
@@ -34,6 +34,16 @@ if [ ! -f .env ]; then
 else
     echo "✅ .env file already exists."
 fi
+
+if [ ! -f backend/settings.json ]; then
+    if [ -f backend/settings.example.json ]; then
+        echo "📝 Creating backend/settings.json from backend/settings.example.json..."
+        cp backend/settings.example.json backend/settings.json
+    fi
+else
+    echo "✅ backend/settings.json already exists."
+fi
+
 
 # 4. Install dependencies
 if [ "$USE_NIX" = true ]; then
