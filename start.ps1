@@ -167,13 +167,30 @@ Write-Host "   - Backend API: http://localhost:8000"
 Write-Host "Press Ctrl+C to stop." -ForegroundColor Yellow
 Write-Host "=========================================" -ForegroundColor Cyan
 
-    # Keep script running while both services are alive.
-    while (-not $BackendProcess.HasExited -and -not $FrontendProcess.HasExited) {
-        Start-Sleep -Seconds 1
-    }
-    if ($BackendProcess.HasExited -or $FrontendProcess.HasExited) {
-        $StartupFailed = $true
-        Write-Host "[ERROR] A CALVISION service stopped unexpectedly." -ForegroundColor Red
+    # Keep script running while services are active.
+    # We check network listeners on ports 8000 and 3000 so that Uvicorn's --reload feature
+    # doesn't cause PowerShell to shut down when backend Python changes occur.
+    while ($true) {
+        Start-Sleep -Seconds 2
+        $BackendActive = $false
+        $FrontendActive = $false
+        try {
+            $BackendConn = Get-NetTCPConnection -LocalPort 8000 -State Listen -ErrorAction SilentlyContinue
+            if ($BackendConn) { $BackendActive = $true }
+        } catch {}
+        try {
+            $FrontendConn = Get-NetTCPConnection -LocalPort 3000 -State Listen -ErrorAction SilentlyContinue
+            if ($FrontendConn) { $FrontendActive = $true }
+        } catch {}
+
+        if (-not $BackendProcess.HasExited) { $BackendActive = $true }
+        if (-not $FrontendProcess.HasExited) { $FrontendActive = $true }
+
+        if (-not $BackendActive -and -not $FrontendActive) {
+            $StartupFailed = $true
+            Write-Host "[ERROR] A CALVISION service stopped unexpectedly." -ForegroundColor Red
+            break
+        }
     }
 } finally {
     Write-Host ""

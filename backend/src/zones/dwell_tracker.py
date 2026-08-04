@@ -28,6 +28,14 @@ def format_dwell_time(seconds: float) -> str:
     return f"{minutes:02d}:{secs:02d}"
 
 
+def _to_utc(dt: Optional[datetime]) -> datetime:
+    if dt is None:
+        return datetime.now(timezone.utc)
+    if dt.tzinfo is None:
+        return dt.replace(tzinfo=timezone.utc)
+    return dt.astimezone(timezone.utc)
+
+
 @dataclass
 class ActiveZoneVisit:
     camera_id: str
@@ -73,7 +81,7 @@ class ZoneDwellTracker:
         """
         cam_key = str(camera_id)
         str_trk_id = str(track_id)
-        now = timestamp or datetime.now(timezone.utc)
+        now = _to_utc(timestamp)
 
         with self._lock:
             if cam_key not in self._active_visits:
@@ -94,7 +102,7 @@ class ZoneDwellTracker:
             # Case 2: In same zone as active visit
             if active_visit and active_visit.zone_id == current_zone_id:
                 active_visit.last_updated = now
-                dwell_sec = max(0.0, (now - active_visit.entry_time).total_seconds())
+                dwell_sec = max(0.0, (_to_utc(now) - _to_utc(active_visit.entry_time)).total_seconds())
                 # Update person identifier if newly resolved
                 if person_identifier and not active_visit.person_identifier:
                     active_visit.person_identifier = person_identifier
@@ -118,7 +126,7 @@ class ZoneDwellTracker:
             stitched_visit = None
             for trk_key, v in list(cam_visits.items()):
                 if trk_key != str_trk_id and v.zone_id == current_zone_id:
-                    if (now - v.last_updated).total_seconds() <= 3.0:
+                    if (_to_utc(now) - _to_utc(v.last_updated)).total_seconds() <= 3.0:
                         stitched_visit = v
                         cam_visits.pop(trk_key, None)
                         break
@@ -132,7 +140,7 @@ class ZoneDwellTracker:
                     self._update_person_identifier_in_db(stitched_visit.db_visit_id, person_identifier)
 
                 cam_visits[str_trk_id] = stitched_visit
-                dwell_sec = max(0.0, (now - stitched_visit.entry_time).total_seconds())
+                dwell_sec = max(0.0, (_to_utc(now) - _to_utc(stitched_visit.entry_time)).total_seconds())
                 return {
                     "zone_id": stitched_visit.zone_id,
                     "zone_name": stitched_visit.zone_name,
@@ -177,7 +185,7 @@ class ZoneDwellTracker:
         """Close active visit when a track disappears or closes."""
         cam_key = str(camera_id)
         str_trk_id = str(track_id)
-        now = datetime.now(timezone.utc).replace(tzinfo=None)
+        now = _to_utc(None)
 
         with self._lock:
             if cam_key in self._active_visits:
@@ -188,7 +196,7 @@ class ZoneDwellTracker:
     def close_all_camera_visits(self, camera_id: str) -> None:
         """Close all active visits for a camera on stream shutdown/disconnect."""
         cam_key = str(camera_id)
-        now = datetime.now(timezone.utc).replace(tzinfo=None)
+        now = _to_utc(None)
 
         with self._lock:
             if cam_key in self._active_visits:
@@ -204,7 +212,7 @@ class ZoneDwellTracker:
     ) -> None:
         """Close active visits for tracks on a camera that are no longer detected in the frame."""
         cam_key = str(camera_id)
-        now = timestamp or datetime.now(timezone.utc).replace(tzinfo=None)
+        now = _to_utc(timestamp)
 
         with self._lock:
             if cam_key not in self._active_visits:
@@ -219,22 +227,22 @@ class ZoneDwellTracker:
 
     def is_visit_active_in_mem(self, db_visit_id: int, max_stale_seconds: float = 8.0) -> bool:
         """Check if a database visit ID is currently tracked active in memory with recent frame updates."""
-        now = datetime.now(timezone.utc).replace(tzinfo=None)
+        now = _to_utc(None)
         with self._lock:
             for trk_map in self._active_visits.values():
                 for visit in trk_map.values():
                     if visit.db_visit_id == db_visit_id:
-                        return (now - visit.last_updated).total_seconds() <= max_stale_seconds
+                        return (_to_utc(now) - _to_utc(visit.last_updated)).total_seconds() <= max_stale_seconds
             return False
 
     def get_active_db_visit_ids(self, max_stale_seconds: float = 8.0) -> set[int]:
         """Return set of database visit IDs currently active in memory."""
-        now = datetime.now(timezone.utc).replace(tzinfo=None)
+        now = _to_utc(None)
         active_ids = set()
         with self._lock:
             for trk_map in self._active_visits.values():
                 for visit in trk_map.values():
-                    if visit.db_visit_id > 0 and (now - visit.last_updated).total_seconds() <= max_stale_seconds:
+                    if visit.db_visit_id > 0 and (_to_utc(now) - _to_utc(visit.last_updated)).total_seconds() <= max_stale_seconds:
                         active_ids.add(visit.db_visit_id)
         return active_ids
 
@@ -242,7 +250,7 @@ class ZoneDwellTracker:
         self, camera_id: Optional[str] = None, zone_id: Optional[str] = None, max_stale_seconds: float = 8.0
     ) -> int:
         """Get total count of currently active in-memory visits inside zones with recent frame updates."""
-        now = datetime.now(timezone.utc).replace(tzinfo=None)
+        now = _to_utc(None)
         with self._lock:
             count = 0
             to_remove = []
@@ -252,7 +260,7 @@ class ZoneDwellTracker:
                 for trk_id, visit in list(trk_map.items()):
                     if zone_id and str(visit.zone_id) != str(zone_id):
                         continue
-                    if (now - visit.last_updated).total_seconds() <= max_stale_seconds:
+                    if (_to_utc(now) - _to_utc(visit.last_updated)).total_seconds() <= max_stale_seconds:
                         count += 1
                     else:
                         to_remove.append((cam_key, trk_id, visit))
@@ -297,7 +305,7 @@ class ZoneDwellTracker:
     def _close_visit_in_db(self, visit: ActiveZoneVisit, exit_time: datetime) -> None:
         if visit.db_visit_id <= 0:
             return
-        duration = max(0.0, (exit_time - visit.entry_time).total_seconds())
+        duration = max(0.0, (_to_utc(exit_time) - _to_utc(visit.entry_time)).total_seconds())
         try:
             with SessionLocal() as db:
                 row = db.query(ZoneVisitDB).filter(ZoneVisitDB.id == visit.db_visit_id).first()
