@@ -1,0 +1,145 @@
+"""
+Shared in-memory state for the CALVISION pipeline.
+
+This module centralises all per-camera runtime state that is shared between
+the REST API routes (e.g. /api/stats reads session_managers) and the
+WebSocket processing pipeline.
+
+Modules import from here instead of main.py to avoid circular dependencies.
+"""
+
+from __future__ import annotations
+
+from datetime import datetime, timezone
+from typing import Optional
+
+from .db.database import SessionLocal
+from .db.models import ActivitySession, WorkstationZone
+from .detectors.pose_detector import WorkerDetector
+
+
+# ---------------------------------------------------------------------------
+# SessionManager — tracks activity sessions per camera
+# ---------------------------------------------------------------------------
+
+class SessionManager:
+    def __init__(self, camera_id: str):
+        self.camera_id = camera_id
+        self._open_id: Optional[int] = None
+        self._open_activity: Optional[str] = None
+        self._open_start: Optional[datetime] = None
+        self._flush_frames: int = 0
+        self._FLUSH_EVERY: int = 10  # ~2 s at 5 fps
+
+    def _utcnow(self) -> datetime:
+        return datetime.now(timezone.utc).replace(tzinfo=None)
+
+    def process(self, activity: str) -> None:
+        self._flush_frames += 1
+        if activity != self._open_activity:
+            self._close_session()
+            self._open_session(activity)
+        elif self._flush_frames % self._FLUSH_EVERY == 0:
+            self._flush_open_session()
+
+    def _open_session(self, activity: str) -> None:
+        now = self._utcnow()
+        with SessionLocal() as db:
+            s = ActivitySession(camera_id=self.camera_id, activity=activity, start_time=now)
+            db.add(s)
+            db.commit()
+            db.refresh(s)
+            self._open_id = s.id
+        self._open_activity = activity
+        self._open_start = now
+        print(f"📂 Session [{self._open_id}] → {activity}")
+
+    def _close_session(self) -> None:
+        if self._open_id is None:
+            return
+        now = self._utcnow()
+        dur = (now - self._open_start).total_seconds() if self._open_start else 0.0
+        with SessionLocal() as db:
+            s = db.get(ActivitySession, self._open_id)
+            if s:
+                s.end_time = now
+                s.duration_seconds = round(dur, 2)
+                db.commit()
+        print(f"📁 Session [{self._open_id}] closed ({round(dur, 1)}s)")
+        self._open_id = self._open_activity = self._open_start = None
+
+    def _flush_open_session(self) -> None:
+        if self._open_id is None:
+            return
+        now = self._utcnow()
+        dur = (now - self._open_start).total_seconds() if self._open_start else 0.0
+        with SessionLocal() as db:
+            s = db.get(ActivitySession, self._open_id)
+            if s:
+                s.end_time = now
+                s.duration_seconds = round(dur, 2)
+                db.commit()
+
+    def current_session_info(self) -> Optional[dict]:
+        if self._open_id is None:
+            return None
+        now = self._utcnow()
+        dur = (now - self._open_start).total_seconds() if self._open_start else 0.0
+        return {
+            "id": self._open_id,
+            "camera_id": self.camera_id,
+            "activity": self._open_activity,
+            "start_time": self._open_start.isoformat() if self._open_start else None,
+            "end_time": None,
+            "duration_seconds": round(dur, 2),
+            "is_open": True,
+        }
+
+    def close_on_disconnect(self) -> None:
+        self._close_session()
+
+
+# ---------------------------------------------------------------------------
+# Per-camera state (in-memory, reset on server restart)
+# ---------------------------------------------------------------------------
+
+detectors: dict[str, WorkerDetector] = {}
+session_managers: dict[str, SessionManager] = {}
+
+# Track whether a person was detected in the PREVIOUS frame per camera.
+# Key: camera_id → set of currently active track_ids from previous frame.
+prev_track_ids: dict[str, set[int]] = {}
+
+# Track consecutive frames of track absence per camera to support grace
+# period before session close.
+# Key: camera_id → dict[track_id → absent_frames_count]
+track_absent_frames: dict[str, dict[int, int]] = {}
+TRACK_CLOSE_GRACE_FRAMES = 30  # ~6 seconds at 5 FPS
+
+# Multi-person per-track activity accumulators
+track_activity_totals: dict[str, dict[str, float]] = {}
+track_last_time: dict[str, datetime] = {}
+
+
+# ---------------------------------------------------------------------------
+# Zone cache — avoids a DB round-trip on every frame.
+# Invalidated explicitly by the zone CRUD endpoints.
+# ---------------------------------------------------------------------------
+
+_zone_cache: dict[str, tuple[float, float, float, float]] = {}
+
+
+def get_zone_cached(camera_id: str) -> tuple[float, float, float, float]:
+    """Return workstation zone from in-memory cache; populate from DB on miss."""
+    if camera_id in _zone_cache:
+        return _zone_cache[camera_id]
+    with SessionLocal() as db:
+        row = db.query(WorkstationZone).filter(WorkstationZone.camera_id == camera_id).first()
+        zone = (row.x_min, row.y_min, row.x_max, row.y_max) if row else (0.0, 0.0, 1.0, 1.0)
+    _zone_cache[camera_id] = zone
+    return zone
+
+
+def invalidate_zone_cache(camera_id: str) -> None:
+    """Remove a camera_id from the zone cache so the next read fetches from DB."""
+    _zone_cache.pop(camera_id, None)

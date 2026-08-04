@@ -82,8 +82,14 @@ class CorrelationEngine:
         Persists the event to PostgreSQL immediately.
         """
         with self._lock:
-            # Clean up old anonymous tracks first
+            # Clean up old pending events and anonymous tracks first
+            self._expire_stale(_utcnow())
             self._expire_stale_tracks(event.timestamp)
+
+            if event.event_type == "EXIT":
+                self._history.append(event)
+                self._persist_identity_event(event)
+                return
 
             # Try to match with an existing anonymous track (Bi-directional)
             matched_track: Optional[CameraEntryEvent] = None
@@ -198,10 +204,12 @@ class CorrelationEngine:
 
     def get_pending(self) -> list[IdentityEvent]:
         with self._lock:
+            self._expire_stale(_utcnow())
             return list(self._pending)
 
     def get_history(self) -> list[IdentityEvent]:
         with self._lock:
+            self._expire_stale(_utcnow())
             return list(self._history)
 
     # ------------------------------------------------------------------
@@ -238,6 +246,7 @@ class CorrelationEngine:
             row = IdentityEventDB(
                 event_id=event.event_id,
                 employee_id=event.employee_id,
+                employee_name=event.employee_name,
                 event_type=event.event_type,
                 timestamp=event.timestamp,
                 entry_gate=event.entry_gate,

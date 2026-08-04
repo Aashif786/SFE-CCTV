@@ -8,6 +8,25 @@ from ..config import config
 
 HIP_L, HIP_R = 23, 24
 TRACKED_JOINTS = [0, 15, 16, 27, 28]
+def get_model_filepath(model_name: str) -> str:
+    """Resolve model file path in backend/models/ directory with automatic fallback."""
+    _backend_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+    _models_dir = os.path.join(_backend_dir, "models")
+    os.makedirs(_models_dir, exist_ok=True)
+    
+    # 1. Check in backend/models/
+    p_models = os.path.join(_models_dir, model_name)
+    if os.path.isfile(p_models):
+        return p_models
+        
+    # 2. Check in backend/
+    p_backend = os.path.join(_backend_dir, model_name)
+    if os.path.isfile(p_backend):
+        return p_backend
+        
+    # Default to backend/models/ for ultralytics auto-download
+    return p_models
+
 
 class WorkerDetector:
     """Detects worker pose using YOLO multi-person pose estimation."""
@@ -17,31 +36,55 @@ class WorkerDetector:
         (11, 23), (12, 24), (23, 25), (25, 27), (24, 26), (26, 28),
     ]
 
-    # Map YOLO 17 keypoints to MediaPipe 33 keypoints format
+    # Keypoint mapping: YOLO pose (17 keypoints) -> MediaPipe Pose (33 keypoints)
     YOLO_TO_MP = {
-        0: 0,   # Nose
-        1: 2,   # L Eye
-        2: 5,   # R Eye
-        3: 7,   # L Ear
-        4: 8,   # R Ear
-        5: 11,  # L Shoulder
-        6: 12,  # R Shoulder
-        7: 13,  # L Elbow
-        8: 14,  # R Elbow
-        9: 15,  # L Wrist
-        10: 16, # R Wrist
-        11: 23, # L Hip
-        12: 24, # R Hip
-        13: 25, # L Knee
-        14: 26, # R Knee
-        15: 27, # L Ankle
-        16: 28  # R Ankle
+        0: 0,    # nose -> nose
+        1: 2,    # left_eye -> left_eye
+        2: 5,    # right_eye -> right_eye
+        3: 7,    # left_ear -> left_ear
+        4: 8,    # right_ear -> right_ear
+        5: 11,   # left_shoulder -> left_shoulder
+        6: 12,   # right_shoulder -> right_shoulder
+        7: 13,   # left_elbow -> left_elbow
+        8: 14,   # right_elbow -> right_elbow
+        9: 15,   # left_wrist -> left_wrist
+        10: 16,  # right_wrist -> right_wrist
+        11: 23,  # left_hip -> left_hip
+        12: 24,  # right_hip -> right_hip
+        13: 25,  # left_knee -> left_knee
+        14: 26,  # right_knee -> right_knee
+        15: 27,  # left_ankle -> left_ankle
+        16: 28,  # right_ankle -> right_ankle
     }
 
     def __init__(self):
-        self.model = YOLO("yolo11m-pose.pt")
-        self.device = "cuda" if torch.cuda.is_available() else "cpu"
+        if torch.cuda.is_available():
+            self.device_id = 0  # int device ID for YOLO track()
+            self.device = "cuda:0"
+            torch.backends.cudnn.benchmark = False
+            torch.backends.cuda.matmul.allow_tf32 = True
+            torch.backends.cudnn.allow_tf32 = True
+            print(f"[WorkerDetector] 🚀 GPU Acceleration Enabled: {torch.cuda.get_device_name(0)}")
+        else:
+            self.device_id = "cpu"
+            self.device = "cpu"
+            torch.set_num_threads(4)
+            print("[WorkerDetector] ⚠️ Running on CPU mode.")
+
+        # Resolve model path from backend/models/
+        target_model = getattr(config, "yolo_model", "yolo11m-pose.pt")
+        _model_path = get_model_filepath(target_model)
+        self.model = YOLO(_model_path)
         self.model.to(self.device)
+        self.model_name = target_model
+
+        # Warm up CUDA GPU engine to pre-allocate VRAM & compile kernels at startup
+        if self.device != "cpu":
+            try:
+                dummy = np.zeros((480, 640, 3), dtype=np.uint8)
+                self.model(dummy, verbose=False, device=self.device_id)
+            except Exception as e:
+                print(f"[WorkerDetector] CUDA warmup note: {e}")
         
         # Per-track EMA smoothing state — keyed by track_id
         self.smoothed: dict[int, list[list[float]]] = {}
@@ -50,9 +93,14 @@ class WorkerDetector:
         self.last_seen_frame: dict[int, int] = {} # track_id -> frame_number
         self.prev_worker_pos: dict[int, tuple[float, float]] = {}
         self.smoothed_velocities: dict[int, float] = {}
-        self.EMA_ALPHA: float = 0.80  # higher = less display lag on moving workers
+        self.EMA_ALPHA: float = getattr(config, "ema_alpha", 0.80)
         self.frame_count: int = 0
         self.alert_triggered: bool = False
+        self.last_returned_ids: set[int] = set()
+
+        # Track stability: record the last confirmed box for each track_id
+        self.last_confirmed_box: dict[int, list[float]] = {}
+        self.dropped_ids: dict[int, int] = {}
 
     @staticmethod
     def _dist_xy(a: list[float], b: list[float]) -> float:
@@ -65,16 +113,43 @@ class WorkerDetector:
         self.frame_count += 1
         h, w, _ = frame.shape
 
-        # Use YOLO's built-in robust tracking (BoT-SORT)
-        # imgsz=960 gives ~35% lower inference latency vs 1280 with minimal accuracy loss at CCTV distances.
-        tracker_config = os.path.join(os.path.dirname(__file__), "..", "..", "custom_tracker.yaml")
+        # Dynamic reload YOLO model
+        target_model = getattr(config, "yolo_model", "yolo11m-pose.pt")
+        if not hasattr(self, "model_name") or self.model_name != target_model:
+            print(f"[WorkerDetector] Reloading YOLO model: {getattr(self, 'model_name', 'None')} -> {target_model}")
+            _model_path = get_model_filepath(target_model)
+            self.model = YOLO(_model_path)
+            self.model.to(self.device)
+            self.model_name = target_model
+            # Clear all per-track state because the new model will restart track IDs
+            self.smoothed.clear()
+            self.prev_smoothed.clear()
+            self.idle_seconds.clear()
+            self.last_seen_frame.clear()
+            self.prev_worker_pos.clear()
+            self.smoothed_velocities.clear()
+            self.last_confirmed_box.clear()
+            self.dropped_ids.clear()
+            self.last_returned_ids = set()
+
+        # Dynamic EMA_ALPHA
+        self.EMA_ALPHA = getattr(config, "ema_alpha", 0.80)
+
+        # Use YOLO's built-in robust tracking (BoT-SORT / ByteTrack)
+        # imgsz=640 gives fast 60+ FPS inference latency on CUDA GPUs
+        tracker_config = os.path.abspath(
+            os.path.join(os.path.dirname(__file__), "..", "..", "custom_tracker.yaml")
+        )
+        use_half = (self.device != "cpu")
         results = self.model.track(
             frame,
             persist=True,
             verbose=False,
-            conf=0.30,
-            iou=0.90,
-            imgsz=960,
+            device=self.device_id,
+            half=use_half,
+            conf=getattr(config, "yolo_conf", 0.30),
+            iou=getattr(config, "yolo_iou", 0.90),
+            imgsz=getattr(config, "yolo_imgsz", 640),
             tracker=tracker_config
         )
 
@@ -91,10 +166,31 @@ class WorkerDetector:
         box_xyxy = results[0].boxes.xyxy.cpu().numpy() # (num_poses, 4)
 
         poses_out = []
+        # Spatial jump gate: maximum normalised distance the box centre can
+        # travel in one frame before logging a warning (increased to 50% frame width).
+        MAX_CENTRE_JUMP = 0.50
+
         for idx in range(len(track_ids)):
             track_id = int(track_ids[idx])
             xyn = xyn_batch[idx]
             conf = conf_batch[idx]
+            xyxy = box_xyxy[idx]
+
+            # --- Spatial continuity check ----------------------------------------
+            cx_new = ((xyxy[0] + xyxy[2]) / 2) / w
+            cy_new = ((xyxy[1] + xyxy[3]) / 2) / h
+            if track_id in self.last_confirmed_box:
+                lb = self.last_confirmed_box[track_id]
+                cx_old = (lb[0] + lb[2]) / 2
+                cy_old = (lb[1] + lb[3]) / 2
+                jump = math.sqrt((cx_new - cx_old) ** 2 + (cy_new - cy_old) ** 2)
+                if jump > MAX_CENTRE_JUMP:
+                    print(f"[WorkerDetector] ℹ️ Rapid position jump for track {track_id}: Δ={jump:.3f}")
+
+            # ALWAYS update last confirmed box (normalised) so position state advances cleanly
+            self.last_confirmed_box[track_id] = [
+                xyxy[0] / w, xyxy[1] / h, xyxy[2] / w, xyxy[3] / h
+            ]
             
             # Record track frame activity
             self.last_seen_frame[track_id] = self.frame_count
@@ -102,14 +198,14 @@ class WorkerDetector:
             # ── Convert YOLO to MediaPipe 33-point format with keypoint confidence thresholding ──
             raw = [[0.0, 0.0] for _ in range(33)]
             for yolo_idx, mp_idx in self.YOLO_TO_MP.items():
-                if conf[yolo_idx] >= 0.35:
+                if conf[yolo_idx] >= getattr(config, "yolo_conf", 0.30):
                     raw[mp_idx] = [float(xyn[yolo_idx][0]), float(xyn[yolo_idx][1])]
                 else:
                     raw[mp_idx] = [0.0, 0.0]
             
             # Map fingers to wrist for phone detection compatibility
-            l_wrist_valid = (conf[9] >= 0.35)
-            r_wrist_valid = (conf[10] >= 0.35)
+            l_wrist_valid = (conf[9] >= getattr(config, "yolo_conf", 0.30))
+            r_wrist_valid = (conf[10] >= getattr(config, "yolo_conf", 0.30))
 
             for f_idx in [17, 19, 21]: # L pinky, index, thumb -> L wrist
                 if l_wrist_valid:
@@ -227,16 +323,42 @@ class WorkerDetector:
                 "box":            box,
             })
 
-        # Prune stale tracks
+        # Sort and limit tracked people if max_tracked_people is set
+        max_people = getattr(config, "max_tracked_people", 10)
+        if max_people > 0 and len(poses_out) > max_people:
+            # Sort:
+            # 1. Was track returned in the previous frame? (True first, so false first in ascending sort_key)
+            # 2. Bounding box area (larger first)
+            # 3. Confidence (larger first)
+            def sort_key(pose):
+                t_id = pose["track_id"]
+                is_active = t_id in self.last_returned_ids
+                b = pose["box"]
+                area = (b[2] - b[0]) * (b[3] - b[1])
+                conf = pose["confidence"]
+                return (not is_active, -area, -conf)
+            
+            poses_out.sort(key=sort_key)
+            poses_out = poses_out[:max_people]
+
+        self.last_returned_ids = {p["track_id"] for p in poses_out}
+
+        # Prune stale tracks and record dropped IDs to prevent re-use confusion
+        DROPPED_ID_COOLDOWN = 60
         for tid in list(self.smoothed.keys()):
             if self.frame_count - self.last_seen_frame.get(tid, 0) > 100:
+                self.dropped_ids[tid] = self.frame_count
                 self.smoothed.pop(tid, None)
                 self.prev_smoothed.pop(tid, None)
                 self.idle_seconds.pop(tid, None)
                 self.last_seen_frame.pop(tid, None)
-                if hasattr(self, 'prev_worker_pos'):
-                    self.prev_worker_pos.pop(tid, None)
-                if hasattr(self, 'smoothed_velocities'):
-                    self.smoothed_velocities.pop(tid, None)
+                self.last_confirmed_box.pop(tid, None)
+                self.prev_worker_pos.pop(tid, None)
+                self.smoothed_velocities.pop(tid, None)
+
+        # Expire old dropped_id entries after the cooldown
+        for tid in list(self.dropped_ids.keys()):
+            if self.frame_count - self.dropped_ids[tid] > DROPPED_ID_COOLDOWN:
+                self.dropped_ids.pop(tid, None)
 
         return poses_out

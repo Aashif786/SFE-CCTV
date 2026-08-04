@@ -2,6 +2,39 @@ from sqlalchemy import Column, Integer, String, Float, DateTime, Boolean, Unique
 from datetime import datetime
 from .database import Base
 
+
+class Camera(Base):
+    """
+    Camera configuration model.
+
+    Each row represents a physical RTSP camera. Credentials are stored
+    encrypted (Fernet) — the plain RTSP URL is built dynamically on the
+    backend only.  Location fields (building, floor, zone, door_name)
+    support future RFID-to-camera correlation.
+    """
+    __tablename__ = "cameras"
+
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String, nullable=False)
+    description = Column(String, nullable=True)
+    location = Column(String, nullable=True)
+    building = Column(String, nullable=True)
+    floor = Column(String, nullable=True)
+    zone = Column(String, nullable=True)
+    door_name = Column(String, nullable=True)
+    ip_address = Column(String, nullable=False)
+    rtsp_port = Column(Integer, default=554)
+    stream_path = Column(String, default="/Streaming/Channels/101")
+    username = Column(String, nullable=False)
+    encrypted_password = Column(String, nullable=False)
+    camera_brand = Column(String, nullable=True, default="Hikvision")
+    stream_type = Column(String, default="Main")          # Main / Sub
+    enabled = Column(Boolean, default=True)
+    recording_enabled = Column(Boolean, default=False)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
 class ActivityLog(Base):
     __tablename__ = "activity_logs"
 
@@ -62,6 +95,7 @@ class IdentityEventDB(Base):
     id = Column(Integer, primary_key=True, index=True)
     event_id = Column(String, unique=True, nullable=False, index=True)
     employee_id = Column(String, nullable=False, index=True)
+    employee_name = Column(String, nullable=True)
     event_type = Column(String, nullable=False, default="ENTRY")  # ENTRY | EXIT (future)
     timestamp = Column(DateTime, nullable=False, index=True)
     entry_gate = Column(String, nullable=False)
@@ -119,3 +153,42 @@ class EmployeeDailySummary(Base):
     check_in_count = Column(Integer, nullable=False, default=0)  # number of WorkerSessions closed today
     first_seen = Column(DateTime, nullable=True)   # earliest session start today
     last_seen  = Column(DateTime, nullable=True)   # latest session end today
+
+
+class CameraZoneDB(Base):
+    """
+    Polygonal Region of Interest (ROI) zone per camera.
+    Stores user-defined polygons, color, name, and enabled status.
+    """
+    __tablename__ = "camera_zones"
+    __table_args__ = (
+        UniqueConstraint("camera_id", "zone_id", name="uq_camera_zone"),
+    )
+
+    id = Column(Integer, primary_key=True, index=True)
+    camera_id = Column(String, nullable=False, index=True)
+    zone_id = Column(String, nullable=False, index=True)
+    name = Column(String, nullable=False)
+    color = Column(String, nullable=False, default="#3B82F6")
+    description = Column(String, nullable=True)
+    points_json = Column(String, nullable=False)  # JSON array of [x, y] coordinates
+    enabled = Column(Boolean, default=True, nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
+class ZoneVisitDB(Base):
+    """
+    Historical log of a person's dwell visit inside a camera zone.
+    Tracks entry time, exit time, and calculated duration in seconds.
+    """
+    __tablename__ = "zone_visits"
+
+    id = Column(Integer, primary_key=True, index=True)
+    camera_id = Column(String, nullable=False, index=True)
+    zone_id = Column(String, nullable=False, index=True)
+    tracking_id = Column(String, nullable=False, index=True)
+    person_identifier = Column(String, nullable=True, index=True)  # e.g., employee_id
+    entry_time = Column(DateTime, nullable=False, default=datetime.utcnow, index=True)
+    exit_time = Column(DateTime, nullable=True, index=True)
+    duration_seconds = Column(Float, nullable=True)
