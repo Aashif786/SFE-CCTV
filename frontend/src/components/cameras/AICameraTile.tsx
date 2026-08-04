@@ -467,16 +467,6 @@ function hexToRgba(hex: string, alpha: number): string {
           </div>
         )}
 
-        {/* AI tracking badge */}
-        {aiStatus === "tracking" && isOnline && !imgError && (
-          <div className="absolute top-2 left-2 flex items-center gap-1.5 bg-violet-900/70 backdrop-blur-sm px-2 py-1 rounded-md border border-violet-500/30 z-20">
-            <Brain className="w-3 h-3 text-violet-300" />
-            <span className="text-[10px] font-bold text-violet-100 tracking-wider">
-              AI TRACKING
-            </span>
-          </div>
-        )}
-
         {/* Detection count badge */}
         {detectionCount > 0 && aiStatus === "tracking" && (
           <div className="absolute top-2 right-2 flex items-center gap-1 bg-black/60 backdrop-blur-sm px-2 py-1 rounded-md z-20">
