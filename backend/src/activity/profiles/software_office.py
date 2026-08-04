@@ -61,6 +61,41 @@ def _nearby_peers(
     )
 
 
+def _hands_on_keyboard(keypoints: Optional[List[Tuple[float, float]]]) -> bool:
+    """
+    Return True if hands (wrists) are in the keyboard/desk typing posture:
+    - Positioned below shoulders
+    - Located at/above desk height (between shoulders and hips)
+    """
+    if not keypoints or len(keypoints) < 25:
+        return True  # Default to True if keypoints unavailable (avoid false idle)
+
+    l_sh = keypoints[11]
+    r_sh = keypoints[12]
+    l_wr = keypoints[15]
+    r_wr = keypoints[16]
+    l_hp = keypoints[23]
+    r_hp = keypoints[24]
+
+    shoulders = [pt for pt in (l_sh, r_sh) if pt[0] > 0.01]
+    wrists = [pt for pt in (l_wr, r_wr) if pt[0] > 0.01]
+    hips = [pt for pt in (l_hp, r_hp) if pt[0] > 0.01]
+
+    if not shoulders or not wrists:
+        return True  # Default to True if keypoints incomplete
+
+    avg_shoulder_y = sum(pt[1] for pt in shoulders) / len(shoulders)
+    avg_hip_y = sum(pt[1] for pt in hips) / len(hips) if hips else avg_shoulder_y + 0.4
+
+    # Desk height zone is below shoulder line and above lower hip line
+    for wr in wrists:
+        wr_y = wr[1]
+        if avg_shoulder_y - 0.05 <= wr_y <= avg_hip_y + 0.15:
+            return True
+
+    return False
+
+
 class SoftwareOfficeProfile(ActivityProfile):
     id = "software_office"
     display_name = "Software Office"
@@ -71,7 +106,7 @@ class SoftwareOfficeProfile(ActivityProfile):
             display_name="Working",
             color="#10b981",   # emerald
             icon="💻",
-            description="Seated at workstation, actively using PC/laptop.",
+            description="Seated at workstation with hands on keyboard/mouse or actively working.",
             productive=True,
         ),
         "walking": ActivityDefinition(
@@ -87,7 +122,7 @@ class SoftwareOfficeProfile(ActivityProfile):
             display_name="Idle",
             color="#f59e0b",   # amber
             icon="⏸️",
-            description="Present but not interacting with the workstation.",
+            description="Hands off keyboard/desk for more than 5 seconds at workstation.",
             productive=False,
         ),
         "using_phone": ActivityDefinition(
@@ -141,39 +176,35 @@ class SoftwareOfficeProfile(ActivityProfile):
         if ctx.confidence < 0.15:
             return "unknown"
 
-        has_movement = ctx.movement_score > ctx.movement_sensitivity
         inside = self._inside_zone(ctx.worker_pos, ctx.zone) if ctx.worker_pos else True
 
         # Rule 1: fast locomotion → walking
         if ctx.velocity > ctx.velocity_threshold:
             return "walking"
 
-        # Rule 2: phone use (wrist near face, not sitting at desk with normal movement)
+        # Rule 2: phone use (wrist near face when not seated at desk)
         if not inside and _wrist_near_face(ctx.keypoints):
             return "using_phone"
 
-        # Rule 3: meeting (multiple people in close proximity, low velocity)
+        # Rule 3: meeting / collaboration (multiple people in close proximity)
         nearby = _nearby_peers(ctx.worker_pos, ctx.peer_positions)
-        if nearby >= 1 and not inside and ctx.velocity <= ctx.velocity_threshold:
+        if nearby >= 1 and ctx.velocity <= ctx.velocity_threshold:
             return "meeting"
 
-        # Rule 4: active at workstation → working
-        if has_movement and inside:
+        # Rule 4: Workstation Presence & Hands-on-Keyboard Heuristic
+        # If seated at workstation:
+        # - Hands on keyboard/desk → working
+        # - Hands off keyboard/desk for > 5.0 seconds → idle
+        if inside:
+            hands_active = _hands_on_keyboard(ctx.keypoints)
+            if not hands_active and ctx.idle_seconds >= 5.0:
+                return "idle"
+            if ctx.idle_seconds >= ctx.idle_threshold_seconds:
+                return "idle"
             return "working"
 
-        # Rule 5: outside zone, no significant movement → away from desk
-        if not inside and not has_movement:
-            return "away_from_desk"
-
-        # Rule 6: in zone but idle past threshold → idle
-        if inside and ctx.idle_seconds >= ctx.idle_threshold_seconds:
-            return "idle"
-
-        # Rule 7: in zone, minor movement below threshold → idle
-        if inside and not has_movement:
-            return "idle"
-
-        return "unknown"
+        # Rule 5: Outside workstation zone and not walking → away from desk
+        return "away_from_desk"
 
 
 # Module-level singleton
