@@ -130,15 +130,51 @@ class ManualCorrelatePayload(BaseModel):
     camera_id: str
     employee_id: str
 
+def get_active_ai_camera_ids(db: Session) -> set[str]:
+    """
+    Returns set of camera IDs (as strings) that are active AI monitoring CCTV feeds.
+    A camera feed is active if:
+    1. Its RTSP stream in StreamManager is in ONLINE, STARTING, or RECONNECTING state, OR
+    2. An active AI WebSocket stream is currently running for it (_active_ws_cameras).
+    3. Fallback: Enabled cameras in Camera table if StreamManager has no streams initialized yet.
+    """
+    from ..cameras.stream_manager import stream_manager, StreamState
+    from ..ws.ai_stream import _active_ws_cameras
+    from ..db.models import Camera
+
+    active_cids = set()
+
+    # 1. Active RTSP streams in StreamManager
+    for cid, cs in list(stream_manager._streams.items()):
+        if cs.state in (StreamState.ONLINE, StreamState.STARTING, StreamState.RECONNECTING):
+            active_cids.add(str(cid))
+
+    # 2. Active AI WebSocket streams
+    for cid in list(_active_ws_cameras):
+        active_cids.add(str(cid))
+
+    # 3. Fallback if no streams are active in StreamManager
+    if not active_cids:
+        enabled_cams = db.query(Camera).filter(Camera.enabled == True).all()
+        for c in enabled_cams:
+            active_cids.add(str(c.id))
+
+    return active_cids
+
+
 @router.get("/sessions", summary="Active worker sessions & live camera tracks")
 async def get_active_sessions(db: Session = Depends(get_db)):
     """
-    Returns all currently ACTIVE WorkerSessions AND all active live camera tracks.
-    Includes current zone, dwell time, employee assignment, and correlation status.
+    Returns all currently ACTIVE WorkerSessions AND all active live camera tracks
+    strictly from active AI monitoring CCTV feeds.
     """
-    active_sessions = worker_session_manager.get_all_active()
+    active_cids = get_active_ai_camera_ids(db)
+
+    # Filter active sessions to only include active AI monitoring CCTV feeds
+    all_sessions = worker_session_manager.get_all_active()
+    active_sessions = [s for s in all_sessions if str(s.camera_id) in active_cids]
+
     session_map = {s.current_track_id: s for s in active_sessions}
-    employee_ids = {s.employee_id for s in active_sessions if s.employee_id}
 
     # Fetch employee names from EmployeeDB
     emp_db_map = {}
@@ -146,8 +182,9 @@ async def get_active_sessions(db: Session = Depends(get_db)):
     for r in rows:
         emp_db_map[r.employee_id] = r.name
 
-    # Fetch active zone visits across all cameras
-    active_visits = dwell_tracker.get_all_active_visits_detail(max_stale_seconds=15.0)
+    # Fetch active zone visits across all cameras and filter strictly by active AI monitoring CCTV feeds
+    all_visits = dwell_tracker.get_all_active_visits_detail(max_stale_seconds=15.0)
+    active_visits = [v for v in all_visits if str(v["camera_id"]) in active_cids]
 
     out = []
     seen_track_keys = set()
@@ -198,7 +235,7 @@ async def get_active_sessions(db: Session = Depends(get_db)):
                 "employee_name": emp_name,
                 "is_correlated": True,
                 "zone_id": "outside",
-                "zone_name": "Common Area / On Camera",
+                "zone_name": "On Camera",
                 "zone_color": "#3B82F6",
                 "start_time": s.start_time.isoformat(),
                 "dwell_seconds": round(dwell_sec, 1),
