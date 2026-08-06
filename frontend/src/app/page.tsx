@@ -189,7 +189,7 @@ export default function Dashboard() {
         <div className="flex items-center gap-3">
           <div className="hidden sm:flex items-center gap-2 px-3 py-1.5 rounded-lg bg-[hsl(var(--bg-card))] border border-[hsl(var(--border))] text-xs font-medium text-[hsl(var(--text-secondary))]">
             <Zap className="w-3.5 h-3.5 text-amber-500" />
-            <span>NVIDIA RTX 5060 Ti CUDA Accelerated</span>
+            <span>CUDA Accelerated</span>
           </div>
 
           <button

@@ -17,15 +17,39 @@ if ! command -v docker &> /dev/null; then
     exit 1
 fi
 
-# 3. Start Database and Backend via Docker
-echo "🐳 Starting Database and Backend containers..."
-if docker compose version &> /dev/null; then
-    docker compose up -d db backend
-else
-    docker-compose up -d db backend
+# 3. Check Backend virtualenv
+if [ ! -f backend/venv/bin/uvicorn ]; then
+    echo "❌ Error: Backend virtual environment not found (backend/venv)."
+    echo "Please run ./install.sh first."
+    exit 1
 fi
 
-# 4. Start Frontend
+# 4. Clean up existing processes on ports 3000 and 8000 if running
+for PORT in 8000 3000; do
+    PID=$(lsof -t -i:$PORT 2>/dev/null || true)
+    if [ -n "$PID" ]; then
+        echo "🧹 Cleaning up existing process on port $PORT (PID: $PID)..."
+        kill -9 $PID 2>/dev/null || true
+    fi
+done
+
+# 5. Start Database Container
+echo "🐳 Starting PostgreSQL Database container..."
+if docker compose version &> /dev/null; then
+    docker compose up -d db
+else
+    docker-compose up -d db
+fi
+
+# Set DATABASE_URL environment variable for native backend connection to PostgreSQL container
+export DATABASE_URL="${DATABASE_URL:-postgresql+pg8000://postgres:password@127.0.0.1:5433/worker_monitor}"
+
+# 6. Start Backend Natively
+echo "🐍 Starting Backend API server in the background..."
+(cd backend && ./venv/bin/uvicorn src.main:app --reload --host 0.0.0.0 --port 8000) &
+BACKEND_PID=$!
+
+# 7. Start Frontend
 echo "🚀 Starting Frontend in the background..."
 (cd frontend && npm run dev) &
 FRONTEND_PID=$!
@@ -34,8 +58,9 @@ FRONTEND_PID=$!
 cleanup() {
     echo ""
     echo "🛑 Shutting down CALVISION..."
+    kill $BACKEND_PID 2>/dev/null
     kill $FRONTEND_PID 2>/dev/null
-    wait $FRONTEND_PID 2>/dev/null
+    wait $BACKEND_PID $FRONTEND_PID 2>/dev/null
     echo "✅ Shutdown complete."
     exit 0
 }
@@ -49,5 +74,6 @@ echo "   - Backend API: http://localhost:8000"
 echo "Press Ctrl+C to stop."
 echo "========================================="
 
-# Wait for background frontend process
+# Wait for background processes
 wait
+
