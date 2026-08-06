@@ -31,7 +31,7 @@ CALVISION is a **production-grade worker activity monitoring and attendance veri
 3. **Correlate Access Scans with AI Camera Tracks** within a dynamic time window to map physical door check-in events to tracked visual bounding boxes.
 4. **Classify Worker Activity States** (`working`, `idle`, `walking`, `no_person`) based on pose movement velocity, keypoint displacement, and workstation zone boundaries.
 5. **Scan & Discover Unconfigured Devices** on local private subnets (`192.168.1.0/24`), automatically discovering RTSP cameras and Hikvision door controllers.
-6. **Guarantee 100% Environment Reproducibility** via Nix (`flake.nix`, `backend/requirements.lock`, `.envrc`) on bare-metal host hardware without Docker containerization overhead.
+6. **Simple Native Execution** with zero Docker containerization overhead for the backend (PostgreSQL database runs in a lightweight Docker container).
 
 ---
 
@@ -40,7 +40,7 @@ CALVISION is a **production-grade worker activity monitoring and attendance veri
 ### Backend
 | Technology | Version / Tool | Role |
 |---|---|---|
-| **Python** | 3.10+ | Primary backend runtime |
+| **Python** | 3.10+ | Primary backend runtime (runs natively via `venv`) |
 | **FastAPI** | 0.138+ | High-performance modular REST API & WebSocket server |
 | **Uvicorn** | 0.49+ | ASGI web server |
 | **Ultralytics YOLO11** | `yolo11m-pose.pt` | Multi-person pose estimation & 17 keypoint detection |
@@ -48,7 +48,6 @@ CALVISION is a **production-grade worker activity monitoring and attendance veri
 | **OpenCV** | 4.13+ | RTSP stream decoding & frame buffer processing |
 | **SQLAlchemy** | 2.0+ | Relational ORM for PostgreSQL |
 | **Hikvision ISAPI** | REST / Digest Auth | Physical door controller event polling |
-| **Nix Flakes** | `flake.nix` | Pinned host environment & library locking |
 
 ### Frontend
 | Technology | Version / Tool | Role |
@@ -63,9 +62,8 @@ CALVISION is a **production-grade worker activity monitoring and attendance veri
 ### Infrastructure
 | Technology | Role |
 |---|---|
-| **PostgreSQL 15** | Primary relational database (`worker_monitor_db`) |
-| **Nix (`flake.nix` & `.envrc`)** | Native bare-metal system dependency locking |
-| **Docker Compose** | Isolated database service management |
+| **PostgreSQL 15** | Primary relational database (`worker_monitor_db` via Docker container) |
+| **Docker Compose** | Isolated database container management |
 
 ---
 
@@ -264,28 +262,26 @@ run-frontend  # Starts Next.js frontend
 ## Running the System
 
 ### Prerequisites
-- Docker (for PostgreSQL only)
-- *NVIDIA GPU with CUDA support (Recommended for YOLO inference)*
-- **Linux:** [Nix](https://nixos.org/download/) package manager
-- **Windows:** Python 3.10+ and Node.js 20+
+- **Docker** (Required ONLY for PostgreSQL database container)
+- **Python 3.10+** (Required for running Backend natively)
+- **Node.js 20+ / npm** (Required for running Frontend)
+- *(Optional: NVIDIA GPU with CUDA support for accelerated YOLO inference)*
 
 ### Setup and Start (Linux)
-The Linux environment relies natively on Nix for 100% reproducible execution.
 ```bash
-# 1. Clone the repository and run setup (installs dependencies)
+# 1. Run setup (installs Python venv, backend dependencies, frontend npm packages, and pulls PostgreSQL Docker image)
 ./install.sh
 
-# 2. Start the database, backend API, and frontend
+# 2. Start the database container, native backend API, and frontend
 ./start.sh
 ```
 
 ### Setup and Start (Windows)
-The Windows environment uses standard Python `venv` and `npm`.
 ```powershell
-# 1. Clone the repository and run setup (installs dependencies)
+# 1. Run setup (installs Python venv, backend dependencies, frontend npm packages, and pulls PostgreSQL Docker image)
 .\install.ps1
 
-# 2. Start the database, backend API, and frontend
+# 2. Start the database container, native backend API, and frontend
 .\start.ps1
 ```
 
