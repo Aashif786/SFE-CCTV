@@ -52,12 +52,46 @@ echo "📦 Installing backend Python dependencies..."
 backend/venv/bin/pip install --upgrade pip
 backend/venv/bin/pip install -r backend/requirements.txt
 
-# 5. Pull Database Docker Container
-echo "🐳 Pulling PostgreSQL database container..."
+# 5. Pull, create, and verify the PostgreSQL database container
+echo "🐳 Pulling PostgreSQL Docker image..."
 if docker compose version &> /dev/null; then
-    docker compose pull db
+    COMPOSE_CMD="docker compose"
 else
-    docker-compose pull db
+    COMPOSE_CMD="docker-compose"
+fi
+
+$COMPOSE_CMD pull db || echo "⚠️  Image pull failed (offline?). Will try with cached image."
+
+# Create and start the container (idempotent — safe to re-run)
+echo "🐳 Creating and starting the PostgreSQL database container..."
+$COMPOSE_CMD up -d db
+if [ $? -ne 0 ]; then
+    echo "❌ Failed to start the PostgreSQL container via Docker Compose."
+    exit 1
+fi
+
+# Wait for healthcheck to pass
+echo "⏳ Waiting for PostgreSQL to become healthy (up to 60s)..."
+DB_READY=false
+for i in $(seq 1 30); do
+    HEALTH=$(docker inspect --format '{{.State.Health.Status}}' worker_monitor_db 2>/dev/null || echo "missing")
+    if [ "$HEALTH" = "healthy" ]; then
+        DB_READY=true
+        break
+    elif [ "$HEALTH" = "unhealthy" ]; then
+        echo "❌ PostgreSQL container is unhealthy."
+        echo "Run 'docker compose logs db' to see the database error."
+        exit 1
+    fi
+    sleep 2
+done
+
+if [ "$DB_READY" = true ]; then
+    echo "✅ PostgreSQL container is healthy and ready."
+else
+    echo "⚠️  PostgreSQL did not confirm healthy within 60s."
+    echo "   The container is running but may still be initialising."
+    echo "   start.sh will wait again — this is normal on first run."
 fi
 
 # 6. Install Frontend dependencies
