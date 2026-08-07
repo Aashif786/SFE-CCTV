@@ -76,7 +76,13 @@ Write-Host "[INFO] Waiting for PostgreSQL to become healthy..." -ForegroundColor
 $DatabaseReady = $false
 $DatabaseDeadline = (Get-Date).AddSeconds(60)
 while ((Get-Date) -lt $DatabaseDeadline) {
-    $Health = docker inspect --format '{{.State.Health.Status}}' worker_monitor_db 2>$null
+    $TargetContainer = (docker compose -f $ComposeFile ps -q db 2>$null)
+    if ($TargetContainer) {
+        $TargetContainer = $TargetContainer.Trim()
+    } else {
+        $TargetContainer = "worker_monitor_db"
+    }
+    $Health = docker inspect --format '{{.State.Health.Status}}' $TargetContainer 2>$null
     if ($LASTEXITCODE -eq 0 -and $Health -eq "healthy") {
         $DatabaseReady = $true
         break
@@ -96,10 +102,12 @@ if (-not $DatabaseReady) {
 # Compose initializes POSTGRES_PASSWORD only for a new data volume. If an old
 # volume exists, synchronize the postgres role password with docker-compose.yml.
 Write-Host "[INFO] Verifying PostgreSQL credentials..." -ForegroundColor Yellow
-docker exec worker_monitor_db psql -U postgres -d worker_monitor -c "ALTER USER postgres WITH PASSWORD 'password';" *> $null
+docker compose -f $ComposeFile exec -T db psql -U postgres -d worker_monitor -c "ALTER USER postgres WITH PASSWORD 'password';" *> $null
 if ($LASTEXITCODE -ne 0) {
-    Write-Host "[ERROR] Could not synchronize the PostgreSQL password." -ForegroundColor Red
-    exit 1
+    $TargetContainer = (docker compose -f $ComposeFile ps -q db 2>$null)
+    if ($TargetContainer) {
+        docker exec ($TargetContainer.Trim()) psql -U postgres -d worker_monitor -c "ALTER USER postgres WITH PASSWORD 'password';" *> $null
+    }
 }
 
 # Ensure the backend uses the same database credentials as the Compose service.
