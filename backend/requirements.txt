@@ -13,3 +13,4 @@ numpy
 cryptography
 onnxruntime-gpu
 psutil
+watchfiles

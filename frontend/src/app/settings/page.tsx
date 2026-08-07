@@ -60,7 +60,6 @@ export default function SettingsPage() {
   const [hikvisionPassword, setHikvisionPassword] = useState("");
 
   // 4. Server & Streaming
-  const [trackingFps, setTrackingFps] = useState(5.0);
   const [rtspPort, setRtspPort] = useState(554);
   const [streamTransport, setStreamTransport] = useState("tcp");
   const [streamTimeout, setStreamTimeout] = useState(30);
@@ -118,7 +117,6 @@ export default function SettingsPage() {
         setHikvisionPassword(data.hikvision_password ?? "");
 
         // Streaming / Server
-        setTrackingFps(data.tracking_fps ?? 5.0);
         setRtspPort(data.default_rtsp_port ?? 554);
         setStreamTransport(data.default_stream_transport ?? "tcp");
         setStreamTimeout(data.stream_timeout ?? 30);
@@ -186,7 +184,6 @@ export default function SettingsPage() {
         active_profile: activeProfile,
 
         // Environment / Creds
-        tracking_fps: Number(trackingFps),
         default_rtsp_port: rtspPort,
         default_stream_transport: streamTransport,
         stream_timeout: streamTimeout,

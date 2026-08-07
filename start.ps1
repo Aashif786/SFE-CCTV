@@ -123,8 +123,8 @@ $env:DATABASE_URL = "postgresql+pg8000://postgres:password@127.0.0.1:5433/worker
 # 4. Start services
 Write-Host "[INFO] Starting backend and frontend in the background..." -ForegroundColor Yellow
 
-$UvicornPath = "$PWD\backend\venv\Scripts\uvicorn.exe"
-if (-not (Test-Path $UvicornPath)) {
+$PythonPath = "$PWD\backend\venv\Scripts\python.exe"
+if (-not (Test-Path $PythonPath)) {
     Write-Host "[ERROR] Backend virtual environment not found. Please run .\install.ps1" -ForegroundColor Red
     exit 1
 }
@@ -134,7 +134,7 @@ $FrontendProcess = $null
 $StartupFailed = $false
 
 try {
-    $BackendProcess = Start-Process -FilePath $UvicornPath -ArgumentList "src.main:app --host 0.0.0.0 --port 8000 --reload" -WorkingDirectory (Join-Path $ProjectRoot "backend") -NoNewWindow -PassThru
+    $BackendProcess = Start-Process -FilePath $PythonPath -ArgumentList "-m uvicorn src.main:app --host 0.0.0.0 --port 8000 --reload" -WorkingDirectory (Join-Path $ProjectRoot "backend") -NoNewWindow -PassThru
     $FrontendProcess = Start-Process -FilePath "npm.cmd" -ArgumentList "run dev" -WorkingDirectory (Join-Path $ProjectRoot "frontend") -NoNewWindow -PassThru
 
     Write-Host "[INFO] Waiting for backend and frontend..." -ForegroundColor Yellow
@@ -183,27 +183,42 @@ Write-Host "Press Ctrl+C to stop." -ForegroundColor Yellow
 Write-Host "=========================================" -ForegroundColor Cyan
 
     # Keep script running while services are active.
-    # We check network listeners on ports 8000 and 3000 so that Uvicorn's --reload feature
-    # doesn't cause PowerShell to shut down when backend Python changes occur.
+    # We check network listeners and process handles, allowing a grace window for hot-reloads.
+    $BackendDownCount = 0
+    $FrontendDownCount = 0
+    $MAX_DOWN_COUNT = 15  # Allow up to 30s for uvicorn hot-reload & model re-initialization
+
     while ($true) {
         Start-Sleep -Seconds 2
-        $BackendActive = $false
-        $FrontendActive = $false
+        
+        $BackendListening = $false
+        $FrontendListening = $false
+
         try {
             $BackendConn = Get-NetTCPConnection -LocalPort 8000 -State Listen -ErrorAction SilentlyContinue
-            if ($BackendConn) { $BackendActive = $true }
+            if ($BackendConn) { $BackendListening = $true }
         } catch {}
+
         try {
             $FrontendConn = Get-NetTCPConnection -LocalPort 3000 -State Listen -ErrorAction SilentlyContinue
-            if ($FrontendConn) { $FrontendActive = $true }
+            if ($FrontendConn) { $FrontendListening = $true }
         } catch {}
 
-        if (-not $BackendProcess.HasExited) { $BackendActive = $true }
-        if (-not $FrontendProcess.HasExited) { $FrontendActive = $true }
+        if ($BackendListening -or (-not $BackendProcess.HasExited)) {
+            $BackendDownCount = 0
+        } else {
+            $BackendDownCount++
+        }
 
-        if (-not $BackendActive -and -not $FrontendActive) {
+        if ($FrontendListening -or (-not $FrontendProcess.HasExited)) {
+            $FrontendDownCount = 0
+        } else {
+            $FrontendDownCount++
+        }
+
+        if ($BackendDownCount -ge $MAX_DOWN_COUNT -and $FrontendDownCount -ge $MAX_DOWN_COUNT) {
             $StartupFailed = $true
-            Write-Host "[ERROR] A CALVISION service stopped unexpectedly." -ForegroundColor Red
+            Write-Host "[ERROR] CALVISION services stopped listening on ports 8000 and 3000." -ForegroundColor Red
             break
         }
     }

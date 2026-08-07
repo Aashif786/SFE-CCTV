@@ -10,6 +10,7 @@ Modules import from here instead of main.py to avoid circular dependencies.
 
 from __future__ import annotations
 
+import time
 from datetime import datetime, timezone
 from typing import Optional
 
@@ -28,19 +29,21 @@ class SessionManager:
         self._open_id: Optional[int] = None
         self._open_activity: Optional[str] = None
         self._open_start: Optional[datetime] = None
-        self._flush_frames: int = 0
-        self._FLUSH_EVERY: int = 10  # ~2 s at 5 fps
+        self._last_flush_time: float = 0.0
+        self._FLUSH_INTERVAL_SECONDS: float = 2.0  # time-based: flush every 2s regardless of FPS
 
     def _utcnow(self) -> datetime:
         return datetime.now(timezone.utc)
 
     def process(self, activity: str) -> None:
-        self._flush_frames += 1
+        now_mono = time.monotonic()
         if activity != self._open_activity:
             self._close_session()
             self._open_session(activity)
-        elif self._flush_frames % self._FLUSH_EVERY == 0:
+            self._last_flush_time = now_mono
+        elif (now_mono - self._last_flush_time) >= self._FLUSH_INTERVAL_SECONDS:
             self._flush_open_session()
+            self._last_flush_time = now_mono
 
     def _open_session(self, activity: str) -> None:
         now = self._utcnow()
@@ -114,7 +117,22 @@ prev_track_ids: dict[str, set[int]] = {}
 # period before session close.
 # Key: camera_id → dict[track_id → absent_frames_count]
 track_absent_frames: dict[str, dict[int, int]] = {}
-TRACK_CLOSE_GRACE_FRAMES = 30  # ~6 seconds at 5 FPS
+
+# Grace period: ~6 seconds regardless of FPS. Computed dynamically.
+_TRACK_CLOSE_GRACE_SECONDS = 6.0
+
+
+def get_track_close_grace_frames() -> int:
+    """Compute grace frames from current FPS config so the grace period
+    is always ~6 seconds, not dependent on frame rate."""
+    from .config import config as _cfg
+    fps = max(1, getattr(_cfg, 'ai_stream_fps', 15))
+    return max(10, int(fps * _TRACK_CLOSE_GRACE_SECONDS))
+
+
+# Legacy constant kept for any code that reads it directly — but callers
+# should migrate to get_track_close_grace_frames().
+TRACK_CLOSE_GRACE_FRAMES = 30  # fallback, overridden by get_track_close_grace_frames()
 
 # Multi-person per-track activity accumulators
 track_activity_totals: dict[str, dict[str, float]] = {}

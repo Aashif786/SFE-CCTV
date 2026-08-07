@@ -3,6 +3,7 @@ import numpy as np
 import math
 import os
 import threading
+import yaml
 import torch
 from ultralytics import YOLO
 from ..config import config
@@ -30,19 +31,20 @@ def get_model_filepath(model_name: str) -> str:
     return p_models
 
 
+_pt_model_cache: dict[str, YOLO] = {}
+_pt_model_lock = threading.Lock()
+
+
 def _load_pt_model(pt_path: str) -> "YOLO":
     """
-    Load a YOLO .pt model for tracking.
-
-    NOTE: Ultralytics ONNX / TensorRT exported models only support
-    .predict() and .val() modes. The BoT-SORT .track() pipeline used
-    by CALVISION requires a native PyTorch .pt model. We always load
-    .pt here — ONNX exports are kept on disk for future reference /
-    direct onnxruntime pipelines only.
+    Load a YOLO .pt model for tracking (cached by file path).
     """
-    model = YOLO(pt_path)
-    print(f"[WorkerDetector] 📦 Loaded PyTorch model: {os.path.basename(pt_path)} (BoT-SORT tracking enabled)")
-    return model
+    with _pt_model_lock:
+        if pt_path not in _pt_model_cache:
+            model = YOLO(pt_path)
+            print(f"[WorkerDetector] 📦 Loaded PyTorch model into cache: {os.path.basename(pt_path)} (BoT-SORT tracking enabled)")
+            _pt_model_cache[pt_path] = model
+        return _pt_model_cache[pt_path]
 
 
 def _trigger_onnx_export_background(pt_path: str, imgsz: int) -> None:
@@ -155,7 +157,7 @@ class WorkerDetector:
         self.alert_triggered: bool = False
         self.last_returned_ids: set[int] = set()
 
-        # Cache tracker config path once to avoid per-frame I/O resolution overhead
+        # Cache tracker config path once (Ultralytics track() requires a .yaml/.yml file path string)
         self.tracker_config = os.path.abspath(
             os.path.join(os.path.dirname(__file__), "..", "..", "custom_tracker.yaml")
         )
