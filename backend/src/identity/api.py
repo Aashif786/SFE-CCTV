@@ -12,8 +12,18 @@ To swap to a real hardware provider, replace RESTSimulatorProvider with
 your new provider class. No other change is needed.
 """
 
+import os
+import hmac
+import base64
+import hashlib
 from datetime import datetime
-from typing import Optional
+from typing import Optional, List
+
+import requests
+from requests.auth import HTTPDigestAuth
+import urllib3
+
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 from fastapi import APIRouter, HTTPException, Depends
 from pydantic import BaseModel, Field
@@ -25,7 +35,7 @@ from .provider.hikvision_provider import HikvisionProvider
 from .correlation import correlation_engine
 from .session_manager import worker_session_manager
 from ..db.database import get_db
-from ..db.models import EmployeeDailySummary
+from ..db.models import EmployeeDailySummary, EmployeeDB, EmployeeZoneDB
 from ..config import env_settings, config
 
 router = APIRouter(prefix="/api/identity", tags=["identity"])
@@ -500,8 +510,6 @@ async def save_doors_config(payload: List[DoorConfigItem]):
 # Employee Designated Work Zone Management & Productivity Endpoints
 # ---------------------------------------------------------------------------
 
-from ..db.models import EmployeeZoneDB
-
 class EmployeeZoneAssignPayload(BaseModel):
     camera_id: str
     zone_id: str
@@ -583,19 +591,6 @@ async def get_productivity_metrics(date: Optional[str] = None, db: Session = Dep
 # ---------------------------------------------------------------------------
 # Employee Management & Tracking Endpoints (Hikvision Integration)
 # ---------------------------------------------------------------------------
-
-import os
-import hmac
-import base64
-import hashlib
-import requests
-from requests.auth import HTTPDigestAuth
-import urllib3
-
-urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
-
-from ..db.models import EmployeeDB
-from ..config import env_settings
 
 class EmployeeCreatePayload(BaseModel):
     employee_id: str

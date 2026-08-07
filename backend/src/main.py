@@ -36,8 +36,20 @@ from .ws.ai_stream import camera_ai_endpoint
 
 # ---------------------------------------------------------------------------
 # Create / migrate tables on startup
-# ---------------------------------------------------------------------------
 Base.metadata.create_all(bind=engine)
+
+# Ensure new columns exist on employee_daily_summary table
+try:
+    from sqlalchemy import text
+    with engine.connect() as conn:
+        conn.execute(text('ALTER TABLE employee_daily_summary ADD COLUMN IF NOT EXISTS designated_zone_seconds FLOAT DEFAULT 0.0 NOT NULL;'))
+        conn.execute(text('ALTER TABLE employee_daily_summary ADD COLUMN IF NOT EXISTS outside_zone_seconds FLOAT DEFAULT 0.0 NOT NULL;'))
+        conn.execute(text('ALTER TABLE employee_daily_summary ADD COLUMN IF NOT EXISTS common_area_seconds FLOAT DEFAULT 0.0 NOT NULL;'))
+        conn.execute(text('ALTER TABLE employee_daily_summary ADD COLUMN IF NOT EXISTS break_seconds FLOAT DEFAULT 0.0 NOT NULL;'))
+        conn.execute(text('ALTER TABLE employee_daily_summary ADD COLUMN IF NOT EXISTS productivity_score FLOAT DEFAULT 100.0 NOT NULL;'))
+        conn.commit()
+except Exception as _mig_err:
+    print(f"[Startup] Table migration check warning: {_mig_err}")
 
 # Close any stale active worker sessions left over from previous runs
 with SessionLocal() as db:
