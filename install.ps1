@@ -168,14 +168,22 @@ Write-Host "[INFO] Waiting for PostgreSQL to become healthy (up to 60s)..." -For
 $DbReady = $false
 $Deadline = (Get-Date).AddSeconds(60)
 while ((Get-Date) -lt $Deadline) {
-    $TargetContainer = (docker compose -f $ComposeFile ps -q db 2>$null)
-    if ($TargetContainer) {
-        $TargetContainer = $TargetContainer.Trim()
-    } else {
-        $TargetContainer = "worker_monitor_db"
+    $Health = ""
+    $Health = (cmd /c "docker inspect --format {{.State.Health.Status}} worker_monitor_db 2>NUL")
+    if ($Health) {
+        $Health = $Health.Trim()
     }
-    $Health = docker inspect --format '{{.State.Health.Status}}' $TargetContainer 2>$null
-    if ($LASTEXITCODE -eq 0 -and $Health -eq "healthy") {
+    
+    if (-not $Health -or $Health -eq "missing") {
+        $TargetId = (cmd /c "docker compose -f `"$ComposeFile`" ps -q db 2>NUL")
+        if ($TargetId) {
+            $TargetId = $TargetId.Trim()
+            $Health = (cmd /c "docker inspect --format {{.State.Health.Status}} $TargetId 2>NUL")
+            if ($Health) { $Health = $Health.Trim() }
+        }
+    }
+
+    if ($Health -eq "healthy") {
         $DbReady = $true
         break
     }
