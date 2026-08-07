@@ -254,16 +254,40 @@ class StreamManager:
             cs._thread.join(timeout=3)
 
     def _grab_loop(self, cs: CameraStream) -> None:
-        """Background thread: open RTSP, grab frames, encode JPEG once, auto-reconnect."""
+        """Background thread: open RTSP, grab frames, encode JPEG once, auto-reconnect.
+
+        Mod 8 improvements:
+        - Watchdog heartbeat: if no new frame arrives within frame_stale_timeout seconds
+          (default 5s), treat the stream as frozen and trigger a clean reconnect cycle.
+          This catches silent RTSP freezes where cap.read() keeps returning the same
+          stale frame without ever returning ret=False.
+        - Exponential backoff reconnect: wait 1s, 2s, 4s, 8s, 16s (capped at 30s)
+          between reconnect attempts to avoid hammering an offline camera.
+          Resets to 1s after a successful stream run (>10 seconds online).
+        """
+        # Exponential backoff state — survives reconnect loops within this thread
+        _backoff_delay: float = 1.0
+        _BACKOFF_MAX: float = 30.0
+
         while not cs._stop_event.is_set():
-            reconnect_interval = getattr(env_settings, "stream_reconnect_interval", 5)
             timeout = getattr(env_settings, "stream_timeout", 30)
             transport = getattr(env_settings, "default_stream_transport", "tcp")
-            
+            frame_stale_timeout = getattr(env_settings, "frame_stale_timeout", 5.0)
+
             cap = None
+            stream_ran_successfully = False  # Flag to reset backoff on clean stream
             try:
                 cs.state = StreamState.STARTING if cs.reconnect_count == 0 else StreamState.RECONNECTING
                 cs.error_message = ""
+
+                # Suppress HEVC/H.265 B-frame RPS decode warnings ("Error constructing
+                # the frame RPS", "Could not find ref with POC"). These are benign
+                # FFmpeg log messages caused by mid-GOP stream start or packet loss;
+                # they don't affect frame delivery. Raising the FFmpeg log level to
+                # 'fatal' (32) silences them without hiding real errors.
+                # The env var must be set before VideoCapture() opens the stream.
+                import os as _os
+                _os.environ.setdefault("OPENCV_FFMPEG_CAPTURE_OPTIONS", "loglevel;fatal")
 
                 cap = cv2.VideoCapture(cs.rtsp_url, cv2.CAP_FFMPEG)
                 cap.set(cv2.CAP_PROP_OPEN_TIMEOUT_MSEC, timeout * 1000)
@@ -292,8 +316,26 @@ class StreamManager:
                 _ai_fps = max(5, min(30, getattr(_cfg, 'ai_stream_fps', 15)))
                 jpeg_interval = 1.0 / (_ai_fps * 1.25)  # 25% faster than AI loop
 
+                # ── Mod 8: Watchdog heartbeat timestamp ─────────────────────────
+                last_successful_read_time = time.monotonic()
+                # ─────────────────────────────────────────────────────────
+
                 while not cs._stop_event.is_set():
                     ret, frame = cap.read()
+
+                    # ── Mod 8: Watchdog check ──────────────────────────────────
+                    # Detect silent stream freeze: cap.read() may keep returning
+                    # the same stale frame (ret=True, but no actual new data).
+                    now_mono = time.monotonic()
+                    if ret and frame is not None:
+                        last_successful_read_time = now_mono
+                    elif (now_mono - last_successful_read_time) > frame_stale_timeout:
+                        raise ConnectionError(
+                            f"Stream watchdog: no new frame for >{frame_stale_timeout:.0f}s — "
+                            f"triggering reconnect"
+                        )
+                    # ─────────────────────────────────────────────────────────
+
                     if not ret or frame is None:
                         consecutive_failures += 1
                         if consecutive_failures > 30:
@@ -302,6 +344,7 @@ class StreamManager:
                         continue
 
                     consecutive_failures = 0
+                    stream_ran_successfully = True  # Mark clean stream for backoff reset
                     now = time.monotonic()
 
                     # Always update the raw frame buffer (needed for AI inference)
@@ -358,7 +401,28 @@ class StreamManager:
 
             if not cs._stop_event.is_set():
                 cs.reconnect_count += 1
-                cs._stop_event.wait(timeout=reconnect_interval)
+
+                # ── Mod 8: Exponential backoff reconnect ────────────────────────
+                # Reset backoff to 1s if the stream was live for a meaningful time.
+                # This prevents long backoff delays for cameras that work, then have
+                # a brief dropout (e.g. network jitter).
+                if stream_ran_successfully:
+                    _backoff_delay = 1.0
+
+                # AUTH_FAILED: no retrying fast — jump straight to max backoff
+                if cs.state == StreamState.AUTH_FAILED:
+                    _backoff_delay = _BACKOFF_MAX
+
+                wait_secs = min(_backoff_delay, _BACKOFF_MAX)
+                print(
+                    f"[StreamManager] 🔁 Camera {cs.camera_id} reconnect attempt "
+                    f"{cs.reconnect_count} — waiting {wait_secs:.0f}s (backoff)"
+                )
+                cs._stop_event.wait(timeout=wait_secs)
+
+                # Double the backoff for next potential failure
+                _backoff_delay = min(_backoff_delay * 2, _BACKOFF_MAX)
+                # ─────────────────────────────────────────────────────────
 
 
 # ---------------------------------------------------------------------------

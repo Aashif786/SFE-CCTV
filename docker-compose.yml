@@ -19,21 +19,6 @@ services:
       timeout: 5s
       retries: 5
 
-  backend:
-    build:
-      context: ./backend
-      dockerfile: Dockerfile
-    container_name: worker_monitor_backend
-    restart: unless-stopped
-    ports:
-      - "8000:8000"
-    environment:
-      - DATABASE_URL=postgresql+pg8000://postgres:password@db:5432/worker_monitor
-    volumes:
-      - ./backend:/app
-    depends_on:
-      db:
-        condition: service_healthy
-
 volumes:
   postgres_data:
+
