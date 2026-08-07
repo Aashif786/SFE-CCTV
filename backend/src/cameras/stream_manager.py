@@ -189,18 +189,17 @@ class StreamManager:
         return None
 
     def get_jpeg_for_ws(self, camera_id: int) -> Optional[bytes]:
-        """Return a small, downscaled JPEG for WebSocket base64 delivery.
-
-        Downscales to max 640px wide and uses quality 40 to minimise
-        the base64 string size and reduce heap allocation pressure on
-        memory-constrained systems.
-        """
+        """Return pre-encoded JPEG bytes or encode on-demand from buffer."""
         cs = self._streams.get(camera_id)
         if not cs:
             return None
         with cs._lock:
             if cs._latest_jpeg_ws:
                 return cs._latest_jpeg_ws
+            if cs._buffer:
+                frame = cs._buffer[-1]
+                ok, buf = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, 75])
+                return buf.tobytes() if ok else None
         return None
 
     async def mjpeg_generator(self, camera_id: int, fps_limit: float = 15.0):

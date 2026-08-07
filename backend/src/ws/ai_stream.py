@@ -59,6 +59,7 @@ from ..state import (
     prev_track_ids,
     track_absent_frames,
     TRACK_CLOSE_GRACE_FRAMES,
+    get_track_close_grace_frames,
     track_activity_totals,
     track_last_time,
     get_zone_cached,
@@ -85,6 +86,9 @@ _ai_detector_lock = asyncio.Lock()
 # Set of active AI WebSocket camera IDs
 _active_ws_cameras: set[int] = set()
 
+# Per-camera cancel events — set when a new connection replaces the current one
+_camera_cancel_events: dict[int, asyncio.Event] = {}
+
 
 def is_ai_stream_active(camera_id: int) -> bool:
     """Return True if an active AI WebSocket stream is currently running for camera_id."""
@@ -105,15 +109,15 @@ async def camera_ai_endpoint(websocket: WebSocket, camera_id: int):
 
     await websocket.accept()
 
-    if camera_id in _active_ws_cameras:
-        await websocket.send_text(json.dumps({
-            "error": "Another client is already viewing this camera's AI stream. Only one active stream is allowed per camera to prevent tracker corruption.",
-            "camera_id": camera_id,
-        }))
-        await websocket.close(code=1008)
-        return
-
     cam_key = f"ai-{camera_id}"
+
+    # Cancel any existing loop for this camera (e.g. React StrictMode double-mount / page refresh).
+    # We signal the old coroutine to stop by setting its cancel event, then replace it with a new one.
+    if camera_id in _camera_cancel_events:
+        _camera_cancel_events[camera_id].set()
+
+    my_cancel = asyncio.Event()
+    _camera_cancel_events[camera_id] = my_cancel
     _active_ws_cameras.add(camera_id)
 
     try:
@@ -147,10 +151,23 @@ async def camera_ai_endpoint(websocket: WebSocket, camera_id: int):
             await websocket.send_text(json.dumps({
                 "status": "loading",
                 "camera_id": camera_id,
-                "message": "Loading AI model… (first load may take 10-15s)",
+                "message": "Loading AI model…",
             }))
-            # Blocking init in thread pool — never blocks event loop
-            new_detector = await asyncio.to_thread(WorkerDetector)
+            # Run initialization in background thread while sending periodic heartbeats to prevent WS timeout
+            init_task = asyncio.create_task(asyncio.to_thread(WorkerDetector))
+            while not init_task.done():
+                try:
+                    await asyncio.wait_for(asyncio.shield(init_task), timeout=1.5)
+                except asyncio.TimeoutError:
+                    try:
+                        await websocket.send_text(json.dumps({
+                            "status": "loading",
+                            "camera_id": camera_id,
+                            "message": "Loading AI model…",
+                        }))
+                    except Exception:
+                        pass
+            new_detector = await init_task
             # Double-checked locking: another connection may have loaded it first
             async with _ai_detector_lock:
                 if camera_id not in _ai_detectors:
@@ -197,7 +214,7 @@ async def camera_ai_endpoint(websocket: WebSocket, camera_id: int):
         stop_listener = asyncio.ensure_future(_listen_for_stop())
 
         try:
-            while not _client_stop.is_set():
+            while not _client_stop.is_set() and not my_cancel.is_set():
                 loop_start = time.monotonic()
 
                 # Read target FPS live from config so settings changes apply immediately
@@ -230,27 +247,29 @@ async def camera_ai_endpoint(websocket: WebSocket, camera_id: int):
                 # inference call so it doesn't add latency to the hot path.
                 camera_zones = zone_cache.get_zones(str(camera_id))
                 if not camera_zones:
-                    with SessionLocal() as db:
-                        db_zones = db.query(CameraZoneDB).filter(
-                            CameraZoneDB.camera_id == str(camera_id),
-                            CameraZoneDB.enabled == True
-                        ).all()
-                        zones_data = []
-                        for z in db_zones:
-                            try:
-                                pts = json.loads(z.points_json)
-                            except Exception:
-                                pts = []
-                            zones_data.append({
-                                "id": z.zone_id,
-                                "name": z.name,
-                                "color": z.color,
-                                "description": z.description,
-                                "points": pts,
-                                "enabled": z.enabled,
-                            })
-                        zone_cache.set_zones(str(camera_id), zones_data)
-                        camera_zones = zones_data
+                    def _load_zones_from_db():
+                        with SessionLocal() as db:
+                            db_zones = db.query(CameraZoneDB).filter(
+                                CameraZoneDB.camera_id == str(camera_id),
+                                CameraZoneDB.enabled == True
+                            ).all()
+                            zones_data = []
+                            for z in db_zones:
+                                try:
+                                    pts = json.loads(z.points_json)
+                                except Exception:
+                                    pts = []
+                                zones_data.append({
+                                    "id": z.zone_id,
+                                    "name": z.name,
+                                    "color": z.color,
+                                    "description": z.description,
+                                    "points": pts,
+                                    "enabled": z.enabled,
+                                })
+                            return zones_data
+                    camera_zones = await asyncio.to_thread(_load_zones_from_db)
+                    zone_cache.set_zones(str(camera_id), camera_zones)
 
                 # ── Run YOLO detection + tracking ───────────────────────────
                 # Offloaded to thread pool so the event loop stays free
@@ -291,8 +310,11 @@ async def camera_ai_endpoint(websocket: WebSocket, camera_id: int):
                 for trk_id in current_track_ids:
                     absent_map.pop(trk_id, None)
 
+                # Compute grace frames dynamically based on current FPS config
+                grace_frames = get_track_close_grace_frames()
+
                 for trk_id, frames_gone in list(absent_map.items()):
-                    if frames_gone >= TRACK_CLOSE_GRACE_FRAMES:
+                    if frames_gone >= grace_frames:
                         absent_map.pop(trk_id, None)
                         str_trk_id = str(trk_id)
                         totals = track_activity_totals.get(str_trk_id)
@@ -310,16 +332,18 @@ async def camera_ai_endpoint(websocket: WebSocket, camera_id: int):
                 detections_out = []
                 now_time = datetime.now(timezone.utc).replace(tzinfo=None)
 
+                # Resolve tracking strategy ONCE per frame (same for all people)
+                tracking_strategy = TrackingStrategyFactory.get_strategy()
+
                 for p in poses:
                     trk_id = p["track_id"]
                     str_trk_id = str(trk_id)
 
-                    # Resolve identity
+                    # Resolve identity (single lookup — used throughout)
                     worker_session = worker_session_manager.get_by_track(str_trk_id)
                     employee_id = worker_session.employee_id if worker_session else None
 
                     # Apply active tracking strategy (TRACK_ALL vs TRACK_SPECIFIC)
-                    tracking_strategy = TrackingStrategyFactory.get_strategy()
                     if not tracking_strategy.should_track(str_trk_id, str(camera_id), person_identifier=employee_id):
                         continue
 
@@ -352,19 +376,20 @@ async def camera_ai_endpoint(websocket: WebSocket, camera_id: int):
 
                     # Idle alert per track
                     if activity == "idle" and idle_sec >= config.idle_threshold_seconds and not detector.alert_triggered:
-                        with SessionLocal() as db:
-                            db.add(Alert(
-                                message=f"Worker (track {trk_id}) idle for {round(idle_sec)}s on camera {camera_id}",
-                                resolved=False,
-                            ))
-                            db.commit()
+                        def _insert_alert(msg):
+                            with SessionLocal() as db:
+                                db.add(Alert(message=msg, resolved=False))
+                                db.commit()
+                        asyncio.get_event_loop().run_in_executor(
+                            None,
+                            _insert_alert,
+                            f"Worker (track {trk_id}) idle for {round(idle_sec)}s on camera {camera_id}",
+                        )
                         detector.alert_triggered = True
                     elif activity in ("working", "walking", "no_person"):
                         detector.alert_triggered = False
 
-                    # Resolve identity
-                    worker_session = worker_session_manager.get_by_track(str_trk_id)
-                    employee_id = worker_session.employee_id if worker_session else None
+                    # (identity already resolved above — no duplicate lookup needed)
 
                     # Calculate candidate points for robust zone evaluation:
                     # 1. Foot position (bottom center)
@@ -527,29 +552,30 @@ async def camera_ai_endpoint(websocket: WebSocket, camera_id: int):
     except Exception as e:
         print(f"❌ [AI-WS] Fatal error for camera {camera_id}: {e}")
     finally:
-        if cam_key in session_managers:
-            session_managers[cam_key].close_on_disconnect()
+        # Only clean up shared state if this coroutine is still the active owner
+        # (i.e. it was NOT cancelled/replaced by a newer connection)
+        is_owner = _camera_cancel_events.get(camera_id) is my_cancel
+        if is_owner:
+            _camera_cancel_events.pop(camera_id, None)
+            if cam_key in session_managers:
+                session_managers[cam_key].close_on_disconnect()
 
-        # Close any active worker sessions for this AI camera
-        for s in worker_session_manager.get_all_active():
-            if s.camera_id == cam_key:
-                str_trk_id = s.current_track_id
-                totals = track_activity_totals.get(str_trk_id)
-                closed = worker_session_manager.close_session(str_trk_id, totals)
-                if closed:
-                    print(f"[AI-WS] 🚪 Session closed (cleanup) for employee={closed.employee_id}")
-                track_activity_totals.pop(str_trk_id, None)
-                track_last_time.pop(str_trk_id, None)
+            # Close any active worker sessions for this AI camera
+            for s in worker_session_manager.get_all_active():
+                if s.camera_id == cam_key:
+                    str_trk_id = s.current_track_id
+                    totals = track_activity_totals.get(str_trk_id)
+                    closed = worker_session_manager.close_session(str_trk_id, totals)
+                    if closed:
+                        print(f"[AI-WS] 🚪 Session closed (cleanup) for employee={closed.employee_id}")
+                    track_activity_totals.pop(str_trk_id, None)
+                    track_last_time.pop(str_trk_id, None)
 
-        if cam_key in prev_track_ids:
-            prev_track_ids[cam_key] = set()
-        if cam_key in track_absent_frames:
-            track_absent_frames[cam_key] = {}
+            if cam_key in prev_track_ids:
+                prev_track_ids[cam_key] = set()
+            if cam_key in track_absent_frames:
+                track_absent_frames[cam_key] = {}
 
-        # Release detector to free GPU memory
-        async with _ai_detector_lock:
-            _ai_detectors.pop(camera_id, None)
+            _active_ws_cameras.discard(camera_id)
 
-        _active_ws_cameras.discard(camera_id)
-
-        print(f"🧠 [AI-WS] Cleaned up resources for camera {camera_id}")
+            print(f"🧠 [AI-WS] Cleaned up session state for camera {camera_id}")

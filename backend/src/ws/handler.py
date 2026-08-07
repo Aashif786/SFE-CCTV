@@ -35,6 +35,7 @@ from ..state import (
     prev_track_ids,
     track_absent_frames,
     TRACK_CLOSE_GRACE_FRAMES,
+    get_track_close_grace_frames,
     track_activity_totals,
     track_last_time,
     get_zone_cached,
@@ -133,7 +134,7 @@ async def websocket_endpoint(websocket: WebSocket):
 
             # 3. Close sessions only if grace period has expired
             for trk_id, frames_gone in list(absent_map.items()):
-                if frames_gone >= TRACK_CLOSE_GRACE_FRAMES:
+                if frames_gone >= get_track_close_grace_frames():
                     absent_map.pop(trk_id, None)
                     str_trk_id = str(trk_id)
                     totals = track_activity_totals.get(str_trk_id)

@@ -178,14 +178,14 @@ class DetectionConfig:
     # Tracker parameters
     tracker_track_high_thresh: float = 0.30
     tracker_track_low_thresh: float = 0.1
-    tracker_new_track_thresh: float = 0.50
-    tracker_track_buffer: int = 120
+    tracker_new_track_thresh: float = 0.40       # lowered: recover tracks at lower confidence after collisions
+    tracker_track_buffer: int = 240              # raised: ~8s re-ID memory at 30 FPS (was 120 = only 4s)
     tracker_match_thresh: float = 0.8
     tracker_fuse_score: bool = True
     tracker_gmc_method: str = "none"
     tracker_with_reid: bool = True
-    tracker_proximity_thresh: float = 0.50
-    tracker_appearance_thresh: float = 0.50
+    tracker_proximity_thresh: float = 0.70       # raised: allow more box overlap before dropping a track during collisions
+    tracker_appearance_thresh: float = 0.30      # lowered: more lenient ReID matching after occlusion
 
     # Classifier parameters
     classifier_velocity_threshold: float = 0.05
@@ -196,9 +196,6 @@ class DetectionConfig:
 
     # Activity profile — selects which ActivityProfile implementation is active
     active_profile: str = "software_office"
-
-    # AI WebSocket tracking rate (FPS delivered to the frontend)
-    tracking_fps: float = 5.0
 
 config = DetectionConfig()
 SETTINGS_FILE = os.path.join(os.path.dirname(__file__), "..", "settings.json")
@@ -255,8 +252,6 @@ if os.path.exists(SETTINGS_FILE):
             # Classifier parameters
             if "classifier_velocity_threshold" in data: config.classifier_velocity_threshold = float(data["classifier_velocity_threshold"])
 
-            # Tracking FPS
-            if "tracking_fps" in data: config.tracking_fps = float(data["tracking_fps"])
             if "active_profile" in data: config.active_profile = str(data["active_profile"])
 
             print(f"Loaded persistent settings from {SETTINGS_FILE}")
@@ -291,23 +286,20 @@ class SettingsPayload(BaseModel):
     # Tracker parameters
     tracker_track_high_thresh: float = Field(default=0.30)
     tracker_track_low_thresh: float = Field(default=0.1)
-    tracker_new_track_thresh: float = Field(default=0.50)
-    tracker_track_buffer: int = Field(default=120)
+    tracker_new_track_thresh: float = Field(default=0.40)
+    tracker_track_buffer: int = Field(default=240)
     tracker_match_thresh: float = Field(default=0.8)
     tracker_fuse_score: bool = Field(default=True)
     tracker_gmc_method: str = Field(default="none")
     tracker_with_reid: bool = Field(default=True)
-    tracker_proximity_thresh: float = Field(default=0.13)
-    tracker_appearance_thresh: float = Field(default=0.50)
+    tracker_proximity_thresh: float = Field(default=0.70)
+    tracker_appearance_thresh: float = Field(default=0.30)
 
     # Classifier parameters
     classifier_velocity_threshold: float = Field(default=0.05)
 
     # Activity profile
     active_profile: str = Field(default="software_office")
-
-    # AI tracking FPS
-    tracking_fps: float = Field(default=5.0)
 
     # Env / Streaming settings (overridden dynamically)
     default_rtsp_port: int = Field(default=554)

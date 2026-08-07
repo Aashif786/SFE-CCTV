@@ -23,7 +23,6 @@
     "tracker_appearance_thresh": 0.5,
     "classifier_velocity_threshold": 0.05,
     "active_profile": "software_office",
-    "tracking_fps": 30.0,
     "default_rtsp_port": 554,
     "stream_reconnect_interval": 5,
     "stream_timeout": 15,
