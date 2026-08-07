@@ -123,6 +123,8 @@ class EnvSettings:
         self.frame_buffer_size = int(settings_data.get("frame_buffer_size") or env_vars.get("FRAME_BUFFER_SIZE") or os.environ.get("FRAME_BUFFER_SIZE", "5"))
         self.max_cameras = int(settings_data.get("max_cameras") or env_vars.get("MAX_CAMERAS") or os.environ.get("MAX_CAMERAS", "50"))
         self.default_stream_transport = settings_data.get("default_stream_transport") or env_vars.get("DEFAULT_STREAM_TRANSPORT") or os.environ.get("DEFAULT_STREAM_TRANSPORT", "tcp")
+        # Mod 8 — Watchdog: seconds without a new frame before triggering reconnect
+        self.frame_stale_timeout = float(settings_data.get("frame_stale_timeout") or env_vars.get("FRAME_STALE_TIMEOUT") or os.environ.get("FRAME_STALE_TIMEOUT", "5.0"))
 
         # First, try to load from backend/doors.json
         doors_file = os.path.join(os.path.dirname(__file__), "..", "doors.json")
@@ -166,6 +168,12 @@ class DetectionConfig:
     ema_alpha: float = 0.80
     max_tracked_people: int = 10
     ai_stream_fps: int = 15  # Target FPS for the AI WebSocket stream
+    # Mod 7 — ONNX export trigger (disabled by default).
+    # Enabling this kicks off a background thread that loads a SECOND full copy
+    # of the model and compiles it — extremely CPU/RAM intensive on large models
+    # like yolo11x-pose. Only enable manually from the Settings page when the
+    # system is idle (no active camera streams).
+    use_onnx: bool = False
 
     # Tracker parameters
     tracker_track_high_thresh: float = 0.30
@@ -230,6 +238,7 @@ if os.path.exists(SETTINGS_FILE):
             if "ema_alpha" in data: config.ema_alpha = float(data["ema_alpha"])
             if "max_tracked_people" in data: config.max_tracked_people = int(data["max_tracked_people"])
             if "ai_stream_fps" in data: config.ai_stream_fps = int(data["ai_stream_fps"])
+            if "use_onnx" in data: config.use_onnx = bool(data["use_onnx"])
 
             # Tracker parameters
             if "tracker_track_high_thresh" in data: config.tracker_track_high_thresh = float(data["tracker_track_high_thresh"])
@@ -276,6 +285,8 @@ class SettingsPayload(BaseModel):
     ema_alpha: float = Field(default=0.80)
     max_tracked_people: int = Field(default=10)
     ai_stream_fps: int = Field(default=15, ge=1, le=60)
+    # Mod 7 — ONNX export trigger (opt-in only — disable by default to avoid CPU overload)
+    use_onnx: bool = Field(default=False)
 
     # Tracker parameters
     tracker_track_high_thresh: float = Field(default=0.30)
@@ -307,6 +318,8 @@ class SettingsPayload(BaseModel):
     default_stream_transport: str = Field(default="tcp")
     hikvision_username: str = Field(default="admin")
     hikvision_password: str = Field(default="")
+    # Mod 8 — Watchdog: seconds without a new frame before triggering reconnect
+    frame_stale_timeout: float = Field(default=5.0, ge=1.0, le=60.0)
 
 def sync_tracker_config():
     tracker_path = os.path.join(os.path.dirname(__file__), "..", "custom_tracker.yaml")

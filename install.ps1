@@ -129,17 +129,64 @@ try {
     Pop-Location
 }
 
-# 7. Pull Docker images
-Write-Host "[INFO] Pulling Docker images..." -ForegroundColor Yellow
-if (Test-Path "docker-compose.yml") {
-    docker compose pull db
-} elseif (Test-Path "backend\docker-compose.yml") {
-    Push-Location backend
-    try {
-        docker compose pull db
-    } finally {
-        Pop-Location
+# 7. Pull Docker image AND create the database container
+Write-Host "[INFO] Pulling PostgreSQL Docker image..." -ForegroundColor Yellow
+$ComposeFile = Join-Path (Get-Location) "docker-compose.yml"
+if (-not (Test-Path $ComposeFile)) {
+    Write-Host "[ERROR] docker-compose.yml not found at $ComposeFile" -ForegroundColor Red
+    exit 1
+}
+
+# Verify Docker Engine is actually running before we try to use it
+$DockerRunning = $false
+try {
+    docker info *>$null
+    if ($LASTEXITCODE -eq 0) { $DockerRunning = $true }
+} catch {}
+
+if (-not $DockerRunning) {
+    Write-Host "[ERROR] Docker Desktop is not running." -ForegroundColor Red
+    Write-Host "Start Docker Desktop and re-run .\install.ps1" -ForegroundColor Yellow
+    exit 1
+}
+
+docker compose -f $ComposeFile pull db
+if ($LASTEXITCODE -ne 0) {
+    Write-Host "[WARNING] Docker image pull failed (offline?). Will try with cached image." -ForegroundColor Yellow
+}
+
+# Create and start the container (idempotent — safe to run again if it already exists)
+Write-Host "[INFO] Creating and starting the PostgreSQL database container..." -ForegroundColor Yellow
+docker compose -f $ComposeFile up -d db
+if ($LASTEXITCODE -ne 0) {
+    Write-Host "[ERROR] Failed to start the PostgreSQL container via Docker Compose." -ForegroundColor Red
+    exit 1
+}
+
+# Wait for the container to pass its healthcheck before finishing install
+Write-Host "[INFO] Waiting for PostgreSQL to become healthy (up to 60s)..." -ForegroundColor Yellow
+$DbReady = $false
+$Deadline = (Get-Date).AddSeconds(60)
+while ((Get-Date) -lt $Deadline) {
+    $Health = docker inspect --format '{{.State.Health.Status}}' worker_monitor_db 2>$null
+    if ($LASTEXITCODE -eq 0 -and $Health -eq "healthy") {
+        $DbReady = $true
+        break
     }
+    if ($Health -eq "unhealthy") {
+        Write-Host "[ERROR] PostgreSQL container is unhealthy." -ForegroundColor Red
+        Write-Host "Run 'docker compose logs db' to see the database error." -ForegroundColor Yellow
+        exit 1
+    }
+    Start-Sleep -Seconds 2
+}
+
+if (-not $DbReady) {
+    Write-Host "[WARNING] PostgreSQL did not confirm healthy within 60s." -ForegroundColor Yellow
+    Write-Host "The container is running but may still be initialising." -ForegroundColor Yellow
+    Write-Host "start.ps1 will wait again — this is normal on first run." -ForegroundColor Yellow
+} else {
+    Write-Host "[OK] PostgreSQL container is healthy and ready." -ForegroundColor Green
 }
 
 Write-Host "=========================================" -ForegroundColor Cyan

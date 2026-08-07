@@ -105,62 +105,62 @@ async def camera_ai_endpoint(websocket: WebSocket, camera_id: int):
 
     await websocket.accept()
 
-    # Send initial "loading" status IMMEDIATELY so frontend shows spinner
-    await websocket.send_text(json.dumps({
-        "status": "loading",
-        "camera_id": camera_id,
-        "message": "Connecting to camera stream…",
-    }))
-
-    # Validate camera stream is running
-    if not stream_manager.is_online(camera_id):
-        await websocket.send_text(json.dumps({
-            "error": "Camera stream is not online",
-            "camera_id": camera_id,
-        }))
-        await websocket.close(code=1008)
-        return
-
-    print(f"🧠 [AI-WS] Connected for camera {camera_id}")
+    cam_key = f"ai-{camera_id}"
     _active_ws_cameras.add(camera_id)
 
-    cam_key = f"ai-{camera_id}"
-
-    # ── Lazy-init detector ──────────────────────────────────────────────────
-    # WorkerDetector.__init__ loads the YOLO model and warms up CUDA — this
-    # takes 800ms+ and MUST NOT run on the event-loop thread.  We offload it
-    # to the default thread-pool executor via asyncio.to_thread so that other
-    # WebSocket handlers and the ASGI server can continue while it loads.
-    async with _ai_detector_lock:
-        existing = _ai_detectors.get(camera_id)
-
-    if existing is None:
+    try:
+        # Send initial "loading" status IMMEDIATELY so frontend shows spinner
         await websocket.send_text(json.dumps({
             "status": "loading",
             "camera_id": camera_id,
-            "message": "Loading AI model… (first load may take 10-15s)",
+            "message": "Connecting to camera stream…",
         }))
-        # Blocking init in thread pool — never blocks event loop
-        new_detector = await asyncio.to_thread(WorkerDetector)
-        # Double-checked locking: another connection may have loaded it first
+
+        # Validate camera stream is running
+        if not stream_manager.is_online(camera_id):
+            await websocket.send_text(json.dumps({
+                "error": "Camera stream is not online",
+                "camera_id": camera_id,
+            }))
+            await websocket.close(code=1008)
+            return
+
+        print(f"🧠 [AI-WS] Connected for camera {camera_id}")
+
+        # ── Lazy-init detector ──────────────────────────────────────────────────
+        # WorkerDetector.__init__ loads the YOLO model and warms up CUDA — this
+        # takes 800ms+ and MUST NOT run on the event-loop thread.  We offload it
+        # to the default thread-pool executor via asyncio.to_thread so that other
+        # WebSocket handlers and the ASGI server can continue while it loads.
         async with _ai_detector_lock:
-            if camera_id not in _ai_detectors:
-                _ai_detectors[camera_id] = new_detector
+            existing = _ai_detectors.get(camera_id)
 
-    async with _ai_detector_lock:
-        detector = _ai_detectors[camera_id]
+        if existing is None:
+            await websocket.send_text(json.dumps({
+                "status": "loading",
+                "camera_id": camera_id,
+                "message": "Loading AI model… (first load may take 10-15s)",
+            }))
+            # Blocking init in thread pool — never blocks event loop
+            new_detector = await asyncio.to_thread(WorkerDetector)
+            # Double-checked locking: another connection may have loaded it first
+            async with _ai_detector_lock:
+                if camera_id not in _ai_detectors:
+                    _ai_detectors[camera_id] = new_detector
 
-    # Init per-camera state objects if needed
-    if cam_key not in session_managers:
-        session_managers[cam_key] = SessionManager(cam_key)
-    if cam_key not in prev_track_ids:
-        prev_track_ids[cam_key] = set()
-    if cam_key not in track_absent_frames:
-        track_absent_frames[cam_key] = {}
+        async with _ai_detector_lock:
+            detector = _ai_detectors[camera_id]
 
-    sm = session_managers[cam_key]
+        # Init per-camera state objects if needed
+        if cam_key not in session_managers:
+            session_managers[cam_key] = SessionManager(cam_key)
+        if cam_key not in prev_track_ids:
+            prev_track_ids[cam_key] = set()
+        if cam_key not in track_absent_frames:
+            track_absent_frames[cam_key] = {}
 
-    try:
+        sm = session_managers[cam_key]
+
         frame_count = 0
         fps_measured = 0.0
         fps_window_start = time.monotonic()
