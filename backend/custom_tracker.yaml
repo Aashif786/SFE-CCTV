@@ -11,7 +11,7 @@ fuse_score: True
 gmc_method: none
 
 # ReID (GPU Native Acceleration)
-with_reid: False
+with_reid: True
 model: auto
 proximity_thresh: 0.13
 appearance_thresh: 0.5
