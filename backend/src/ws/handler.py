@@ -28,6 +28,7 @@ from ..identity.correlation import correlation_engine
 from ..identity.session_manager import worker_session_manager
 from ..identity.models import CameraEntryEvent
 from ..identity.tracking_strategy import TrackingStrategyFactory
+from ..spatial.engine import spatial_handoff_engine
 from ..zones.dwell_tracker import _to_utc
 from ..state import (
     detectors,
@@ -55,6 +56,7 @@ async def websocket_endpoint(websocket: WebSocket):
     await websocket.accept()
     print("✅ WebSocket connected")
     camera_id: Optional[str] = None
+    last_track_attributes: dict[int, tuple[float, tuple[float, ...] | None]] = {}
 
     try:
         while True:
@@ -98,7 +100,8 @@ async def websocket_endpoint(websocket: WebSocket):
             zone = get_zone_cached(camera_id)
 
             current_track_ids: set[int] = {p["track_id"] for p in poses}
-            current_track_ids_str: set[str] = {str(t) for t in current_track_ids}
+            stream_camera_id = f"ws:{camera_id}"
+            current_track_ids_str: set[str] = {f"{stream_camera_id}:{t}" for t in current_track_ids}
             previous_ids = prev_track_ids[camera_id]
 
             # Detect newly entered tracks → notify correlation engine
@@ -106,9 +109,9 @@ async def websocket_endpoint(websocket: WebSocket):
                 trk_id = p["track_id"]
                 if trk_id not in previous_ids:
                     camera_entry = CameraEntryEvent(
-                        track_id=str(trk_id),
+                        track_id=f"{stream_camera_id}:{trk_id}",
                         timestamp=datetime.now(timezone.utc).replace(tzinfo=None),
-                        camera_id=camera_id,
+                        camera_id=stream_camera_id,
                         first_bounding_box=[
                             int(round(p["box"][0] * w)),
                             int(round(p["box"][1] * h)),
@@ -136,9 +139,11 @@ async def websocket_endpoint(websocket: WebSocket):
             for trk_id, frames_gone in list(absent_map.items()):
                 if frames_gone >= get_track_close_grace_frames():
                     absent_map.pop(trk_id, None)
-                    str_trk_id = str(trk_id)
+                    str_trk_id = f"{stream_camera_id}:{trk_id}"
+                    confidence, embedding = last_track_attributes.pop(trk_id, (0.0, None))
+                    spatial_handoff_engine.track_disappeared(str(camera_id), str_trk_id, datetime.now(timezone.utc).replace(tzinfo=None), confidence, embedding)
                     totals = track_activity_totals.get(str_trk_id)
-                    closed = worker_session_manager.close_session(str_trk_id, totals)
+                    closed = None if spatial_handoff_engine.cache.has_origin_track(str_trk_id) else worker_session_manager.close_session(str_trk_id, totals)
                     if closed:
                         print(f"[Identity] 🚪 Session closed (grace expired) for employee={closed.employee_id} track={trk_id}")
                     track_activity_totals.pop(str_trk_id, None)
@@ -151,9 +156,17 @@ async def websocket_endpoint(websocket: WebSocket):
             now_time = datetime.now(timezone.utc).replace(tzinfo=None)
             for p in poses:
                 trk_id = p["track_id"]
-                str_trk_id = str(trk_id)
+                str_trk_id = f"{stream_camera_id}:{trk_id}"
 
                 # Resolve identity
+                worker_session = worker_session_manager.get_by_track(str_trk_id)
+                employee_id = worker_session.employee_id if worker_session else None
+
+                box = p["box"]
+                foot_point = ((float(box[0]) + float(box[2])) / 2.0, float(box[3]))
+                embedding = tuple(p["reid_embedding"]) if p.get("reid_embedding") is not None else None
+                last_track_attributes[trk_id] = (float(p["confidence"]), embedding)
+                spatial_handoff_engine.observe_track(str(camera_id), str_trk_id, foot_point, now_time, float(p["confidence"]), embedding)
                 worker_session = worker_session_manager.get_by_track(str_trk_id)
                 employee_id = worker_session.employee_id if worker_session else None
 
@@ -189,7 +202,7 @@ async def websocket_endpoint(websocket: WebSocket):
                     detector.alert_triggered = False
 
                 # Resolve identity for this track
-                worker_session = worker_session_manager.get_by_track(str(trk_id))
+                worker_session = worker_session_manager.get_by_track(str_trk_id)
 
                 detections_out.append({
                     "track_id": trk_id,
@@ -277,10 +290,10 @@ async def websocket_endpoint(websocket: WebSocket):
             session_managers[camera_id].close_on_disconnect()
         if camera_id:
             for s in worker_session_manager.get_all_active():
-                if s.camera_id == camera_id:
+                if s.camera_id == f"ws:{camera_id}":
                     str_trk_id = s.current_track_id
                     totals = track_activity_totals.get(str_trk_id)
-                    closed = worker_session_manager.close_session(str_trk_id, totals)
+                    closed = None if spatial_handoff_engine.cache.has_origin_track(str_trk_id) else worker_session_manager.close_session(str_trk_id, totals)
                     if closed:
                         print(f"[Identity] 🚪 Session closed (disconnect) for employee={closed.employee_id} track={str_trk_id}")
                     track_activity_totals.pop(str_trk_id, None)
@@ -296,10 +309,10 @@ async def websocket_endpoint(websocket: WebSocket):
             session_managers[camera_id].close_on_disconnect()
         if camera_id:
             for s in worker_session_manager.get_all_active():
-                if s.camera_id == camera_id:
+                if s.camera_id == f"ws:{camera_id}":
                     str_trk_id = s.current_track_id
                     totals = track_activity_totals.get(str_trk_id)
-                    closed = worker_session_manager.close_session(str_trk_id, totals)
+                    closed = None if spatial_handoff_engine.cache.has_origin_track(str_trk_id) else worker_session_manager.close_session(str_trk_id, totals)
                     if closed:
                         print(f"[Identity] 🚪 Session closed (error) for employee={closed.employee_id} track={str_trk_id}")
                     track_activity_totals.pop(str_trk_id, None)

@@ -57,3 +57,19 @@ These parameters are configured in [custom_tracker.yaml](file:///home/zoro/~proj
 ### Scenario D: High GPU/CPU Utilization
 1. **Decrease `imgsz`** in `pose_detector.py` (e.g., from `1280` to `960` or `640`) to scale down inputs before inference.
 2. Change model checkpoint to a smaller variant (e.g., change `yolo11m-pose.pt` to `yolo11s-pose.pt`).
+
+---
+
+## Spatial Handoff Engine
+
+Configure facility-wide handoffs in `spatial_handoff.json` (created from
+`spatial_handoff.example.json` on first service start). Each facility declares
+camera-local `ENTRY_PORTAL`/`EXIT_PORTAL` polygons and directed connections with
+minimum/maximum transit windows. Camera names do not create links: only an
+explicit connection does.
+
+Use `GET`/`PUT /api/spatial-handoff/configuration` to manage the layout and
+`GET /api/spatial-handoff/status` to inspect pending handoffs and explainable
+match events. Runtime matching is restricted to cache entries connected to the
+arriving entry portal and inside its transit window; it never runs a
+facility-wide appearance search.
