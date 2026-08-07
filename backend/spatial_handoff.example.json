@@ -1,0 +1,18 @@
+{
+  "facilities": [
+    {
+      "id": "main-facility",
+      "cameras": [
+        {"id": "reception", "portals": [
+          {"id": "to-kitchen", "kind": "EXIT_PORTAL", "polygon": [[0.88, 0.25], [1.0, 0.25], [1.0, 0.90], [0.88, 0.90]], "direction": [1, 0], "minDirectionCosine": 0.2}
+        ]},
+        {"id": "kitchen", "portals": [
+          {"id": "from-reception", "kind": "ENTRY_PORTAL", "polygon": [[0.0, 0.25], [0.12, 0.25], [0.12, 0.90], [0.0, 0.90]], "direction": [1, 0], "minDirectionCosine": 0.2}
+        ]}
+      ],
+      "connections": [
+        {"id": "reception-to-kitchen", "exitPortal": "reception:to-kitchen", "entryPortal": "kitchen:from-reception", "minTransitSeconds": 5, "maxTransitSeconds": 15, "minSimilarity": 0.72}
+      ]
+    }
+  ]
+}
