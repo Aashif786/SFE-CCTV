@@ -102,7 +102,7 @@ class WorkerDetector:
         if torch.cuda.is_available():
             self.device_id = 0  # int device ID for YOLO track()
             self.device = "cuda:0"
-            torch.backends.cudnn.benchmark = False
+            torch.backends.cudnn.benchmark = True
             torch.backends.cuda.matmul.allow_tf32 = True
             torch.backends.cudnn.allow_tf32 = True
             print(f"[WorkerDetector] 🚀 GPU Acceleration Enabled: {torch.cuda.get_device_name(0)}")
