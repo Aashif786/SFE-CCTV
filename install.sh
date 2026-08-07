@@ -74,7 +74,11 @@ fi
 echo "⏳ Waiting for PostgreSQL to become healthy (up to 60s)..."
 DB_READY=false
 for i in $(seq 1 30); do
-    HEALTH=$(docker inspect --format '{{.State.Health.Status}}' worker_monitor_db 2>/dev/null || echo "missing")
+    TARGET_CONTAINER=$($COMPOSE_CMD ps -q db 2>/dev/null || echo "worker_monitor_db")
+    if [ -z "$TARGET_CONTAINER" ]; then
+        TARGET_CONTAINER="worker_monitor_db"
+    fi
+    HEALTH=$(docker inspect --format '{{.State.Health.Status}}' "$TARGET_CONTAINER" 2>/dev/null || echo "missing")
     if [ "$HEALTH" = "healthy" ]; then
         DB_READY=true
         break
