@@ -165,10 +165,48 @@ class WorkerDetector:
         # Track stability: record the last confirmed box for each track_id
         self.last_confirmed_box: dict[int, list[float]] = {}
         self.dropped_ids: dict[int, int] = {}
+        # Native BoT-SORT ``smooth_feat`` vectors, when exposed by the installed
+        # Ultralytics tracker.  They are preferred over the visual fallback below.
+        self._botsort_features: dict[int, tuple[float, ...]] = {}
 
     @staticmethod
     def _dist_xy(a: list[float], b: list[float]) -> float:
         return math.sqrt((a[0] - b[0]) ** 2 + (a[1] - b[1]) ** 2)
+
+    def _refresh_botsort_features(self) -> None:
+        """Read BoT-SORT Re-ID features without coupling to one Ultralytics release."""
+        self._botsort_features = {}
+        try:
+            trackers = getattr(self.model.predictor, "trackers", [])
+            for tracker in trackers:
+                for track in getattr(tracker, "tracked_stracks", []):
+                    feature = getattr(track, "smooth_feat", None)
+                    if feature is None:
+                        feature = getattr(track, "curr_feat", None)
+                    track_id = getattr(track, "track_id", None)
+                    if feature is not None and track_id is not None:
+                        vector = np.asarray(feature, dtype=np.float32).reshape(-1)
+                        norm = float(np.linalg.norm(vector))
+                        if norm > 0:
+                            self._botsort_features[int(track_id)] = tuple((vector / norm).tolist())
+        except Exception:
+            # Some Ultralytics versions intentionally hide the tracker encoder.
+            # Per-person fallback descriptors keep the handoff engine functional.
+            pass
+
+    @staticmethod
+    def _fallback_appearance_embedding(frame: np.ndarray, xyxy: np.ndarray) -> tuple[float, ...] | None:
+        """Stable crop descriptor used only if native BoT-SORT features are unavailable."""
+        h, w = frame.shape[:2]
+        x1, y1, x2, y2 = [int(v) for v in xyxy]
+        x1, x2 = max(0, x1), min(w, x2)
+        y1, y2 = max(0, y1), min(h, y2)
+        if x2 - x1 < 8 or y2 - y1 < 8:
+            return None
+        hsv = cv2.cvtColor(frame[y1:y2, x1:x2], cv2.COLOR_BGR2HSV)
+        hist = cv2.calcHist([hsv], [0, 1, 2], None, [8, 8, 4], [0, 180, 0, 256, 0, 256]).reshape(-1)
+        norm = float(np.linalg.norm(hist))
+        return tuple((hist / norm).astype(np.float32).tolist()) if norm else None
 
     @staticmethod
     def _check_seated_posture(smoothed: list[list[float]]) -> bool:
@@ -274,6 +312,7 @@ class WorkerDetector:
             imgsz=getattr(config, "yolo_imgsz", 640),
             tracker=self.tracker_config,
         )
+        self._refresh_botsort_features()
 
         if len(results) == 0 or results[0].boxes is None or results[0].boxes.id is None:
             return []
@@ -465,6 +504,7 @@ class WorkerDetector:
                 "hands_off_seconds": self.hands_off_seconds[track_id],
                 "keypoints":         keypoints,
                 "box":               box,
+                "reid_embedding":   self._botsort_features.get(track_id) or self._fallback_appearance_embedding(frame, xyxy),
             })
 
         # Sort and limit tracked people if max_tracked_people is set

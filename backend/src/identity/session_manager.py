@@ -48,6 +48,9 @@ class WorkerSessionManager:
         self._sessions: dict[str, WorkerSession] = {}
         # All closed sessions for the /history endpoint
         self._closed: list[WorkerSession] = []
+        # Sessions that have left through an approved portal stay transferable
+        # until their route cache expires; they are not visible as on-camera.
+        self._pending_handoffs: dict[str, WorkerSession] = {}
 
     # ------------------------------------------------------------------
     # Write operations
@@ -96,6 +99,69 @@ class WorkerSessionManager:
                 row.current_track_id = new_track_id
                 db.commit()
         return True
+
+    def transfer_session(
+        self,
+        session_id: str,
+        old_track_id: str,
+        new_track_id: str,
+        camera_id: str,
+        timestamp: datetime,
+        correlation_delay: float,
+    ) -> Optional[WorkerSession]:
+        """Move one active employee session to a topology-validated camera track.
+
+        This is deliberately a different operation from tracker-ID rebinding: the
+        caller must have completed a spatial handoff match before invoking it.
+        It preserves ``session_id`` so downstream consumers see one continuous
+        employee session rather than a camera-specific duplicate.
+        """
+        session = self._sessions.get(old_track_id) or self._pending_handoffs.get(session_id)
+        if session is None or session.session_id != session_id:
+            return None
+        # A destination track must never silently steal an already active identity.
+        occupied = self._sessions.get(new_track_id)
+        if occupied is not None and occupied.session_id != session_id:
+            return None
+        self._sessions.pop(old_track_id, None)
+        self._pending_handoffs.pop(session_id, None)
+        session.current_track_id = new_track_id
+        session.camera_id = camera_id
+        session.correlation_delay_seconds = round(correlation_delay, 3)
+        self._sessions[new_track_id] = session
+        with SessionLocal() as db:
+            row = db.query(WorkerSessionDB).filter(WorkerSessionDB.session_id == session_id).first()
+            if row:
+                row.current_track_id = new_track_id
+                row.camera_id = camera_id
+                row.correlation_delay_seconds = session.correlation_delay_seconds
+                db.commit()
+        return session
+
+    def hold_for_handoff(self, track_id: str) -> bool:
+        """Remove a departed track from live lookups while preserving its session."""
+        session = self._sessions.pop(track_id, None)
+        if session is None:
+            return False
+        self._pending_handoffs[session.session_id] = session
+        return True
+
+    def close_pending_handoff(self, session_id: str) -> Optional[WorkerSession]:
+        """Close a handoff hold after every configured destination window expired."""
+        session = self._pending_handoffs.pop(session_id, None)
+        if session is None:
+            return None
+        session.status = "CLOSED"
+        session.end_time = _utcnow()
+        self._closed.append(session)
+        with SessionLocal() as db:
+            row = db.query(WorkerSessionDB).filter(WorkerSessionDB.session_id == session_id).first()
+            if row:
+                row.status = "CLOSED"
+                row.end_time = session.end_time
+                db.commit()
+        self._update_daily_summary(session)
+        return session
 
     def close_session(self, track_id: str, activity_totals: dict[str, float] = None) -> Optional[WorkerSession]:
         """

@@ -52,6 +52,7 @@ from ..identity.correlation import correlation_engine
 from ..identity.session_manager import worker_session_manager
 from ..identity.models import CameraEntryEvent
 from ..identity.tracking_strategy import TrackingStrategyFactory
+from ..spatial.engine import spatial_handoff_engine
 from ..zones.polygon_eval import is_point_in_polygon, zone_cache
 from ..zones.dwell_tracker import dwell_tracker, _to_utc
 from ..state import (
@@ -185,6 +186,9 @@ async def camera_ai_endpoint(websocket: WebSocket, camera_id: int):
             track_absent_frames[cam_key] = {}
 
         sm = session_managers[cam_key]
+        # Last observed attributes are retained only until a track leaves the
+        # frame, so an EXIT_PORTAL can fire even when the last step is stream loss.
+        last_track_attributes: dict[int, tuple[float, tuple[float, ...] | None]] = {}
 
         frame_count = 0
         fps_measured = 0.0
@@ -280,7 +284,7 @@ async def camera_ai_endpoint(websocket: WebSocket, camera_id: int):
                     poses = []
 
                 current_track_ids: set[int] = {p["track_id"] for p in poses}
-                current_track_ids_str: set[str] = {str(t) for t in current_track_ids}
+                current_track_ids_str: set[str] = {f"{cam_key}:{t}" for t in current_track_ids}
                 previous_ids = prev_track_ids.get(cam_key, set())
 
                 # Detect newly entered tracks → notify correlation engine
@@ -288,7 +292,7 @@ async def camera_ai_endpoint(websocket: WebSocket, camera_id: int):
                     trk_id = p["track_id"]
                     if trk_id not in previous_ids:
                         camera_entry = CameraEntryEvent(
-                            track_id=str(trk_id),
+                            track_id=f"{cam_key}:{trk_id}",
                             timestamp=datetime.now(timezone.utc).replace(tzinfo=None),
                             camera_id=cam_key,
                             first_bounding_box=[
@@ -316,14 +320,18 @@ async def camera_ai_endpoint(websocket: WebSocket, camera_id: int):
                 for trk_id, frames_gone in list(absent_map.items()):
                     if frames_gone >= grace_frames:
                         absent_map.pop(trk_id, None)
-                        str_trk_id = str(trk_id)
-                        totals = track_activity_totals.get(str_trk_id)
-                        closed = worker_session_manager.close_session(str_trk_id, totals)
+                        track_key = f"{cam_key}:{trk_id}"
+                        confidence, embedding = last_track_attributes.pop(trk_id, (0.0, None))
+                        spatial_handoff_engine.track_disappeared(str(camera_id), track_key, datetime.now(timezone.utc).replace(tzinfo=None), confidence, embedding)
+                        totals = track_activity_totals.get(track_key)
+                        # A portal departure is held for constrained matching,
+                        # rather than closed before its destination can arrive.
+                        closed = None if spatial_handoff_engine.cache.has_origin_track(track_key) else worker_session_manager.close_session(track_key, totals)
                         if closed:
                             print(f"[AI-WS] 🚪 Session closed for employee={closed.employee_id} track={trk_id}")
-                        dwell_tracker.close_track_visit(str(camera_id), str_trk_id)
-                        track_activity_totals.pop(str_trk_id, None)
-                        track_last_time.pop(str_trk_id, None)
+                        dwell_tracker.close_track_visit(str(camera_id), track_key)
+                        track_activity_totals.pop(track_key, None)
+                        track_last_time.pop(track_key, None)
 
                 track_absent_frames[cam_key] = absent_map
                 prev_track_ids[cam_key] = current_track_ids
@@ -337,7 +345,16 @@ async def camera_ai_endpoint(websocket: WebSocket, camera_id: int):
 
                 for p in poses:
                     trk_id = p["track_id"]
-                    str_trk_id = str(trk_id)
+                    str_trk_id = f"{cam_key}:{trk_id}"
+                    portal_box = p["box"]
+                    portal_point = ((float(portal_box[0]) + float(portal_box[2])) / 2.0, float(portal_box[3]))
+                    embedding = tuple(p["reid_embedding"]) if p.get("reid_embedding") is not None else None
+                    last_track_attributes[trk_id] = (float(p["confidence"]), embedding)
+                    # Process portal crossings before the optional activity filter.
+                    spatial_handoff_engine.observe_track(
+                        str(camera_id), str_trk_id, portal_point, now_time,
+                        float(p["confidence"]), embedding,
+                    )
 
                     # Resolve identity (single lookup — used throughout)
                     worker_session = worker_session_manager.get_by_track(str_trk_id)
@@ -475,7 +492,7 @@ async def camera_ai_endpoint(websocket: WebSocket, camera_id: int):
 
                 # ── Cleanup absent tracks ──
                 # Close active visits for any track on this camera that disappeared from the frame
-                current_frame_track_ids = {str(p["track_id"]) for p in poses}
+                current_frame_track_ids = {f"{cam_key}:{p['track_id']}" for p in poses}
                 dwell_tracker.cleanup_absent_tracks(
                     camera_id=str(camera_id),
                     active_track_ids=current_frame_track_ids,
@@ -565,7 +582,7 @@ async def camera_ai_endpoint(websocket: WebSocket, camera_id: int):
                 if s.camera_id == cam_key:
                     str_trk_id = s.current_track_id
                     totals = track_activity_totals.get(str_trk_id)
-                    closed = worker_session_manager.close_session(str_trk_id, totals)
+                    closed = None if spatial_handoff_engine.cache.has_origin_track(str_trk_id) else worker_session_manager.close_session(str_trk_id, totals)
                     if closed:
                         print(f"[AI-WS] 🚪 Session closed (cleanup) for employee={closed.employee_id}")
                     track_activity_totals.pop(str_trk_id, None)
