@@ -105,6 +105,14 @@ async def camera_ai_endpoint(websocket: WebSocket, camera_id: int):
 
     await websocket.accept()
 
+    if camera_id in _active_ws_cameras:
+        await websocket.send_text(json.dumps({
+            "error": "Another client is already viewing this camera's AI stream. Only one active stream is allowed per camera to prevent tracker corruption.",
+            "camera_id": camera_id,
+        }))
+        await websocket.close(code=1008)
+        return
+
     cam_key = f"ai-{camera_id}"
     _active_ws_cameras.add(camera_id)
 
