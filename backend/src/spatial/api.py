@@ -15,6 +15,8 @@ router = APIRouter(prefix="/api/spatial-handoff", tags=["spatial-handoff"])
 
 class LayoutPayload(BaseModel):
     facilities: list[dict[str, Any]]
+    connections: list[dict[str, Any]] = []
+    canvasPositions: dict[str, Any] = {}
 
 
 @router.get("/configuration")

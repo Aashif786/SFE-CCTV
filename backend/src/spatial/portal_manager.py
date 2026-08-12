@@ -19,35 +19,43 @@ class PortalManager:
     def observe(self, camera_id: str, track_key: str, point: tuple[float, float], timestamp: datetime,
                 confidence: float, embedding: tuple[float, ...] | None) -> list[PortalCrossing]:
         events: list[PortalCrossing] = []
-        for portal in self._configuration.portals_for_camera(camera_id, "ENTRY_PORTAL") + self._configuration.portals_for_camera(camera_id, "EXIT_PORTAL"):
+        for portal in self._configuration.portals_for_camera(camera_id):
             state_key = (portal.id, track_key)
             was_inside = self._inside.get(state_key, False)
             inside = is_point_in_polygon(point[0], point[1], list(portal.polygon))
             previous = self._positions.get(state_key)
             direction = self._direction(previous, point)
-            # Entering an entry portal is the arrival event. Leaving an exit portal is
-            # the departure event; force_exit() handles streams that end while inside.
-            crossed = (portal.kind == "ENTRY_PORTAL" and inside and not was_inside) or (portal.kind == "EXIT_PORTAL" and was_inside and not inside)
-            if crossed and self._direction_allowed(portal.direction, portal.min_direction_cosine, direction):
-                events.append(PortalCrossing(portal, track_key, timestamp, direction, confidence, embedding))
+
+            # Departure crossing: this portal is the exit in at least one connection.
+            if bool(self._configuration.outgoing(portal.id)) and was_inside and not inside:
+                if self._direction_allowed(portal.direction, portal.min_direction_cosine, direction):
+                    events.append(PortalCrossing(portal, track_key, timestamp, direction, confidence, embedding))
+
+            # Arrival crossing: this portal is the entry in at least one connection.
+            if bool(self._configuration.incoming(portal.id)) and inside and not was_inside:
+                if self._direction_allowed(portal.direction, portal.min_direction_cosine, direction):
+                    events.append(PortalCrossing(portal, track_key, timestamp, direction, confidence, embedding))
+
             self._inside[state_key], self._positions[state_key] = inside, point
         return events
 
     def force_exit(self, camera_id: str, track_key: str, timestamp: datetime, confidence: float,
                    embedding: tuple[float, ...] | None) -> list[PortalCrossing]:
         events = []
-        for portal in self._configuration.portals_for_camera(camera_id, "EXIT_PORTAL"):
-            key = (portal.id, track_key)
-            if self._inside.pop(key, False):
-                events.append(PortalCrossing(portal, track_key, timestamp, None, confidence, embedding))
-            self._positions.pop(key, None)
-        # Entry-portal state has no departure event, but must be released when
-        # a tracker disappears so a recycled numeric tracker ID starts cleanly.
+        for portal in self._configuration.portals_for_camera(camera_id):
+            if bool(self._configuration.outgoing(portal.id)):
+                key = (portal.id, track_key)
+                if self._inside.pop(key, False):
+                    events.append(PortalCrossing(portal, track_key, timestamp, None, confidence, embedding))
+                self._positions.pop(key, None)
+        # Entry-only portal state must also be released when a tracker disappears
+        # so a recycled numeric tracker ID starts cleanly.
         stale = [key for key in self._inside if key[1] == track_key]
         for key in stale:
             self._inside.pop(key, None)
             self._positions.pop(key, None)
         return events
+
 
     @staticmethod
     def _direction(previous: tuple[float, float] | None, current: tuple[float, float]) -> tuple[float, float] | None:

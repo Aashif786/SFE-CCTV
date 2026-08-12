@@ -44,27 +44,40 @@ class SpatialHandoffEngine:
     def _process(self, crossings):
         results = []
         for crossing in crossings:
-            if crossing.portal.kind == "EXIT_PORTAL":
+            # Departure side: portal has at least one outgoing connection.
+            # Cache the person's appearance so they can be matched on the other end.
+            if self.configuration.outgoing(crossing.portal.id):
                 session = worker_session_manager.get_by_track(crossing.track_key)
-                # An unconnected exit is not a handoff candidate and must not
-                # leave its worker session waiting indefinitely.
-                if session and crossing.embedding and self.configuration.outgoing(crossing.portal.id):
-                    record = self.cache.put(session.employee_id, session.session_id, crossing.track_key, crossing.portal.camera_id,
-                                            crossing.portal.id, crossing.timestamp, crossing.embedding, crossing.track_confidence,
-                                            crossing.direction, (crossing.portal.id,))
+                if session and crossing.embedding:
+                    record = self.cache.put(
+                        session.employee_id, session.session_id, crossing.track_key,
+                        crossing.portal.camera_id, crossing.portal.id, crossing.timestamp,
+                        crossing.embedding, crossing.track_confidence,
+                        crossing.direction, (crossing.portal.id,),
+                    )
                     self._audit("EXIT_CACHED", crossing, record_id=record.record_id)
-            else:
+
+            # Arrival side: portal has at least one incoming connection.
+            # Attempt to match this arrival against a cached departure.
+            if self.configuration.incoming(crossing.portal.id):
                 match = self.matcher.match_entry(crossing)
                 if match:
                     # Session-manager camera IDs identify the stream instance
                     # (e.g. ai-12), while topology uses the physical camera id.
                     destination_camera = crossing.track_key.rsplit(":", 1)[0]
-                    session = self.transfers.transfer(match, crossing.track_key, destination_camera, crossing.timestamp)
+                    session = self.transfers.transfer(
+                        match, crossing.track_key, destination_camera, crossing.timestamp
+                    )
                     if session:
                         self.cache.consume(match.record.record_id)
-                        self._audit("HANDOFF_COMPLETED", crossing, employee_id=session.employee_id, score=round(match.score, 4),
-                                    similarity=round(match.similarity, 4), transit_seconds=round(match.transit_seconds, 3),
-                                    connection_id=match.connection.id)
+                        self._audit(
+                            "HANDOFF_COMPLETED", crossing,
+                            employee_id=session.employee_id,
+                            score=round(match.score, 4),
+                            similarity=round(match.similarity, 4),
+                            transit_seconds=round(match.transit_seconds, 3),
+                            connection_id=match.connection.id,
+                        )
                         results.append(session)
         return results
 

@@ -3,16 +3,367 @@
     {
       "id": "main-facility",
       "cameras": [
-        {"id": "reception", "portals": [
-          {"id": "to-kitchen", "kind": "EXIT_PORTAL", "polygon": [[0.88, 0.25], [1.0, 0.25], [1.0, 0.90], [0.88, 0.90]], "direction": [1, 0], "minDirectionCosine": 0.2}
-        ]},
-        {"id": "kitchen", "portals": [
-          {"id": "from-reception", "kind": "ENTRY_PORTAL", "polygon": [[0.0, 0.25], [0.12, 0.25], [0.12, 0.90], [0.0, 0.90]], "direction": [1, 0], "minDirectionCosine": 0.2}
-        ]}
+        {
+          "id": "reception",
+          "portals": [
+            {
+              "id": "to-kitchen",
+              "kind": "EXIT_PORTAL",
+              "polygon": [
+                [
+                  0.88,
+                  0.25
+                ],
+                [
+                  1,
+                  0.25
+                ],
+                [
+                  1,
+                  0.9
+                ],
+                [
+                  0.88,
+                  0.9
+                ]
+              ],
+              "direction": [
+                1,
+                0
+              ],
+              "minDirectionCosine": 0.2
+            }
+          ]
+        },
+        {
+          "id": "kitchen",
+          "portals": [
+            {
+              "id": "from-reception",
+              "kind": "ENTRY_PORTAL",
+              "polygon": [
+                [
+                  0,
+                  0.25
+                ],
+                [
+                  0.12,
+                  0.25
+                ],
+                [
+                  0.12,
+                  0.9
+                ],
+                [
+                  0,
+                  0.9
+                ]
+              ],
+              "direction": [
+                1,
+                0
+              ],
+              "minDirectionCosine": 0.2
+            }
+          ]
+        },
+        {
+          "id": "1",
+          "portals": [
+            {
+              "id": "entrance-door",
+              "kind": "ENTRY_PORTAL",
+              "polygon": [
+                [
+                  0.7579879205648347,
+                  0.01975082605012812
+                ],
+                [
+                  0.7352421194585997,
+                  0.2873807202790691
+                ],
+                [
+                  0.8787156341286974,
+                  0.3402615982829967
+                ],
+                [
+                  0.9049607892512762,
+                  -0.005019428683824739
+                ]
+              ],
+              "enabled": true
+            },
+            {
+              "id": "rec-kitchen",
+              "kind": "EXIT_PORTAL",
+              "polygon": [
+                [
+                  0.3853067178242151,
+                  0.04774658499338391
+                ],
+                [
+                  0.45529379815109206,
+                  0.4802403929992756
+                ],
+                [
+                  0.5742718347067828,
+                  0.29360200004423703
+                ],
+                [
+                  0.523531201469797,
+                  0.001201851081343214
+                ]
+              ],
+              "enabled": true
+            },
+            {
+              "id": "rec-entry2",
+              "kind": "EXIT_PORTAL",
+              "polygon": [
+                [
+                  0.9609504535127777,
+                  0.2872658559523501
+                ],
+                [
+                  0.8669117874322597,
+                  0.8293673897778986
+                ],
+                [
+                  0.7597375975730066,
+                  0.7197596639582418
+                ],
+                [
+                  0.8646809742433936,
+                  0.26619910827315474
+                ]
+              ],
+              "enabled": true
+            }
+          ]
+        },
+        {
+          "id": "5",
+          "portals": [
+            {
+              "id": "entry2",
+              "kind": "ENTRY_PORTAL",
+              "polygon": [
+                [
+                  0.0616164713124094,
+                  0.16295512497571
+                ],
+                [
+                  0.24708223417863323,
+                  0.054082729085270814
+                ],
+                [
+                  0.4063028419222782,
+                  0.9903853337430477
+                ],
+                [
+                  0.25583061921949285,
+                  0.9966066135082157
+                ]
+              ],
+              "enabled": true
+            }
+          ]
+        },
+        {
+          "id": "15",
+          "portals": [
+            {
+              "id": "from-rec",
+              "kind": "ENTRY_PORTAL",
+              "polygon": [
+                [
+                  0.3293170535627136,
+                  0.9872746938604637
+                ],
+                [
+                  0.3363157615954013,
+                  0.6544362264239783
+                ],
+                [
+                  0.6915001942543016,
+                  0.6699894258368981
+                ],
+                [
+                  0.6845014862216139,
+                  0.9779427742127118
+                ]
+              ],
+              "enabled": true
+            },
+            {
+              "id": "to-ext-way",
+              "kind": "ENTRY_PORTAL",
+              "polygon": [
+                [
+                  0.37830800979152746,
+                  -0.0019087888012407626
+                ],
+                [
+                  0.3940551028650747,
+                  0.39936375605209223
+                ],
+                [
+                  0.6197634369192528,
+                  0.430470154877932
+                ],
+                [
+                  0.6162640829029089,
+                  0.001201851081343214
+                ]
+              ],
+              "enabled": true
+            }
+          ]
+        },
+        {
+          "id": "10",
+          "portals": [
+            {
+              "id": "exit-way-st",
+              "kind": "ENTRY_PORTAL",
+              "polygon": [
+                [
+                  0.059866794304237476,
+                  0.5057441181633061
+                ],
+                [
+                  0.2785764203257278,
+                  0.3253270049734355
+                ],
+                [
+                  0.297822867415619,
+                  0.9972252196115744
+                ],
+                [
+                  0.06861517934509709,
+                  0.9910039398464064
+                ]
+              ],
+              "enabled": true
+            },
+            {
+              "id": "exit-way-end",
+              "kind": "ENTRY_PORTAL",
+              "polygon": [
+                [
+                  0.6967492252788174,
+                  0.004931097067285909
+                ],
+                [
+                  0.8367233859325712,
+                  0.004931097067285909
+                ],
+                [
+                  0.820976292859024,
+                  0.49019091875038623
+                ],
+                [
+                  0.7894821067119293,
+                  0.5866207551104895
+                ],
+                [
+                  0.6040163438457055,
+                  0.40620364192061886
+                ],
+                [
+                  0.7037479333115051,
+                  0.34088020438635536
+                ]
+              ],
+              "enabled": true
+            }
+          ]
+        },
+        {
+          "id": "17",
+          "portals": [
+            {
+              "id": "das2-entry",
+              "polygon": [
+                [
+                  0.2453325571704613,
+                  -0.0019087888012407626
+                ],
+                [
+                  0.21733772503971052,
+                  0.30604455957457294
+                ],
+                [
+                  0.5287802324943128,
+                  0.3091551994571569
+                ],
+                [
+                  0.5480266795842039,
+                  0.016755050494263096
+                ]
+              ],
+              "enabled": true
+            }
+          ]
+        }
       ],
-      "connections": [
-        {"id": "reception-to-kitchen", "exitPortal": "reception:to-kitchen", "entryPortal": "kitchen:from-reception", "minTransitSeconds": 5, "maxTransitSeconds": 15, "minSimilarity": 0.72}
-      ]
+      "connections": []
     }
-  ]
+  ],
+  "connections": [
+    {
+      "id": "edge-mspxvwis",
+      "exitPortal": "main-facility:1:rec-kitchen",
+      "entryPortal": "main-facility:15:from-rec",
+      "minTransitSeconds": 3,
+      "maxTransitSeconds": 20,
+      "minSimilarity": 0.72
+    },
+    {
+      "id": "edge-mspxw0ba",
+      "exitPortal": "main-facility:15:to-ext-way",
+      "entryPortal": "main-facility:10:exit-way-st",
+      "minTransitSeconds": 1,
+      "maxTransitSeconds": 10,
+      "minSimilarity": 0.72
+    },
+    {
+      "id": "edge-mspxw41p",
+      "exitPortal": "main-facility:10:exit-way-end",
+      "entryPortal": "main-facility:17:das2-entry",
+      "minTransitSeconds": 1,
+      "maxTransitSeconds": 6,
+      "minSimilarity": 0.72
+    },
+    {
+      "id": "edge-mspxwvy8",
+      "exitPortal": "main-facility:1:rec-entry2",
+      "entryPortal": "main-facility:5:entry2",
+      "minTransitSeconds": 3,
+      "maxTransitSeconds": 20,
+      "minSimilarity": 0.72
+    }
+  ],
+  "canvasPositions": {
+    "1": {
+      "x": 578,
+      "y": 152
+    },
+    "5": {
+      "x": 954,
+      "y": 318
+    },
+    "10": {
+      "x": 1260,
+      "y": 48
+    },
+    "15": {
+      "x": 946,
+      "y": 48
+    },
+    "17": {
+      "x": 1568,
+      "y": 237
+    }
+  }
 }

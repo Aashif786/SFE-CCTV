@@ -24,6 +24,12 @@ if [ ! -f backend/venv/bin/uvicorn ]; then
     exit 1
 fi
 
+# 4. Check Frontend dependencies
+if [ ! -d frontend/node_modules ]; then
+    echo "📦 Frontend node_modules not found. Installing frontend dependencies..."
+    (cd frontend && npm install)
+fi
+
 # 4. Clean up existing processes on ports 3000 and 8000 if running
 for PORT in 8000 3000; do
     PID=$(lsof -t -i:$PORT 2>/dev/null || true)
