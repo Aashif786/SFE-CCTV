@@ -272,6 +272,9 @@ async def test_camera(camera_id: int, db: Session = Depends(get_db)):
     rtsp_url = _build_rtsp_url(cam)
     cap = None
     try:
+        import os as _os
+        _os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"] = "rtsp_transport;tcp|loglevel;quiet"
+        _os.environ["OPENCV_FFMPEG_LOGLEVEL"] = "8"
         cap = cv2.VideoCapture(rtsp_url, cv2.CAP_FFMPEG)
         cap.set(cv2.CAP_PROP_OPEN_TIMEOUT_MSEC, 10_000)
         cap.set(cv2.CAP_PROP_READ_TIMEOUT_MSEC, 10_000)

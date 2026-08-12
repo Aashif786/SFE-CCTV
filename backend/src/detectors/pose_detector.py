@@ -6,6 +6,43 @@ import threading
 import yaml
 import torch
 from ultralytics import YOLO
+
+# Monkey-patch Ultralytics GMC (Global Motion Compensation) to handle frame shape changes
+# and avoid repeated OpenCV assertion failure warnings:
+# "WARNING ⚠️ GMC failed, falling back to identity: OpenCV(...) lkpyramid.cpp:1415: error: (-215:Assertion failed)..."
+try:
+    from ultralytics.trackers.utils.gmc import GMC
+
+    _orig_gmc_sparse = getattr(GMC, "apply_sparseoptflow", None)
+    _orig_gmc_ecc = getattr(GMC, "apply_ecc", None)
+    _orig_gmc_feat = getattr(GMC, "apply_features", None)
+
+    def _safe_gmc_wrap(func):
+        if func is None:
+            return None
+        def wrapper(self, raw_frame: np.ndarray, *args, **kwargs):
+            if raw_frame is None or not isinstance(raw_frame, np.ndarray) or raw_frame.size == 0:
+                return np.eye(2, 3)
+            height, width = raw_frame.shape[:2]
+            target_shape = (height // self.downscale, width // self.downscale) if getattr(self, "downscale", 1) > 1.0 else (height, width)
+            if getattr(self, "prevFrame", None) is not None and self.prevFrame.shape[:2] != target_shape:
+                self.reset_params()
+            try:
+                return func(self, raw_frame, *args, **kwargs)
+            except Exception:
+                self.reset_params()
+                return np.eye(2, 3)
+        return wrapper
+
+    if _orig_gmc_sparse:
+        GMC.apply_sparseoptflow = _safe_gmc_wrap(_orig_gmc_sparse)
+    if _orig_gmc_ecc:
+        GMC.apply_ecc = _safe_gmc_wrap(_orig_gmc_ecc)
+    if _orig_gmc_feat:
+        GMC.apply_features = _safe_gmc_wrap(_orig_gmc_feat)
+except Exception:
+    pass
+
 from ..config import config
 from .onnx_exporter import get_onnx_path, onnx_exists, export_onnx_blocking
 

@@ -4,18 +4,13 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Literal, Sequence
-
-
-PortalKind = Literal["ENTRY_PORTAL", "EXIT_PORTAL"]
 
 
 @dataclass(frozen=True)
 class Portal:
     id: str
     camera_id: str
-    kind: PortalKind
-    polygon: tuple[tuple[float, float], ...]
+    polygon: tuple[tuple[float, float], ...] = field(default_factory=tuple)
     enabled: bool = True
     # Optional expected travel vector in normalised image coordinates.
     direction: tuple[float, float] | None = None
@@ -72,3 +67,4 @@ class MatchResult:
     transit_seconds: float
     direction_score: float
     score: float
+

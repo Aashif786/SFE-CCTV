@@ -286,7 +286,8 @@ class StreamManager:
                 # 'fatal' (32) silences them without hiding real errors.
                 # The env var must be set before VideoCapture() opens the stream.
                 import os as _os
-                _os.environ.setdefault("OPENCV_FFMPEG_CAPTURE_OPTIONS", "loglevel;fatal")
+                _os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"] = "rtsp_transport;tcp|loglevel;quiet"
+                _os.environ["OPENCV_FFMPEG_LOGLEVEL"] = "8"
 
                 cap = cv2.VideoCapture(cs.rtsp_url, cv2.CAP_FFMPEG)
                 cap.set(cv2.CAP_PROP_OPEN_TIMEOUT_MSEC, timeout * 1000)

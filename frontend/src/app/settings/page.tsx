@@ -988,12 +988,12 @@ export default function SettingsPage() {
                         min="1"
                         max="60"
                         step="1"
-                        value={trackingFps}
-                        onChange={(e) => setTrackingFps(Number(e.target.value))}
+                        value={aiStreamFps}
+                        onChange={(e) => setAiStreamFps(Number(e.target.value))}
                         className="flex-1 h-2 bg-[hsl(var(--border-strong))] rounded-lg appearance-none cursor-pointer accent-emerald-500"
                       />
                       <div className="w-16 bg-[hsl(var(--bg-input))] border border-[hsl(var(--border-strong))] rounded-lg px-3 py-1.5 text-center text-sm font-medium text-[hsl(var(--text-primary))] border-solid">
-                        {trackingFps}
+                        {aiStreamFps}
                       </div>
                     </div>
                   </div>
