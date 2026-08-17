@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import uuid
 from datetime import datetime
-from typing import Literal, Optional
+from typing import Literal, Optional, List, Union
 
 from pydantic import BaseModel, Field
 
@@ -30,6 +30,8 @@ class IdentityEventCreate(BaseModel):
     entry_gate: str = Field(alias="entryGate")
     timestamp: Optional[datetime] = Field(default=None)
     event_type: Literal["ENTRY", "EXIT"] = Field(default="ENTRY", alias="eventType")
+    allowed_cameras: Optional[List[Union[int, str]]] = Field(default=None, alias="allowedCameras")
+    correlation_window_seconds: Optional[float] = Field(default=None, alias="correlationWindowSeconds")
 
 
 # ---------------------------------------------------------------------------
@@ -50,10 +52,28 @@ class IdentityEvent(BaseModel):
     entry_gate: str
     provider: str           # "REST_SIMULATOR" | "RFID" | "NFC" | "MQTT" …
     correlation_status: Literal["WAITING_FOR_TRACK", "MATCHED", "EXPIRED"] = "WAITING_FOR_TRACK"
+    allowed_cameras: List[str] = Field(default_factory=list)
+    correlation_window_seconds: Optional[float] = None
     # Populated when matched
     matched_track_id: Optional[str] = None
+    matched_camera_id: Optional[str] = None
     matched_at: Optional[datetime] = None
     correlation_delay_seconds: Optional[float] = None
+
+
+# ---------------------------------------------------------------------------
+# Door Controller Configuration
+# ---------------------------------------------------------------------------
+
+class DoorConfigItem(BaseModel):
+    ip: str
+    name: str
+    username: str = "admin"
+    password: str = ""
+    check_in_cameras: List[Union[int, str]] = Field(default_factory=list)
+    check_out_cameras: List[Union[int, str]] = Field(default_factory=list)
+    correlation_window_seconds: float = 10.0
+
 
 
 # ---------------------------------------------------------------------------

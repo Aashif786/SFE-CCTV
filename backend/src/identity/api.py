@@ -438,10 +438,14 @@ def _event_to_dict(e: IdentityEvent) -> dict:
         "entry_gate": e.entry_gate,
         "provider": e.provider,
         "correlation_status": e.correlation_status,
+        "allowed_cameras": e.allowed_cameras or [],
+        "correlation_window_seconds": e.correlation_window_seconds,
         "matched_track_id": e.matched_track_id,
+        "matched_camera_id": e.matched_camera_id,
         "matched_at": e.matched_at.isoformat() if e.matched_at else None,
         "correlation_delay_seconds": e.correlation_delay_seconds,
     }
+
 
 
 def _session_to_dict(s: WorkerSession) -> dict:
@@ -472,14 +476,8 @@ async def get_doors():
 
 import os
 import json
-from pydantic import BaseModel, Field
-from typing import List
+from .models import DoorConfigItem
 
-class DoorConfigItem(BaseModel):
-    ip: str
-    name: str
-    username: str = "admin"
-    password: str = ""
 
 @router.get("/doors/config", summary="Get doors configurations")
 async def get_doors_config():

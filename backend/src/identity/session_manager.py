@@ -365,7 +365,7 @@ class WorkerSessionManager:
             db.commit()
 
             print(
-                f"[Identity] 📊 Daily summary updated for {session.employee_id} "
+                f"[Identity] [SUMMARY] Daily summary updated for {session.employee_id} "
                 f"| +working={agg['working']:.1f}s  +idle={agg['idle']:.1f}s  "
                 f"+designated_zone={desig_sec:.1f}s  score={summary.productivity_score}%"
             )
