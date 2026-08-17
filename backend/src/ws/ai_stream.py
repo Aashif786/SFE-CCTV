@@ -5,29 +5,6 @@ Endpoint
 --------
 WS  /ws/camera/{camera_id}  — reads frames from stream_manager, runs YOLO
                                pose detection, sends detection JSON to client.
-
-The client never sends frames — the backend already has them from the RTSP
-stream.  The client receives detection JSON and overlays it on the MJPEG
-<img> element.
-
-Lifecycle
----------
-1.  Client opens WS → backend validates camera is online.
-2.  Backend loops at target FPS: grab frame → detect → classify → send JSON.
-3.  Client closes WS → backend cleans up detector state.
-
-Performance notes (measured 2026-08-03 on RTX 5060 Ti)
----------------------------------------------------------
-With yolo11x-pose @ imgsz=1280:
-  - Inference alone: 49ms  →  20 FPS hard ceiling
-  - asyncio.wait_for(0.01) anti-pattern: +15ms wasted per frame
-  - Combined floor: 65ms  →  only 15 FPS achievable
-Fixes applied here:
-  1. WorkerDetector() init moved to asyncio.to_thread (was blocking event loop for 821ms)
-  2. asyncio.wait_for anti-pattern replaced with background disconnect-listener task
-  3. base64 encoding inlined (not dispatched to separate to_thread — 0.04ms, faster inline)
-  4. Camera zones DB query lifted above the inference call + result cached immediately
-  5. FPS counter emitted in response payload for live diagnostics
 """
 
 from __future__ import annotations
@@ -37,6 +14,7 @@ import base64
 import json
 import time
 from datetime import datetime, timezone
+from typing import Optional
 
 import cv2
 import numpy as np
@@ -45,7 +23,8 @@ from fastapi import WebSocket, WebSocketDisconnect
 from ..cameras.stream_manager import stream_manager
 from ..config import config
 from ..db.database import SessionLocal
-from ..db.models import Alert, CameraZoneDB
+from ..db.models import Alert, CameraZoneDB, Camera
+from ..cameras.encryption import decrypt_password
 from ..detectors.pose_detector import WorkerDetector
 from ..activity.classifier import classifier, profile_registry
 from ..identity.correlation import correlation_engine
@@ -65,6 +44,8 @@ from ..state import (
     track_last_time,
     get_zone_cached,
     SessionManager,
+    get_or_create_detector,
+    get_detector,
 )
 
 # Activity colours — dynamic, fetched from active profile via classifier.get_color().
@@ -80,10 +61,6 @@ _FALLBACK_COLOUR: dict[str, str] = {
     "no_person":      "#374151",
 }
 
-# Per-camera AI detector instances (separate from webcam detectors in state.py)
-_ai_detectors: dict[int, WorkerDetector] = {}
-_ai_detector_lock = asyncio.Lock()
-
 # Set of active AI WebSocket camera IDs
 _active_ws_cameras: set[int] = set()
 
@@ -96,9 +73,9 @@ def is_ai_stream_active(camera_id: int) -> bool:
     return camera_id in _active_ws_cameras
 
 
-def get_shared_detector(camera_id: int) -> Optional[WorkerDetector]:
-    """Return in-memory WorkerDetector instance for camera_id if active."""
-    return _ai_detectors.get(camera_id)
+def get_shared_detector(camera_id: int | str) -> Optional[WorkerDetector]:
+    """Return in-memory WorkerDetector instance for camera_id if available."""
+    return get_detector(camera_id)
 
 
 # Default FPS cap — overridden at runtime by config.ai_stream_fps
@@ -129,53 +106,81 @@ async def camera_ai_endpoint(websocket: WebSocket, camera_id: int):
             "message": "Connecting to camera stream…",
         }))
 
-        # Validate camera stream is running
+        # Auto-start stream on demand if not already online
         if not stream_manager.is_online(camera_id):
-            await websocket.send_text(json.dumps({
-                "error": "Camera stream is not online",
-                "camera_id": camera_id,
-            }))
-            await websocket.close(code=1008)
-            return
+            with SessionLocal() as db:
+                try:
+                    cid_int = int(camera_id)
+                    cam = db.query(Camera).filter(Camera.id == cid_int).first()
+                except (ValueError, TypeError):
+                    cam = db.query(Camera).filter(Camera.name == str(camera_id)).first()
 
-        print(f"🧠 [AI-WS] Connected for camera {camera_id}")
+                if cam and cam.enabled:
+                    try:
+                        pwd = decrypt_password(cam.encrypted_password)
+                        auth = f"{cam.username}:{pwd}@" if cam.username else ""
+                        rtsp_url = f"rtsp://{auth}{cam.ip_address}:{cam.rtsp_port}{cam.stream_path}"
+                        stream_manager.start_stream(cam.id, rtsp_url)
+                    except Exception as e:
+                        print(f"⚠️ [AI-WS] Could not auto-start stream for camera {camera_id}: {e}")
 
-        # ── Lazy-init detector ──────────────────────────────────────────────────
-        # WorkerDetector.__init__ loads the YOLO model and warms up CUDA — this
-        # takes 800ms+ and MUST NOT run on the event-loop thread.  We offload it
-        # to the default thread-pool executor via asyncio.to_thread so that other
-        # WebSocket handlers and the ASGI server can continue while it loads.
-        async with _ai_detector_lock:
-            existing = _ai_detectors.get(camera_id)
+        # Wait up to 10s for camera stream to come online if starting/connecting
+        stream_wait_start = time.monotonic()
 
-        if existing is None:
+        while not stream_manager.is_online(camera_id):
+            if (time.monotonic() - stream_wait_start) > 10.0:
+                await websocket.send_text(json.dumps({
+                    "status": "offline",
+                    "camera_id": camera_id,
+                    "message": "Camera stream is offline",
+                }))
+                await websocket.close(code=1000)
+                return
             await websocket.send_text(json.dumps({
                 "status": "loading",
                 "camera_id": camera_id,
-                "message": "Loading AI model…",
+                "message": "Connecting to camera stream…",
             }))
-            # Run initialization in background thread while sending periodic heartbeats to prevent WS timeout
-            init_task = asyncio.create_task(asyncio.to_thread(WorkerDetector))
+            await asyncio.sleep(1.0)
+
+        print(f"🧠 [AI-WS] Connected for camera {camera_id}")
+
+        # Helper to format loading payload with live frame if available
+        def _build_loading_payload(msg: str) -> str:
+            jpeg_bytes = stream_manager.get_jpeg_for_ws(camera_id)
+            img_b64 = ""
+            if jpeg_bytes:
+                img_b64 = "data:image/jpeg;base64," + base64.b64encode(jpeg_bytes).decode("ascii")
+            return json.dumps({
+                "status": "loading",
+                "camera_id": camera_id,
+                "message": msg,
+                "image": img_b64,
+            })
+
+        # ── Lazy-init detector using thread-safe state helper ──
+        detector = get_detector(camera_id)
+        if detector is None:
+            await websocket.send_text(_build_loading_payload("Loading AI model…"))
+            init_task = asyncio.create_task(asyncio.to_thread(get_or_create_detector, camera_id))
             while not init_task.done():
                 try:
-                    await asyncio.wait_for(asyncio.shield(init_task), timeout=1.5)
+                    await asyncio.wait_for(asyncio.shield(init_task), timeout=1.0)
                 except asyncio.TimeoutError:
                     try:
-                        await websocket.send_text(json.dumps({
-                            "status": "loading",
-                            "camera_id": camera_id,
-                            "message": "Loading AI model…",
-                        }))
+                        await websocket.send_text(_build_loading_payload("Loading AI model…"))
                     except Exception:
                         pass
-            new_detector = await init_task
-            # Double-checked locking: another connection may have loaded it first
-            async with _ai_detector_lock:
-                if camera_id not in _ai_detectors:
-                    _ai_detectors[camera_id] = new_detector
-
-        async with _ai_detector_lock:
-            detector = _ai_detectors[camera_id]
+            try:
+                detector = await init_task
+            except Exception as init_err:
+                print(f"❌ [AI-WS] Detector init failed cam {camera_id}: {init_err}")
+                await websocket.send_text(json.dumps({
+                    "status": "error",
+                    "camera_id": camera_id,
+                    "message": f"Failed to load AI model: {init_err}",
+                }))
+                return
 
         # Init per-camera state objects if needed
         if cam_key not in session_managers:
@@ -364,7 +369,7 @@ async def camera_ai_endpoint(websocket: WebSocket, camera_id: int):
                     if not tracking_strategy.should_track(str_trk_id, str(camera_id), person_identifier=employee_id):
                         continue
 
-                    keypoints_to_send = p["keypoints"] if p["confidence"] >= config.confidence_threshold else []
+                    keypoints_to_send = p.get("keypoints", [])
 
                     # Collect peer positions (other tracked workers this frame)
                     peer_positions = [

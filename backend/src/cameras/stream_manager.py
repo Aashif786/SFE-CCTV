@@ -55,7 +55,7 @@ class CameraStream:
     _thread: Optional[threading.Thread] = field(default=None, repr=False)
     _stop_event: threading.Event = field(default_factory=threading.Event, repr=False)
     _lock: threading.Lock = field(default_factory=threading.Lock, repr=False)
-    _buffer: collections.deque = field(default_factory=lambda: collections.deque(maxlen=5), repr=False)
+    _buffer: collections.deque = field(default_factory=lambda: collections.deque(maxlen=2), repr=False)
     _frame_times: collections.deque = field(default_factory=lambda: collections.deque(maxlen=30), repr=False)
 
     def set_buffer_size(self, size: int) -> None:
@@ -87,11 +87,12 @@ class StreamManager:
                 # Clean up stale handle
                 self._do_stop(cs)
 
-            buf_size = getattr(env_settings, "frame_buffer_size", 5)
+            buf_size = min(2, getattr(env_settings, "frame_buffer_size", 2))
             cs = CameraStream(camera_id=camera_id, rtsp_url=rtsp_url)
             cs._buffer = collections.deque(maxlen=buf_size)
             cs.state = StreamState.STARTING
             self._streams[camera_id] = cs
+
 
             t = threading.Thread(
                 target=self._grab_loop,
@@ -164,9 +165,13 @@ class StreamManager:
 
     # -- frame access --------------------------------------------------------
 
-    def get_frame(self, camera_id: int) -> Optional[np.ndarray]:
+    def get_frame(self, camera_id: int | str) -> Optional[np.ndarray]:
         """Return the latest frame (numpy BGR) or ``None``."""
-        cs = self._streams.get(camera_id)
+        try:
+            cid = int(camera_id)
+        except (ValueError, TypeError):
+            cid = camera_id  # type: ignore
+        cs = self._streams.get(cid)
         if not cs:
             return None
         with cs._lock:
@@ -174,9 +179,13 @@ class StreamManager:
                 return cs._buffer[-1]
         return None
 
-    def get_jpeg(self, camera_id: int, quality: int = 85) -> Optional[bytes]:
+    def get_jpeg(self, camera_id: int | str, quality: int = 85) -> Optional[bytes]:
         """Return pre-encoded JPEG bytes with high visual quality."""
-        cs = self._streams.get(camera_id)
+        try:
+            cid = int(camera_id)
+        except (ValueError, TypeError):
+            cid = camera_id  # type: ignore
+        cs = self._streams.get(cid)
         if not cs:
             return None
         with cs._lock:
@@ -188,9 +197,13 @@ class StreamManager:
                 return buf.tobytes() if ok else None
         return None
 
-    def get_jpeg_for_ws(self, camera_id: int) -> Optional[bytes]:
+    def get_jpeg_for_ws(self, camera_id: int | str) -> Optional[bytes]:
         """Return pre-encoded JPEG bytes or encode on-demand from buffer."""
-        cs = self._streams.get(camera_id)
+        try:
+            cid = int(camera_id)
+        except (ValueError, TypeError):
+            cid = camera_id  # type: ignore
+        cs = self._streams.get(cid)
         if not cs:
             return None
         with cs._lock:
@@ -202,7 +215,7 @@ class StreamManager:
                 return buf.tobytes() if ok else None
         return None
 
-    async def mjpeg_generator(self, camera_id: int, fps_limit: float = 15.0):
+    async def mjpeg_generator(self, camera_id: int | str, fps_limit: float = 15.0):
         """
         Yields MJPEG multipart chunks with zero CPU re-encoding overhead.
         """
@@ -223,8 +236,12 @@ class StreamManager:
 
     # -- status --------------------------------------------------------------
 
-    def get_status(self, camera_id: int) -> dict:
-        cs = self._streams.get(camera_id)
+    def get_status(self, camera_id: int | str) -> dict:
+        try:
+            cid = int(camera_id)
+        except (ValueError, TypeError):
+            cid = camera_id  # type: ignore
+        cs = self._streams.get(cid)
         if not cs:
             return {"camera_id": camera_id, "state": StreamState.STOPPED.value, "fps": 0, "last_frame_time": None}
         return {
@@ -239,8 +256,12 @@ class StreamManager:
     def get_all_statuses(self) -> list[dict]:
         return [self.get_status(cid) for cid in self._streams]
 
-    def is_online(self, camera_id: int) -> bool:
-        cs = self._streams.get(camera_id)
+    def is_online(self, camera_id: int | str) -> bool:
+        try:
+            cid = int(camera_id)
+        except (ValueError, TypeError):
+            cid = camera_id  # type: ignore
+        cs = self._streams.get(cid)
         return cs is not None and cs.state == StreamState.ONLINE
 
     # -- internal ------------------------------------------------------------

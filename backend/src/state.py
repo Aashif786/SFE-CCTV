@@ -102,11 +102,66 @@ class SessionManager:
         self._close_session()
 
 
+import threading
+
 # ---------------------------------------------------------------------------
 # Per-camera state (in-memory, reset on server restart)
 # ---------------------------------------------------------------------------
 
+# Per-camera WorkerDetector registry.
+# Each camera needs its OWN WorkerDetector so that BoT-SORT maintains
+# independent temporal track continuity per camera feed. Sharing one detector
+# across cameras causes the tracker to confuse frames from different cameras,
+# producing rapid track resets and erratic session open/close behaviour.
+#
+# To avoid the Windows cascading-lock deadlock (each WorkerDetector.__init__
+# grabs _yolo_init_lock while waiting for GPU model load), we pre-warm the
+# underlying YOLO .pt model into _pt_model_cache at startup via
+# preload_model_cache(). Subsequent WorkerDetector() calls find the model
+# already cached and return in milliseconds.
 detectors: dict[str, WorkerDetector] = {}
+_detector_init_lock = threading.RLock()
+
+
+
+def preload_model_cache() -> None:
+    """Pre-warm the shared YOLO model into GPU VRAM.
+
+    Call this ONCE at server startup (in a background thread so it doesn't
+    block uvicorn). After this returns, all subsequent WorkerDetector()
+    constructor calls skip the expensive model load and finish in <1 second.
+    """
+    from .detectors.pose_detector import _load_pt_model, get_model_filepath
+    from .config import config as _cfg
+    target_model = getattr(_cfg, "yolo_model", "yolo11m-pose.pt")
+    pt_path = get_model_filepath(target_model)
+    print("[Startup] 🔥 Pre-warming YOLO model into GPU cache…")
+    try:
+        _load_pt_model(pt_path)
+        print("[Startup] ✅ YOLO model pre-warm complete — per-camera detectors will init instantly.")
+    except Exception as e:
+        print(f"[Startup] ⚠️  Model pre-warm failed (detectors will still init on first use): {e}")
+
+
+def get_or_create_detector(camera_id: str | int) -> WorkerDetector:
+    """Thread-safe lazy initialization of a per-camera WorkerDetector.
+
+    Because the underlying YOLO .pt model is pre-warmed at startup
+    (see preload_model_cache), each WorkerDetector() call here completes
+    in <1 second regardless of how many cameras connect simultaneously.
+    """
+    cam_key = str(camera_id)
+    if cam_key not in detectors:
+        with _detector_init_lock:
+            if cam_key not in detectors:
+                detectors[cam_key] = WorkerDetector()
+    return detectors[cam_key]
+
+
+def get_detector(camera_id: str | int) -> Optional[WorkerDetector]:
+    """Non-blocking safe lookup for an existing per-camera WorkerDetector."""
+    return detectors.get(str(camera_id))
+
 session_managers: dict[str, SessionManager] = {}
 
 # Track whether a person was detected in the PREVIOUS frame per camera.

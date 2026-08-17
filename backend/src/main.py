@@ -1,8 +1,8 @@
 """
-CALVISION — Worker Monitoring API Server Entry Point.
+CALVISION - Worker Monitoring API Server Entry Point.
 
 Thin orchestrator module that creates the FastAPI application, mounts CORS
-middleware, registers database tables & startup handlers, includes all sub-routers,
+middleware, registers database tables and startup handlers, includes all sub-routers,
 and registers the WebSocket endpoint.
 """
 
@@ -20,8 +20,8 @@ torch.set_num_threads(2)
 from .db.database import engine, Base, SessionLocal
 from .db.models import WorkerSessionDB, EmployeeDB, EmployeeZoneDB, EmployeeDailySummary
 
-# Sub-routers
-from .identity.api import router as identity_router
+# Sub-routers and managers
+from .identity.api import router as identity_router, _provider
 from .cameras.api import router as cameras_router, seed_cameras
 from .cameras.stream_manager import stream_manager
 from .api.settings import router as settings_router
@@ -34,6 +34,11 @@ from .spatial.api import router as spatial_handoff_router
 # WebSocket handlers
 from .ws.handler import websocket_endpoint
 from .ws.ai_stream import camera_ai_endpoint
+
+import threading
+from contextlib import asynccontextmanager
+from .zones.background_tracker import background_tracker
+from .state import preload_model_cache
 
 # ---------------------------------------------------------------------------
 # Create / migrate tables on startup
@@ -64,7 +69,19 @@ with SessionLocal() as db:
 
 
 # ---------------------------------------------------------------------------
-# Application Initialization & Routers
+# Direct Service Initialization (Guaranteed Startup)
+# ---------------------------------------------------------------------------
+print("[Startup] 🚀 Initializing CALVISION services...")
+seed_cameras()
+stream_manager.start_all_enabled()
+background_tracker.start()
+threading.Thread(target=preload_model_cache, name="model-prewarm", daemon=True).start()
+
+
+
+
+# ---------------------------------------------------------------------------
+# Application Initialization and Routers
 # ---------------------------------------------------------------------------
 app = FastAPI(title="CALVISION Worker Monitoring API", version="2.0")
 
@@ -89,24 +106,3 @@ app.include_router(spatial_handoff_router)
 # Register WebSocket endpoints
 app.websocket("/ws")(websocket_endpoint)
 app.websocket("/ws/camera/{camera_id}")(camera_ai_endpoint)
-
-
-from .zones.background_tracker import background_tracker
-
-
-# ---------------------------------------------------------------------------
-# Lifecycle Events
-# ---------------------------------------------------------------------------
-@app.on_event("startup")
-def startup_cameras():
-    """Seed demo cameras on first run, then start all enabled streams and background tracker."""
-    seed_cameras()
-    stream_manager.start_all_enabled()
-    background_tracker.start()
-
-
-@app.on_event("shutdown")
-def shutdown_cameras():
-    """Stop all camera streams and background tracker on server shutdown."""
-    background_tracker.stop()
-    stream_manager.stop_all()

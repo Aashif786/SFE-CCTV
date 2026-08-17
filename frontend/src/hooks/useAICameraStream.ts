@@ -122,9 +122,11 @@ export function useAICameraStream(
     setImage(null);
     lastMsgTimeRef.current = 0;
 
+    let reconnectTimer: NodeJS.Timeout | null = null;
     const host =
       typeof window !== "undefined" ? window.location.hostname : "localhost";
-    const ws = new WebSocket(`ws://${host}:8000/ws/camera/${cameraId}`);
+    const wsUrl = `ws://${host}:8000/ws/camera/${cameraId}`;
+    const ws = new WebSocket(wsUrl);
     wsRef.current = ws;
 
     ws.onopen = () => {
@@ -198,9 +200,27 @@ export function useAICameraStream(
 
     return () => {
       mountedRef.current = false;
+      if (reconnectTimer) clearTimeout(reconnectTimer);
       if (wsRef.current) {
-        wsRef.current.close();
+        const socket = wsRef.current;
         wsRef.current = null;
+        if (socket.readyState === WebSocket.CONNECTING) {
+          socket.onopen = () => {
+            try {
+              socket.close();
+            } catch {
+              // ignore
+            }
+          };
+          socket.onmessage = null;
+          socket.onerror = null;
+        } else if (socket.readyState === WebSocket.OPEN) {
+          try {
+            socket.close();
+          } catch {
+            // ignore
+          }
+        }
       }
     };
   }, [cameraId]);
