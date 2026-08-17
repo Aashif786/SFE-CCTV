@@ -41,6 +41,8 @@ export default function DoorConfigsPage() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [lastRefresh, setLastRefresh] = useState(new Date());
+  const [mounted, setMounted] = useState(false);
+
   
   // Form states
   const [ip, setIp] = useState("");
@@ -88,10 +90,12 @@ export default function DoorConfigsPage() {
   }, [simGate]);
 
   useEffect(() => {
+    setMounted(true);
     fetchData();
     const interval = setInterval(fetchData, 4000);
     return () => clearInterval(interval);
   }, [fetchData]);
+
 
   const toggleCheckInCam = (camId: number) => {
     setCheckInCameras(prev =>
@@ -299,8 +303,9 @@ export default function DoorConfigsPage() {
             transition-all shadow-sm"
         >
           <RefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin text-emerald-500' : ''}`} />
-          <span>Last Poll: {lastRefresh.toLocaleTimeString()}</span>
+          <span>Last Poll: {mounted ? lastRefresh.toLocaleTimeString() : "--:--:--"}</span>
         </button>
+
       </div>
 
       {/* Main Grid: Terminals List & Add / Simulation */}
