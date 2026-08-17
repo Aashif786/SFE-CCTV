@@ -101,9 +101,12 @@ class IdentityEventDB(Base):
     entry_gate = Column(String, nullable=False)
     provider = Column(String, nullable=False)  # REST_SIMULATOR | RFID | NFC | MQTT …
     correlation_status = Column(String, nullable=False, default="WAITING_FOR_TRACK")
+    allowed_cameras = Column(String, nullable=True)     # JSON array string or comma-separated
     matched_track_id = Column(String, nullable=True)   # populated on MATCHED
+    matched_camera_id = Column(String, nullable=True)  # camera where person was matched
     matched_at = Column(DateTime, nullable=True)        # UTC time of successful match
     correlation_delay_seconds = Column(Float, nullable=True)
+
 
 
 class WorkerSessionDB(Base):

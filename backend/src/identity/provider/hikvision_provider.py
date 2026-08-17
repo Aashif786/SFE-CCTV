@@ -48,14 +48,12 @@ class HikvisionProvider(IdentityEventProvider):
 
     def receive_event(self, payload: IdentityEventCreate) -> IdentityEvent:
         """
-        We fulfill the base class requirement, but in our case, the events 
-        are pushed asynchronously from the threads.
+        Processes simulated or externally pushed identity events.
         """
         from ..models import IdentityEvent
         import uuid
-        is_exit = payload.event_type == "EXIT"
-        corr_status = "MATCHED" if is_exit else "WAITING_FOR_TRACK"
         
+        allowed = [str(c) for c in payload.allowed_cameras] if payload.allowed_cameras else []
         event = IdentityEvent(
             event_id=str(uuid.uuid4()),
             employee_id=payload.employee_id,
@@ -63,17 +61,12 @@ class HikvisionProvider(IdentityEventProvider):
             timestamp=payload.timestamp or datetime.now(timezone.utc).replace(tzinfo=None),
             entry_gate=payload.entry_gate,
             provider=self.PROVIDER_NAME,
-            correlation_status=corr_status
+            correlation_status="WAITING_FOR_TRACK",
+            allowed_cameras=allowed,
+            correlation_window_seconds=payload.correlation_window_seconds,
         )
-        
-        if is_exit:
-            try:
-                from ..session_manager import worker_session_manager
-                worker_session_manager.close_sessions_for_employee(payload.employee_id)
-            except Exception as e:
-                logger.error(f"Error closing sessions on simulated EXIT: {e}")
-                
         return event
+
 
     def start_streams(self):
         if self.is_running:
@@ -269,7 +262,7 @@ class HikvisionProvider(IdentityEventProvider):
         try:
             logger.info(f"[{gate_name}] ✅ Access event: employee={emp_id} ({ev_name}), major={major}, minor={minor}, time={ev_time}")
 
-            # Determine direction from gate name
+            # Determine direction from gate name or door controller event
             is_exit = "out" in gate_name.lower()
             ev_type = "EXIT" if is_exit else "ENTRY"
 
@@ -277,15 +270,30 @@ class HikvisionProvider(IdentityEventProvider):
             try:
                 # Hikvision format: 2026-07-13T12:56:02+05:30
                 event_ts = datetime.fromisoformat(ev_time)
-                # Convert to UTC for internal storage
                 event_ts_utc = event_ts.astimezone(timezone.utc)
             except (ValueError, TypeError):
                 event_ts_utc = datetime.now(timezone.utc)
 
-            import uuid
+            # Match door configuration for allowed cameras & correlation window
+            matched_door = None
+            gate_clean = gate_name.lower().strip()
+            for d in env_settings.hikvision_doors:
+                d_name = (d.get("name") or "").lower().strip()
+                d_ip = (d.get("ip") or "").lower().strip()
+                if gate_clean == d_name or gate_clean == d_ip or d_name in gate_clean:
+                    matched_door = d
+                    break
 
-            # If it's an EXIT, we mark it MATCHED immediately as it doesn't need camera tracking
-            corr_status = "MATCHED" if is_exit else "WAITING_FOR_TRACK"
+            allowed_cams = []
+            corr_window = 10.0
+            if matched_door:
+                if ev_type == "EXIT":
+                    allowed_cams = [str(c) for c in (matched_door.get("check_out_cameras") or [])]
+                else:
+                    allowed_cams = [str(c) for c in (matched_door.get("check_in_cameras") or [])]
+                corr_window = float(matched_door.get("correlation_window_seconds") or 10.0)
+
+            import uuid
 
             event = IdentityEvent(
                 event_id=str(uuid.uuid4()),
@@ -295,19 +303,19 @@ class HikvisionProvider(IdentityEventProvider):
                 timestamp=event_ts_utc,
                 entry_gate=gate_name,
                 provider=self.PROVIDER_NAME,
-                correlation_status=corr_status
+                correlation_status="WAITING_FOR_TRACK",
+                allowed_cameras=allowed_cams,
+                correlation_window_seconds=corr_window,
             )
 
             # Register event with the correlation engine
             self.callback_engine.register_identity_event(event)
 
             if is_exit:
-                # Close any active camera sessions for this employee
-                from ..session_manager import worker_session_manager
-                worker_session_manager.close_sessions_for_employee(emp_id)
-                logger.info(f"[{gate_name}] Registered EXIT for {emp_id} ({ev_name})")
+                logger.info(f"[{gate_name}] Registered EXIT for {emp_id} ({ev_name}) [Allowed check-out cams: {allowed_cams}]")
             else:
-                logger.info(f"[{gate_name}] Registered ENTRY for {emp_id} ({ev_name})")
+                logger.info(f"[{gate_name}] Registered ENTRY for {emp_id} ({ev_name}) [Allowed check-in cams: {allowed_cams}]")
+
 
         except Exception as e:
             logger.error(f"[{gate_name}] Error processing poll event: {e}")

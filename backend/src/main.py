@@ -53,7 +53,10 @@ try:
         conn.execute(text('ALTER TABLE employee_daily_summary ADD COLUMN IF NOT EXISTS common_area_seconds FLOAT DEFAULT 0.0 NOT NULL;'))
         conn.execute(text('ALTER TABLE employee_daily_summary ADD COLUMN IF NOT EXISTS break_seconds FLOAT DEFAULT 0.0 NOT NULL;'))
         conn.execute(text('ALTER TABLE employee_daily_summary ADD COLUMN IF NOT EXISTS productivity_score FLOAT DEFAULT 100.0 NOT NULL;'))
+        conn.execute(text('ALTER TABLE identity_events ADD COLUMN IF NOT EXISTS allowed_cameras TEXT;'))
+        conn.execute(text('ALTER TABLE identity_events ADD COLUMN IF NOT EXISTS matched_camera_id TEXT;'))
         conn.commit()
+
 except Exception as _mig_err:
     print(f"[Startup] Table migration check warning: {_mig_err}")
 

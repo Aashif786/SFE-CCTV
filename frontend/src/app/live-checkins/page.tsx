@@ -24,10 +24,13 @@ interface IdentityEvent {
   entry_gate: string;
   provider: string;
   correlation_status: "WAITING_FOR_TRACK" | "MATCHED" | "EXPIRED";
+  allowed_cameras?: (string | number)[];
   matched_track_id: string | null;
+  matched_camera_id?: string | null;
   matched_at: string | null;
   correlation_delay_seconds: number | null;
 }
+
 
 export default function LiveCheckinsPage() {
   const [doors, setDoors] = useState<DoorStatus[]>([]);
@@ -182,59 +185,77 @@ export default function LiveCheckinsPage() {
                     <th className="pb-3 pr-4">Date &amp; Time</th>
                     <th className="pb-3 pr-4">Type</th>
                     <th className="pb-3 pr-4">Gate</th>
-                    <th className="pb-3 pr-4 text-right">Status</th>
+                    <th className="pb-3 pr-4">Expected Cameras</th>
+                    <th className="pb-3 pr-4 text-right">Status / Match</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-[hsl(var(--border))]/40">
-                  {events.map((event) => (
-                    <tr
-                      key={event.event_id}
-                      className="hover:bg-[hsl(var(--bg-table-head))]/50 transition-colors"
-                    >
-                      <td className="py-3.5 pr-4 pl-2 font-mono font-bold text-[hsl(var(--text-primary))] text-xs">
-                        {event.employee_id}
-                      </td>
-                      <td className="py-3.5 pr-4 font-semibold text-[hsl(var(--text-primary))]">
-                        {event.employee_name || "—"}
-                      </td>
-                      <td className="py-3.5 pr-4 text-xs text-[hsl(var(--text-muted))]">
-                        {formatDateTime(event.timestamp)}
-                      </td>
-                      <td className="py-3.5 pr-4">
-                        <span className={`text-[10px] font-black px-2 py-0.5 rounded border inline-block ${
-                          event.event_type === "EXIT"
-                            ? "bg-purple-500/10 text-purple-700 dark:text-purple-400 border-purple-500/20"
-                            : "bg-blue-500/10 text-blue-700 dark:text-blue-400 border-blue-500/20"
-                        }`}>
-                          {event.event_type === "EXIT" ? "OUT" : "IN"}
-                        </span>
-                      </td>
-                      <td className="py-3.5 pr-4 text-xs font-semibold text-[hsl(var(--text-secondary))]">
-                        {event.entry_gate}
-                      </td>
-                      <td className="py-3.5 pr-4 text-right">
-                        <div className="flex flex-col items-end gap-1">
-                          <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full inline-flex items-center gap-1 ${
-                            event.correlation_status === "MATCHED"
-                              ? "bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 border border-emerald-500/20"
-                              : event.correlation_status === "WAITING_FOR_TRACK"
-                              ? "bg-amber-500/15 text-amber-700 dark:text-amber-300 border border-amber-500/20"
-                              : "bg-red-500/15 text-red-600 dark:text-red-400 border border-red-500/20"
+                  {events.map((event) => {
+                    const allowedCams = event.allowed_cameras || [];
+                    return (
+                      <tr
+                        key={event.event_id}
+                        className="hover:bg-[hsl(var(--bg-table-head))]/50 transition-colors"
+                      >
+                        <td className="py-3.5 pr-4 pl-2 font-mono font-bold text-[hsl(var(--text-primary))] text-xs">
+                          {event.employee_id}
+                        </td>
+                        <td className="py-3.5 pr-4 font-semibold text-[hsl(var(--text-primary))]">
+                          {event.employee_name || "—"}
+                        </td>
+                        <td className="py-3.5 pr-4 text-xs text-[hsl(var(--text-muted))]">
+                          {formatDateTime(event.timestamp)}
+                        </td>
+                        <td className="py-3.5 pr-4">
+                          <span className={`text-[10px] font-black px-2 py-0.5 rounded border inline-block ${
+                            event.event_type === "EXIT"
+                              ? "bg-purple-500/10 text-purple-700 dark:text-purple-400 border-purple-500/20"
+                              : "bg-blue-500/10 text-blue-700 dark:text-blue-400 border-blue-500/20"
                           }`}>
-                            {event.correlation_status === "MATCHED" && <CheckCircle2 className="w-3 h-3" />}
-                            {event.correlation_status === "WAITING_FOR_TRACK" && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
-                            {event.correlation_status === "EXPIRED" && <AlertCircle className="w-3 h-3" />}
-                            {event.correlation_status.replace("_", " ")}
+                            {event.event_type === "EXIT" ? "OUT" : "IN"}
                           </span>
-                          {event.matched_track_id && (
-                            <span className="text-[10px] text-emerald-600 dark:text-emerald-400/80 font-mono">
-                              Track {event.matched_track_id} ({event.correlation_delay_seconds?.toFixed(1)}s delay)
-                            </span>
+                        </td>
+                        <td className="py-3.5 pr-4 text-xs font-semibold text-[hsl(var(--text-secondary))]">
+                          {event.entry_gate}
+                        </td>
+                        <td className="py-3.5 pr-4">
+                          {allowedCams.length === 0 ? (
+                            <span className="text-[11px] text-[hsl(var(--text-muted))] italic">All cameras</span>
+                          ) : (
+                            <div className="flex flex-wrap gap-1">
+                              {allowedCams.map((cid) => (
+                                <span key={cid} className="text-[10px] px-1.5 py-0.5 rounded bg-slate-500/10 text-[hsl(var(--text-secondary))] font-mono font-medium border border-[hsl(var(--border))]">
+                                  Cam {cid}
+                                </span>
+                              ))}
+                            </div>
                           )}
-                        </div>
-                      </td>
-                    </tr>
-                  ))}
+                        </td>
+                        <td className="py-3.5 pr-4 text-right">
+                          <div className="flex flex-col items-end gap-1">
+                            <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full inline-flex items-center gap-1 ${
+                              event.correlation_status === "MATCHED"
+                                ? "bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 border border-emerald-500/20"
+                                : event.correlation_status === "WAITING_FOR_TRACK"
+                                ? "bg-amber-500/15 text-amber-700 dark:text-amber-300 border border-amber-500/20"
+                                : "bg-red-500/15 text-red-600 dark:text-red-400 border border-red-500/20"
+                            }`}>
+                              {event.correlation_status === "MATCHED" && <CheckCircle2 className="w-3 h-3" />}
+                              {event.correlation_status === "WAITING_FOR_TRACK" && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
+                              {event.correlation_status === "EXPIRED" && <AlertCircle className="w-3 h-3" />}
+                              {event.correlation_status.replace("_", " ")}
+                            </span>
+                            {event.matched_track_id && (
+                              <span className="text-[10px] text-emerald-600 dark:text-emerald-400/90 font-mono">
+                                {event.matched_camera_id ? `Cam ${event.matched_camera_id} ` : ""}Track {event.matched_track_id} ({event.correlation_delay_seconds?.toFixed(1)}s delay)
+                              </span>
+                            )}
+                          </div>
+                        </td>
+                      </tr>
+                    );
+                  })}
+
                 </tbody>
               </table>
             </div>
