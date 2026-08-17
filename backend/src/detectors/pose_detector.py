@@ -1,3 +1,4 @@
+from typing import Any, Optional
 import cv2
 import numpy as np
 import math
@@ -6,6 +7,29 @@ import threading
 import yaml
 import torch
 from ultralytics import YOLO
+
+# Safe conversion utility for tensors / arrays returned by Ultralytics / trackers
+def _safe_to_numpy(val: Any) -> Optional[np.ndarray]:
+    """Safely convert torch.Tensor, numpy.ndarray, list, or scalar to numpy.ndarray."""
+    if val is None:
+        return None
+    if isinstance(val, np.ndarray):
+        return val
+    if hasattr(val, "cpu"):
+        try:
+            val = val.cpu()
+        except Exception:
+            pass
+    if hasattr(val, "numpy"):
+        try:
+            return val.numpy()
+        except Exception:
+            pass
+    try:
+        return np.asarray(val)
+    except Exception:
+        return None
+
 
 # Monkey-patch Ultralytics GMC (Global Motion Compensation) to handle frame shape changes
 # and avoid repeated OpenCV assertion failure warnings:
@@ -43,6 +67,55 @@ try:
 except Exception:
     pass
 
+# Monkey-patch Ultralytics BoT-SORT ReID encoder to prevent:
+# "AttributeError: 'numpy.ndarray' object has no attribute 'cpu'"
+# which occurs in ultralytics.trackers.bot_sort when native features are already NumPy arrays.
+try:
+    import ultralytics.trackers.bot_sort as _bot_sort_mod
+
+    def _safe_bot_encoder(feats, s=None):
+        if feats is None:
+            return []
+        res = []
+        for f in feats:
+            if isinstance(f, np.ndarray):
+                res.append(f)
+            elif hasattr(f, "cpu"):
+                try:
+                    res.append(f.cpu().numpy())
+                except Exception:
+                    res.append(np.asarray(f))
+            else:
+                res.append(np.asarray(f))
+        return res
+
+    _orig_botsort_init = getattr(_bot_sort_mod.BOTSORT, "__init__", None)
+    if _orig_botsort_init:
+        def _safe_botsort_init(self, args: Any, frame_rate: int = 30):
+            _orig_botsort_init(self, args, frame_rate)
+            if getattr(args, "with_reid", False) and getattr(self.args, "model", None) == "auto":
+                self.encoder = _safe_bot_encoder
+
+        _bot_sort_mod.BOTSORT.__init__ = _safe_botsort_init
+
+    if hasattr(_bot_sort_mod, "ReID"):
+        _orig_reid_call = getattr(_bot_sort_mod.ReID, "__call__", None)
+        if _orig_reid_call:
+            def _safe_reid_call(self, img: np.ndarray, dets: np.ndarray):
+                try:
+                    feats = self.model.predictor(
+                        [_bot_sort_mod.save_one_box(det, img, save=False) for det in _bot_sort_mod.xywh2xyxy(torch.from_numpy(dets[:, :4]))]
+                    )
+                    if len(feats) != dets.shape[0] and feats[0].shape[0] == dets.shape[0]:
+                        feats = feats[0]
+                    return _safe_bot_encoder(feats)
+                except Exception:
+                    return []
+
+            _bot_sort_mod.ReID.__call__ = _safe_reid_call
+except Exception:
+    pass
+
 from ..config import config
 from .onnx_exporter import get_onnx_path, onnx_exists, export_onnx_blocking
 
@@ -69,19 +142,26 @@ def get_model_filepath(model_name: str) -> str:
 
 
 _pt_model_cache: dict[str, YOLO] = {}
-_pt_model_lock = threading.Lock()
+_pt_model_lock = threading.RLock()
+_yolo_init_lock = threading.RLock()
+_yolo_inference_lock = threading.RLock()
 
 
 def _load_pt_model(pt_path: str) -> "YOLO":
     """
-    Load a YOLO .pt model for tracking (cached by file path).
+    Create an isolated YOLO model instance for a camera detector.
+    Serialized via _yolo_init_lock to avoid CUDA initialization collisions on Windows.
+    Each detector gets its OWN YOLO instance so BoT-SORT tracker state is completely
+    isolated per camera stream and never crosses over.
     """
-    with _pt_model_lock:
-        if pt_path not in _pt_model_cache:
-            model = YOLO(pt_path)
-            print(f"[WorkerDetector] 📦 Loaded PyTorch model into cache: {os.path.basename(pt_path)} (BoT-SORT tracking enabled)")
-            _pt_model_cache[pt_path] = model
-        return _pt_model_cache[pt_path]
+    with _yolo_init_lock:
+        model = YOLO(pt_path)
+        device_id = 0 if torch.cuda.is_available() else "cpu"
+        device = "cuda:0" if torch.cuda.is_available() else "cpu"
+        model.to(device)
+        return model
+
+
 
 
 def _trigger_onnx_export_background(pt_path: str, imgsz: int) -> None:
@@ -144,41 +224,25 @@ class WorkerDetector:
             torch.backends.cudnn.benchmark = True
             torch.backends.cuda.matmul.allow_tf32 = True
             torch.backends.cudnn.allow_tf32 = True
-            print(f"[WorkerDetector] 🚀 GPU Acceleration Enabled: {torch.cuda.get_device_name(0)}")
         else:
             self.device_id = "cpu"
             self.device = "cpu"
             torch.set_num_threads(4)
-            print("[WorkerDetector] ⚠️ Running on CPU mode.")
 
         # Resolve .pt model path from backend/models/
         target_model = getattr(config, "yolo_model", "yolo11m-pose.pt")
         _pt_path = get_model_filepath(target_model)
 
-        # ── Mod 7: FP16 acceleration via half=True ──────────────────────────
-        # ONNX/TensorRT exports only support .predict() — NOT .track().
-        # The real GPU speedup for .track() is FP16 half-precision inference,
-        # which Ultralytics natively supports with .pt models on CUDA.
-        # Speedup: ~1.5-2x latency reduction with zero accuracy loss on RTX GPUs.
         self.use_half = (self.device != "cpu")  # FP16 only valid on CUDA, not CPU
 
-        self.model = _load_pt_model(_pt_path)
-        self.model.to(self.device)
-        self.model_name = target_model
+        with _yolo_init_lock:
+            self.model = _load_pt_model(_pt_path)
+            self.model_name = target_model
 
-        # Trigger background ONNX export for future reference (not used for tracking)
-        use_onnx = getattr(config, "use_onnx", True)
-        if use_onnx and not onnx_exists(_pt_path):
-            _trigger_onnx_export_background(_pt_path, imgsz=getattr(config, "yolo_imgsz", 640))
-        # ────────────────────────────────────────────────────────────────────
-
-        # Warm up CUDA GPU engine to pre-allocate VRAM & compile kernels at startup
-        if self.device != "cpu":
-            try:
-                dummy = np.zeros((480, 640, 3), dtype=np.uint8)
-                self.model(dummy, verbose=False, device=self.device_id)
-            except Exception as e:
-                print(f"[WorkerDetector] CUDA warmup note: {e}")
+            # Trigger background ONNX export for future reference (not used for tracking)
+            use_onnx = getattr(config, "use_onnx", True)
+            if use_onnx and not onnx_exists(_pt_path):
+                _trigger_onnx_export_background(_pt_path, imgsz=getattr(config, "yolo_imgsz", 640))
         
         # Per-track EMA smoothing state — keyed by track_id
         self.smoothed: dict[int, list[list[float]]] = {}
@@ -305,65 +369,100 @@ class WorkerDetector:
         """
         Process one BGR frame and return per-pose data for all detected people.
         """
+        if frame is None or not isinstance(frame, np.ndarray) or frame.size == 0:
+            return []
+
         self.frame_count += 1
         h, w, _ = frame.shape
 
-        # Dynamic reload YOLO model
-        target_model = getattr(config, "yolo_model", "yolo11m-pose.pt")
-        if not hasattr(self, "model_name") or self.model_name != target_model:
-            print(f"[WorkerDetector] Reloading YOLO model: {getattr(self, 'model_name', 'None')} -> {target_model}")
-            _pt_path = get_model_filepath(target_model)
-            self.model = _load_pt_model(_pt_path)
-            self.model.to(self.device)
-            self.model_name = target_model
-            # Trigger background ONNX export for the new model if needed
-            use_onnx = getattr(config, "use_onnx", True)
-            if use_onnx and not onnx_exists(_pt_path):
-                _trigger_onnx_export_background(_pt_path, imgsz=getattr(config, "yolo_imgsz", 640))
-            # Clear all per-track state because the new model will restart track IDs
-            self.smoothed.clear()
-            self.prev_smoothed.clear()
-            self.idle_seconds.clear()
-            self.hands_off_seconds.clear()
-            self.pos_history.clear()
-            self.last_seen_frame.clear()
-            self.prev_worker_pos.clear()
-            self.smoothed_velocities.clear()
-            self.last_confirmed_box.clear()
-            self.dropped_ids.clear()
-            self.last_returned_ids = set()
 
-        # Dynamic EMA_ALPHA
-        self.EMA_ALPHA = getattr(config, "ema_alpha", 0.80)
+        with _yolo_inference_lock:
+            # Dynamic reload YOLO model
+            target_model = getattr(config, "yolo_model", "yolo11m-pose.pt")
+            if not hasattr(self, "model_name") or self.model_name != target_model:
+                print(f"[WorkerDetector] Reloading YOLO model: {getattr(self, 'model_name', 'None')} -> {target_model}")
+                _pt_path = get_model_filepath(target_model)
+                self.model = _load_pt_model(_pt_path)
+                self.model.to(self.device)
+                self.model_name = target_model
+                # Trigger background ONNX export for the new model if needed
+                use_onnx = getattr(config, "use_onnx", True)
+                if use_onnx and not onnx_exists(_pt_path):
+                    _trigger_onnx_export_background(_pt_path, imgsz=getattr(config, "yolo_imgsz", 640))
+                # Clear all per-track state because the new model will restart track IDs
+                self.smoothed.clear()
+                self.prev_smoothed.clear()
+                self.idle_seconds.clear()
+                self.hands_off_seconds.clear()
+                self.pos_history.clear()
+                self.last_seen_frame.clear()
+                self.prev_worker_pos.clear()
+                self.smoothed_velocities.clear()
+                self.last_confirmed_box.clear()
+                self.dropped_ids.clear()
+                self.last_returned_ids = set()
 
-        # Use YOLO's built-in robust tracking (BoT-SORT / ByteTrack).
-        # Note: half/quantize are export()-only args and must NOT be passed to track().
-        # GPU throughput is maximised via allow_tf32=True already set in __init__.
-        results = self.model.track(
-            frame,
-            persist=True,
-            verbose=False,
-            device=self.device_id,
-            conf=getattr(config, "yolo_conf", 0.30),
-            iou=getattr(config, "yolo_iou", 0.90),
-            imgsz=getattr(config, "yolo_imgsz", 640),
-            tracker=self.tracker_config,
-        )
-        self._refresh_botsort_features()
+            # Dynamic EMA_ALPHA
+            self.EMA_ALPHA = getattr(config, "ema_alpha", 0.80)
 
-        if len(results) == 0 or results[0].boxes is None or results[0].boxes.id is None:
-            return []
-            
-        keypoints_obj = results[0].keypoints
-        if keypoints_obj is None or keypoints_obj.xyn.numel() == 0:
-            return []
+            # Use YOLO's built-in robust tracking (BoT-SORT / ByteTrack).
+            # Wrap with torch.inference_mode() to prevent gradient graph accumulation & CUDA OOM.
+            try:
+                with torch.inference_mode():
+                    results = self.model.track(
+                        frame,
+                        persist=True,
+                        verbose=False,
+                        device=self.device_id,
+                        conf=getattr(config, "yolo_conf", 0.30),
+                        iou=getattr(config, "yolo_iou", 0.90),
+                        imgsz=getattr(config, "yolo_imgsz", 640),
+                        tracker=self.tracker_config,
+                    )
+            except (torch.cuda.OutOfMemoryError, RuntimeError) as cuda_err:
+                if "out of memory" in str(cuda_err).lower() or isinstance(cuda_err, torch.cuda.OutOfMemoryError):
+                    print(f"[WorkerDetector] ⚠️ CUDA OOM during track — releasing VRAM cache...")
+                    torch.cuda.empty_cache()
+                    return []
+                raise cuda_err
 
-        xyn_batch = keypoints_obj.xyn.cpu().numpy()  # (num_poses, 17, 2)
-        conf_batch = keypoints_obj.conf.cpu().numpy() # (num_poses, 17)
-        track_ids = results[0].boxes.id.cpu().numpy().astype(int) # (num_poses,)
-        box_xyxy = results[0].boxes.xyxy.cpu().numpy() # (num_poses, 4)
+            self._refresh_botsort_features()
+
+            # ── Extract all tensor/array data to numpy INSIDE the lock ────────
+            # _yolo_inference_lock is shared across all per-camera detectors.
+            # Convert all tensors/arrays into standard NumPy arrays immediately
+            # before releasing the lock, using _safe_to_numpy to avoid AttributeError.
+            if len(results) == 0 or getattr(results[0], "boxes", None) is None:
+                return []
+
+
+            box_xyxy = _safe_to_numpy(getattr(results[0].boxes, "xyxy", None))
+            if box_xyxy is None or box_xyxy.size == 0 or len(box_xyxy) == 0:
+                return []
+
+            keypoints_obj = getattr(results[0], "keypoints", None)
+            if keypoints_obj is None:
+                return []
+
+            xyn_raw = getattr(keypoints_obj, "xyn", None)
+            if xyn_raw is None:
+                return []
+
+            xyn_batch = _safe_to_numpy(xyn_raw)
+            if xyn_batch is None or xyn_batch.size == 0 or len(xyn_batch) == 0:
+                return []
+
+            conf_batch = _safe_to_numpy(getattr(keypoints_obj, "conf", None))
+
+            # Extract track IDs, with fallback if tracker hasn't assigned IDs yet
+            track_ids_raw = _safe_to_numpy(getattr(results[0].boxes, "id", None))
+            if track_ids_raw is not None and track_ids_raw.size > 0:
+                track_ids = track_ids_raw.astype(int)
+            else:
+                track_ids = np.arange(1, len(box_xyxy) + 1, dtype=int)
 
         poses_out = []
+
         # Spatial jump gate: maximum normalised distance the box centre can
         # travel in one frame before logging a warning (increased to 50% frame width).
         MAX_CENTRE_JUMP = 0.50
@@ -371,8 +470,9 @@ class WorkerDetector:
         for idx in range(len(track_ids)):
             track_id = int(track_ids[idx])
             xyn = xyn_batch[idx]
-            conf = conf_batch[idx]
+            conf = conf_batch[idx] if (conf_batch is not None and idx < len(conf_batch)) else np.ones(17, dtype=np.float32)
             xyxy = box_xyxy[idx]
+
 
             # --- Spatial continuity check ----------------------------------------
             cx_new = ((xyxy[0] + xyxy[2]) / 2) / w
@@ -382,8 +482,7 @@ class WorkerDetector:
                 cx_old = (lb[0] + lb[2]) / 2
                 cy_old = (lb[1] + lb[3]) / 2
                 jump = math.sqrt((cx_new - cx_old) ** 2 + (cy_new - cy_old) ** 2)
-                if jump > MAX_CENTRE_JUMP:
-                    print(f"[WorkerDetector] ℹ️ Rapid position jump for track {track_id}: Δ={jump:.3f}")
+
 
             # ALWAYS update last confirmed box (normalised) so position state advances cleanly
             self.last_confirmed_box[track_id] = [

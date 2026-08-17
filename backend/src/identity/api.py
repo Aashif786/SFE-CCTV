@@ -88,14 +88,6 @@ class DynamicProviderProxy:
 
 _provider = DynamicProviderProxy()
 
-@router.on_event("startup")
-def startup_provider():
-    _provider.start_streams()
-
-@router.on_event("shutdown")
-def shutdown_provider():
-    _provider.stop_streams()
-
 
 
 

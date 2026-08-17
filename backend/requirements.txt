@@ -14,3 +14,4 @@ cryptography
 onnxruntime-gpu
 psutil
 watchfiles
+lapx

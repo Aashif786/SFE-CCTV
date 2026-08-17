@@ -2,8 +2,8 @@
 tracker_type: botsort
 track_high_thresh: 0.3
 track_low_thresh: 0.1
-new_track_thresh: 0.66
-track_buffer: 120
+new_track_thresh: 0.4
+track_buffer: 240
 match_thresh: 0.8
 fuse_score: True
 
@@ -11,7 +11,7 @@ fuse_score: True
 gmc_method: none
 
 # ReID (GPU Native Acceleration)
-with_reid: False
+with_reid: True
 model: auto
-proximity_thresh: 0.13
-appearance_thresh: 0.5
+proximity_thresh: 0.7
+appearance_thresh: 0.3

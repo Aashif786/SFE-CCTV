@@ -32,6 +32,7 @@ from ..spatial.engine import spatial_handoff_engine
 from ..zones.dwell_tracker import _to_utc
 from ..state import (
     detectors,
+    get_or_create_detector,
     session_managers,
     prev_track_ids,
     track_absent_frames,
@@ -65,12 +66,9 @@ async def websocket_endpoint(websocket: WebSocket):
             image_b64 = payload["image"]
             camera_id = payload.get("camera_id", "default")
 
-            # Lazy-init per-camera objects
-            if camera_id not in detectors:
-                # Run blocking model init in thread pool so the event loop isn't blocked
-                new_det = await asyncio.to_thread(WorkerDetector)
-                if camera_id not in detectors:
-                    detectors[camera_id] = new_det
+            # Lazy-init per-camera objects using thread-safe state registry
+            detector = await asyncio.to_thread(get_or_create_detector, camera_id)
+
             if camera_id not in session_managers:
                 session_managers[camera_id] = SessionManager(camera_id)
             if camera_id not in prev_track_ids:
@@ -78,7 +76,6 @@ async def websocket_endpoint(websocket: WebSocket):
             if camera_id not in track_absent_frames:
                 track_absent_frames[camera_id] = {}
 
-            detector = detectors[camera_id]
             sm = session_managers[camera_id]
 
             # Decode frame
