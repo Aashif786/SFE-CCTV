@@ -54,7 +54,6 @@ if (-not (Test-Path "backend\settings.json")) {
     Write-Host "[OK] backend\settings.json already exists." -ForegroundColor Green
 }
 
-
 # 5. Setup Python Virtual Environment and GPU-Accelerated Backend Dependencies
 Write-Host "[INFO] Setting up Python Virtual Environment with CUDA GPU acceleration..." -ForegroundColor Yellow
 $PythonLauncher = "python"
@@ -75,7 +74,7 @@ if (Test-Path $PyCmd) {
     Write-Host "[INFO] Upgrading pip..." -ForegroundColor Yellow
     & $PyCmd -m pip install --upgrade pip 2>$null
 
-    # ── GPU Detection ──────────────────────────────────────────────────
+    # -- GPU Detection ----------------------------------------------------
     $HasGPU = $false
     try {
         $NvidiaSmiOutput = & nvidia-smi --query-gpu=name --format=csv,noheader 2>$null
@@ -95,7 +94,7 @@ if (Test-Path $PyCmd) {
         & $PyCmd -m pip install onnxruntime
     }
 
-    # ── Dynamically add user site-packages to venv search path ────────
+    # -- Dynamically add user site-packages to venv search path ------------
     # This allows GPU wheels installed in the user profile to be found
     $UserSite = & $PyCmd -c "import site; print(site.getusersitepackages())" 2>$null
     $SystemSite = & $PyCmd -c "import site; print(site.getsitepackages()[0])" 2>$null
@@ -106,7 +105,7 @@ if (Test-Path $PyCmd) {
 
     Write-Host "[INFO] Installing remaining backend dependencies..." -ForegroundColor Yellow
     if (Test-Path "backend\requirements.txt") {
-        # Filter out torch/onnxruntime — already installed above with the correct GPU build
+        # Filter out torch/onnxruntime -- already installed above with the correct GPU build
         $filteredDeps = Get-Content "backend\requirements.txt" | Where-Object {
             $_ -notmatch '^(torch|torchvision|onnxruntime)' -and $_ -ne ''
         }
@@ -155,13 +154,19 @@ if ($LASTEXITCODE -ne 0) {
     Write-Host "[WARNING] Docker image pull failed (offline?). Will try with cached image." -ForegroundColor Yellow
 }
 
-# Create and start the container (idempotent — safe to run again if it already exists)
+# Create and start the container (idempotent -- clean up stale conflicting containers first)
 Write-Host "[INFO] Creating and starting the PostgreSQL database container..." -ForegroundColor Yellow
+try {
+    docker rm -f worker_monitor_db 2>$null
+    docker compose -f $ComposeFile down 2>$null
+} catch {}
+
 docker compose -f $ComposeFile up -d db
 if ($LASTEXITCODE -ne 0) {
     Write-Host "[ERROR] Failed to start the PostgreSQL container via Docker Compose." -ForegroundColor Red
     exit 1
 }
+
 
 # Wait for the container to pass its healthcheck before finishing install
 Write-Host "[INFO] Waiting for PostgreSQL to become healthy (up to 60s)..." -ForegroundColor Yellow
@@ -169,19 +174,21 @@ $DbReady = $false
 $Deadline = (Get-Date).AddSeconds(60)
 while ((Get-Date) -lt $Deadline) {
     $Health = ""
-    $Health = (cmd /c "docker inspect --format {{.State.Health.Status}} worker_monitor_db 2>NUL")
-    if ($Health) {
-        $Health = $Health.Trim()
-    }
-    
-    if (-not $Health -or $Health -eq "missing") {
-        $TargetId = (cmd /c "docker compose -f `"$ComposeFile`" ps -q db 2>NUL")
-        if ($TargetId) {
-            $TargetId = $TargetId.Trim()
-            $Health = (cmd /c "docker inspect --format {{.State.Health.Status}} $TargetId 2>NUL")
-            if ($Health) { $Health = $Health.Trim() }
+    try {
+        $Health = (docker inspect --format "{{.State.Health.Status}}" worker_monitor_db 2>$null)
+        if ($Health) {
+            $Health = $Health.Trim()
         }
-    }
+        
+        if (-not $Health -or $Health -eq "missing") {
+            $TargetId = (docker compose -f "$ComposeFile" ps -q db 2>$null)
+            if ($TargetId) {
+                $TargetId = $TargetId.Trim()
+                $Health = (docker inspect --format "{{.State.Health.Status}}" $TargetId 2>$null)
+                if ($Health) { $Health = $Health.Trim() }
+            }
+        }
+    } catch {}
 
     if ($Health -eq "healthy") {
         $DbReady = $true
@@ -198,7 +205,7 @@ while ((Get-Date) -lt $Deadline) {
 if (-not $DbReady) {
     Write-Host "[WARNING] PostgreSQL did not confirm healthy within 60s." -ForegroundColor Yellow
     Write-Host "The container is running but may still be initialising." -ForegroundColor Yellow
-    Write-Host "start.ps1 will wait again — this is normal on first run." -ForegroundColor Yellow
+    Write-Host "start.ps1 will wait again - this is normal on first run." -ForegroundColor Yellow
 } else {
     Write-Host "[OK] PostgreSQL container is healthy and ready." -ForegroundColor Green
 }
