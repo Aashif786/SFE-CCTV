@@ -307,7 +307,8 @@ class StreamManager:
                 # 'fatal' (32) silences them without hiding real errors.
                 # The env var must be set before VideoCapture() opens the stream.
                 import os as _os
-                _os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"] = "rtsp_transport;tcp|loglevel;quiet"
+                timeout_us = int(timeout * 1_000_000)
+                _os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"] = f"rtsp_transport;tcp|loglevel;quiet|timeout;{timeout_us}"
                 _os.environ["OPENCV_FFMPEG_LOGLEVEL"] = "8"
 
                 cap = cv2.VideoCapture(cs.rtsp_url, cv2.CAP_FFMPEG)
@@ -318,8 +319,6 @@ class StreamManager:
                     cap.set(cv2.CAP_PROP_HW_ACCELERATION, cv2.VIDEO_ACCELERATION_ANY)
                 except Exception:
                     pass
-                if transport == "tcp":
-                    cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*"H264"))
 
                 if not cap.isOpened():
                     raise ConnectionError("Failed to open RTSP stream")
