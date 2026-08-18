@@ -251,6 +251,9 @@ class WorkerDetector:
             if use_onnx and not onnx_exists(_pt_path):
                 _trigger_onnx_export_background(_pt_path, imgsz=getattr(config, "yolo_imgsz", 640))
         
+        # Per-instance lock for thread-safe inference and model reload without global serialization
+        self._lock = threading.Lock()
+
         # Per-track EMA smoothing state — keyed by track_id
         self.smoothed: dict[int, list[list[float]]] = {}
         self.prev_smoothed: dict[int, list[list[float]]] = {}
@@ -383,7 +386,7 @@ class WorkerDetector:
         h, w, _ = frame.shape
 
 
-        with _yolo_inference_lock:
+        with self._lock:
             # Dynamic reload YOLO model
             target_model = getattr(config, "yolo_model", "yolo11m-pose.pt")
             if not hasattr(self, "model_name") or self.model_name != target_model:
@@ -436,7 +439,8 @@ class WorkerDetector:
             self._refresh_botsort_features()
 
             # ── Extract all tensor/array data to numpy INSIDE the lock ────────
-            # _yolo_inference_lock is shared across all per-camera detectors.
+            # Each detector instance holds its own lock to safely read per-instance state
+            # and extract NumPy results concurrently without blocking other camera streams.
             # Convert all tensors/arrays into standard NumPy arrays immediately
             # before releasing the lock, using _safe_to_numpy to avoid AttributeError.
             if len(results) == 0 or getattr(results[0], "boxes", None) is None:
