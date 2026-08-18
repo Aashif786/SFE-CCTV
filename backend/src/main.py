@@ -78,7 +78,9 @@ print("[Startup] 🚀 Initializing CALVISION services...")
 seed_cameras()
 stream_manager.start_all_enabled()
 background_tracker.start()
+_provider.start_streams()
 threading.Thread(target=preload_model_cache, name="model-prewarm", daemon=True).start()
+
 
 
 

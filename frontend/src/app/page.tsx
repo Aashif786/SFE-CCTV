@@ -123,9 +123,10 @@ export default function Dashboard() {
       const [statsRes, resRes, sessionRes, alertRes] = await Promise.all([
         fetch(`${api}/api/stats`).catch(() => null),
         fetch(`${api}/api/resources`).catch(() => null),
-        fetch(`${api}/api/identity/sessions/active`).catch(() => null),
+        fetch(`${api}/api/identity/sessions`).catch(() => null),
         fetch(`${api}/api/alerts`).catch(() => null),
       ]);
+
 
       if (statsRes && statsRes.ok) {
         const data = await statsRes.json();
