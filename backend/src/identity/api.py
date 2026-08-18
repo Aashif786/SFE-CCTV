@@ -60,12 +60,14 @@ class DynamicProviderProxy:
 
         self._provider_name = target_name
         if target_name == "HIKVISION_ISAPI":
-            self._current_provider = HikvisionProvider(callback_engine=correlation_engine, auto_start=False)
+            self._current_provider = HikvisionProvider(callback_engine=correlation_engine, auto_start=True)
+            self._is_started = True
         else:
             self._current_provider = RESTSimulatorProvider()
 
-        if was_started:
+        if was_started and target_name != "HIKVISION_ISAPI":
             self.start_streams()
+
 
     @property
     def door_statuses(self):
@@ -165,7 +167,9 @@ def get_active_ai_camera_ids(db: Session) -> set[str]:
 
 
 @router.get("/sessions", summary="Active worker sessions & live camera tracks")
+@router.get("/sessions/active", summary="Active worker sessions (alias)")
 async def get_active_sessions(db: Session = Depends(get_db)):
+
     """
     Returns all currently ACTIVE WorkerSessions AND all active live camera tracks
     strictly from active AI monitoring CCTV feeds.

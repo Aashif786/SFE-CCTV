@@ -148,8 +148,10 @@ def _ensure_sampler_started():
 
 
 @router.get("/api/system/resources")
+@router.get("/api/resources")
 async def get_system_resources():
     """Return live system resource metrics from background cache."""
     _ensure_sampler_started()
     with _cache_lock:
         return dict(_cached_resources)
+

@@ -197,11 +197,12 @@ class HikvisionProvider(IdentityEventProvider):
                 new_events_count = 0
 
                 for ev in events_list:
-                    emp_id = (ev.get("employeeNoString") or "").strip()
+                    emp_id = (ev.get("employeeNoString") or str(ev.get("employeeNo") or "")).strip()
                     major = ev.get("major", 0)
                     minor = ev.get("minor", 0)
                     ev_time = ev.get("time", "")
                     ev_name = ev.get("name", "")
+
 
                     # Build a unique key per event to avoid duplicates
                     event_key = f"{ev_time}|{emp_id}|{major}|{minor}"

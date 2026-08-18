@@ -14,8 +14,30 @@
     "correlation_window_seconds": 10.0
   },
   {
+    "ip": "192.168.1.232",
+    "name": "Door 01 out",
+    "username": "admin",
+    "password": "",
+    "check_in_cameras": [],
+    "check_out_cameras": [
+      10
+    ],
+    "correlation_window_seconds": 12.0
+  },
+  {
     "ip": "192.168.1.233",
     "name": "Door 01 IN",
+    "username": "admin",
+    "password": "",
+    "check_in_cameras": [
+      13
+    ],
+    "check_out_cameras": [],
+    "correlation_window_seconds": 12.0
+  },
+  {
+    "ip": "192.168.1.234",
+    "name": "Door Exit IN",
     "username": "admin",
     "password": "",
     "check_in_cameras": [
