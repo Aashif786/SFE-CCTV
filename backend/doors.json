@@ -5,11 +5,10 @@
     "username": "admin",
     "password": "",
     "check_in_cameras": [
-      1,
-      13
+      1
     ],
     "check_out_cameras": [
-      10
+      13
     ],
     "correlation_window_seconds": 10.0
   },
@@ -30,9 +29,11 @@
     "username": "admin",
     "password": "",
     "check_in_cameras": [
-      13
+      5
     ],
-    "check_out_cameras": [],
+    "check_out_cameras": [
+      1
+    ],
     "correlation_window_seconds": 12.0
   },
   {
@@ -51,10 +52,12 @@
     "name": "Door Exit OUT",
     "username": "admin",
     "password": "",
-    "check_in_cameras": [],
-    "check_out_cameras": [
+    "check_in_cameras": [
       10
     ],
-    "correlation_window_seconds": 15.0
+    "check_out_cameras": [
+      15
+    ],
+    "correlation_window_seconds": 10.0
   }
 ]

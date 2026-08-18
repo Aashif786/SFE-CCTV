@@ -91,9 +91,16 @@ try:
 
     _orig_botsort_init = getattr(_bot_sort_mod.BOTSORT, "__init__", None)
     if _orig_botsort_init:
-        def _safe_botsort_init(self, args: Any, frame_rate: int = 30):
-            _orig_botsort_init(self, args, frame_rate)
-            if getattr(args, "with_reid", False) and getattr(self.args, "model", None) == "auto":
+        def _safe_botsort_init(self, *args: Any, **kwargs: Any):
+            try:
+                _orig_botsort_init(self, *args, **kwargs)
+            except TypeError:
+                if args:
+                    _orig_botsort_init(self, args[0])
+                else:
+                    _orig_botsort_init(self, **kwargs)
+            args_obj = args[0] if args else kwargs.get("args")
+            if getattr(args_obj, "with_reid", False) and getattr(getattr(self, "args", None), "model", None) == "auto":
                 self.encoder = _safe_bot_encoder
 
         _bot_sort_mod.BOTSORT.__init__ = _safe_botsort_init
