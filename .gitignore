@@ -10,6 +10,13 @@ backend/src/db/__pycache__/
 *.py[cod]
 *$py.class
 backend/.env
+.env
+backend/settings.json
+!backend/settings.example.json
+*.db
+*.sqlite
+*.sqlite3
+backend/start_legacy.sh
 backend/models/*.task
 
 # Node / Next.js / Frontend
@@ -30,7 +37,9 @@ frontend/dist/
 *.swp
 *.swo
 
-#Misc
-dump/
+# Model weights & binaries
+*.pt
+*.onnx
 backend/*.pt
+backend/models/
 test_clips/

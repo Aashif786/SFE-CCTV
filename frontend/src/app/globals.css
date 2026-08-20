@@ -2,50 +2,91 @@
 @tailwind components;
 @tailwind utilities;
 
+/* ── Light Mode (default) ─────────────────────────────────────────────── */
 @layer base {
   :root {
-    --background: 0 0% 100%;
-    --foreground: 222.2 84% 4.9%;
-    --card: 0 0% 100%;
-    --card-foreground: 222.2 84% 4.9%;
-    --popover: 0 0% 100%;
-    --popover-foreground: 222.2 84% 4.9%;
-    --primary: 222.2 47.4% 11.2%;
+    /* Page & surface backgrounds */
+    --bg-page:        210 20% 96%;   /* slate-100 equivalent — soft, cool off-white */
+    --bg-card:        0 0% 100%;     /* pure white cards */
+    --bg-card-2:      210 20% 98%;   /* slightly off-white for secondary panels */
+    --bg-input:       0 0% 100%;
+    --bg-header:      0 0% 100%;
+    --bg-sidebar:     0 0% 100%;
+    --bg-table-head:  214 32% 94%;   /* slate-100-ish */
+    --bg-code:        214 32% 93%;
+
+    /* Text */
+    --text-primary:   222 47% 11%;   /* slate-900 */
+    --text-secondary: 215 19% 35%;   /* slate-600 */
+    --text-muted:     215 14% 54%;   /* slate-400 */
+    --text-placeholder: 215 14% 68%;
+
+    /* Borders */
+    --border:         214 32% 88%;   /* slate-200 */
+    --border-strong:  214 32% 78%;   /* slate-300 */
+
+    /* shadcn compat — keep for any component using these */
+    --background:     210 20% 96%;
+    --foreground:     222 47% 11%;
+    --card:           0 0% 100%;
+    --card-foreground: 222 47% 11%;
+    --popover:        0 0% 100%;
+    --popover-foreground: 222 47% 11%;
+    --primary:        222 47% 11%;
     --primary-foreground: 210 40% 98%;
-    --secondary: 210 40% 96.1%;
-    --secondary-foreground: 222.2 47.4% 11.2%;
-    --muted: 210 40% 96.1%;
-    --muted-foreground: 215.4 16.3% 46.9%;
-    --accent: 210 40% 96.1%;
-    --accent-foreground: 222.2 47.4% 11.2%;
-    --destructive: 0 84.2% 60.2%;
+    --secondary:      210 40% 96%;
+    --secondary-foreground: 222 47% 11%;
+    --muted:          210 40% 96%;
+    --muted-foreground: 215 19% 35%;
+    --accent:         210 40% 96%;
+    --accent-foreground: 222 47% 11%;
+    --destructive:    0 84% 60%;
     --destructive-foreground: 210 40% 98%;
-    --border: 214.3 31.8% 91.4%;
-    --input: 214.3 31.8% 91.4%;
-    --ring: 222.2 84% 4.9%;
-    --radius: 0.5rem;
+    --border-shadcn:  214 32% 88%;
+    --input:          214 32% 88%;
+    --ring:           222 47% 11%;
+    --radius:         0.5rem;
   }
 
+/* ── Dark Mode ─────────────────────────────────────────────────────────── */
   .dark {
-    --background: 222.2 84% 4.9%;
-    --foreground: 210 40% 98%;
-    --card: 222.2 84% 4.9%;
+    --bg-page:        222 47% 5%;    /* gray-950 */
+    --bg-card:        220 26% 9%;    /* gray-900 */
+    --bg-card-2:      222 47% 7%;    /* gray-950 lighter */
+    --bg-input:       220 14% 16%;   /* gray-800 */
+    --bg-header:      220 26% 9%;    /* gray-900 */
+    --bg-sidebar:     220 26% 9%;    /* gray-900 */
+    --bg-table-head:  220 14% 16%;   /* gray-800 */
+    --bg-code:        222 47% 5%;    /* gray-950 */
+
+    --text-primary:   210 40% 98%;   /* white */
+    --text-secondary: 215 14% 60%;   /* gray-400 */
+    --text-muted:     215 20% 40%;   /* gray-500 */
+    --text-placeholder: 215 14% 32%;
+
+    --border:         220 14% 16%;   /* gray-800 */
+    --border-strong:  220 14% 24%;   /* gray-700 */
+
+    /* shadcn compat */
+    --background:     222 47% 5%;
+    --foreground:     210 40% 98%;
+    --card:           220 26% 9%;
     --card-foreground: 210 40% 98%;
-    --popover: 222.2 84% 4.9%;
+    --popover:        220 26% 9%;
     --popover-foreground: 210 40% 98%;
-    --primary: 210 40% 98%;
-    --primary-foreground: 222.2 47.4% 11.2%;
-    --secondary: 217.2 32.6% 17.5%;
+    --primary:        210 40% 98%;
+    --primary-foreground: 222 47% 11%;
+    --secondary:      217 33% 17%;
     --secondary-foreground: 210 40% 98%;
-    --muted: 217.2 32.6% 17.5%;
-    --muted-foreground: 215 20.2% 65.1%;
-    --accent: 217.2 32.6% 17.5%;
+    --muted:          217 33% 17%;
+    --muted-foreground: 215 20% 65%;
+    --accent:         217 33% 17%;
     --accent-foreground: 210 40% 98%;
-    --destructive: 0 62.8% 30.6%;
+    --destructive:    0 63% 31%;
     --destructive-foreground: 210 40% 98%;
-    --border: 217.2 32.6% 17.5%;
-    --input: 217.2 32.6% 17.5%;
-    --ring: 212.7 26.8% 83.9%;
+    --border-shadcn:  217 33% 17%;
+    --input:          217 33% 17%;
+    --ring:           212 27% 84%;
   }
 }
 
@@ -54,6 +95,25 @@
     @apply border-border;
   }
   body {
-    @apply bg-background text-foreground;
+    @apply bg-[hsl(var(--bg-page))] text-[hsl(var(--text-primary))];
+    transition: background-color 0.25s ease, color 0.25s ease;
+  }
+  select option {
+    background-color: hsl(var(--bg-card));
+    color: hsl(var(--text-primary));
+  }
+  ::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+  }
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  ::-webkit-scrollbar-thumb {
+    background: hsl(var(--border-strong));
+    border-radius: 9999px;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background: hsl(var(--text-muted));
   }
 }

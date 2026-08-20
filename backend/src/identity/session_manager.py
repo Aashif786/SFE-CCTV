@@ -48,6 +48,9 @@ class WorkerSessionManager:
         self._sessions: dict[str, WorkerSession] = {}
         # All closed sessions for the /history endpoint
         self._closed: list[WorkerSession] = []
+        # Sessions that have left through an approved portal stay transferable
+        # until their route cache expires; they are not visible as on-camera.
+        self._pending_handoffs: dict[str, WorkerSession] = {}
 
     # ------------------------------------------------------------------
     # Write operations
@@ -64,6 +67,7 @@ class WorkerSessionManager:
         session = WorkerSession(
             session_id=str(uuid.uuid4()),
             employee_id=employee_id,
+            persistent_track_id=track_id,
             current_track_id=track_id,
             camera_id=camera_id,
             start_time=_utcnow(),
@@ -97,6 +101,72 @@ class WorkerSessionManager:
                 db.commit()
         return True
 
+    def transfer_session(
+        self,
+        session_id: str,
+        old_track_id: str,
+        new_track_id: str,
+        camera_id: str,
+        timestamp: datetime,
+        correlation_delay: float,
+    ) -> Optional[WorkerSession]:
+        """Move one active employee session to a topology-validated camera track.
+
+        This is deliberately a different operation from tracker-ID rebinding: the
+        caller must have completed a spatial handoff match before invoking it.
+        It preserves ``session_id`` so downstream consumers see one continuous
+        employee session rather than a camera-specific duplicate.
+        """
+        session = self._sessions.get(old_track_id) or self._pending_handoffs.get(session_id)
+        if session is None or session.session_id != session_id:
+            print(f"[IdentityTransfer] ❌ transfer_session failed: session {session_id} not found in _sessions or _pending_handoffs")
+            return None
+        # A destination track must never silently steal an already active identity.
+        occupied = self._sessions.get(new_track_id)
+        if occupied is not None and occupied.session_id != session_id:
+            print(f"[IdentityTransfer] ❌ transfer_session failed: destination track {new_track_id} already occupied by session {occupied.session_id} ({occupied.employee_id})")
+            return None
+        self._sessions.pop(old_track_id, None)
+        self._pending_handoffs.pop(session_id, None)
+        session.current_track_id = new_track_id
+        session.camera_id = camera_id
+        session.correlation_delay_seconds = round(correlation_delay, 3)
+        self._sessions[new_track_id] = session
+        with SessionLocal() as db:
+            row = db.query(WorkerSessionDB).filter(WorkerSessionDB.session_id == session_id).first()
+            if row:
+                row.current_track_id = new_track_id
+                row.camera_id = camera_id
+                row.correlation_delay_seconds = session.correlation_delay_seconds
+                db.commit()
+        print(f"[IdentityTransfer] 🔄 Successfully transferred session for Employee {session.employee_id}: {old_track_id} -> {new_track_id} on {camera_id}")
+        return session
+
+    def hold_for_handoff(self, track_id: str) -> bool:
+        """Remove a departed track from live lookups while preserving its session."""
+        session = self._sessions.pop(track_id, None)
+        if session is None:
+            return False
+        self._pending_handoffs[session.session_id] = session
+        return True
+
+    def close_pending_handoff(self, session_id: str) -> Optional[WorkerSession]:
+        """Close a handoff hold after every configured destination window expired."""
+        session = self._pending_handoffs.pop(session_id, None)
+        if session is None:
+            return None
+        session.status = "CLOSED"
+        session.end_time = _utcnow()
+        self._closed.append(session)
+        with SessionLocal() as db:
+            row = db.query(WorkerSessionDB).filter(WorkerSessionDB.session_id == session_id).first()
+            if row:
+                row.status = "CLOSED"
+                row.end_time = session.end_time
+                db.commit()
+        self._update_daily_summary(session)
+        return session
+
     def close_session(self, track_id: str, activity_totals: dict[str, float] = None) -> Optional[WorkerSession]:
         """
         Mark the session for this track as CLOSED (person left frame).
@@ -121,6 +191,29 @@ class WorkerSessionManager:
         # Aggregate and persist daily summary
         self._update_daily_summary(session, activity_totals)
         return session
+
+    def close_sessions_for_employee(self, employee_id: str) -> None:
+        """
+        Force-close any active camera sessions for the given employee.
+        Use this when they physically check out of the building.
+        """
+        active_track_ids = [
+            track_id for track_id, s in self._sessions.items()
+            if s.employee_id == employee_id
+        ]
+        for track_id in active_track_ids:
+            self.close_session(track_id)
+
+        # Ensure any active sessions are also marked closed in the database
+        with SessionLocal() as db:
+            active_rows = db.query(WorkerSessionDB).filter(
+                WorkerSessionDB.employee_id == employee_id,
+                WorkerSessionDB.status == "ACTIVE"
+            ).all()
+            for row in active_rows:
+                row.status = "CLOSED"
+                row.end_time = _utcnow()
+            db.commit()
 
     # ------------------------------------------------------------------
     # Read operations
@@ -195,6 +288,31 @@ class WorkerSessionManager:
         total = sum(agg.values())
 
         with SessionLocal() as db:
+            from ..db.models import EmployeeZoneDB, ZoneVisitDB
+
+            # Fetch assigned work zones for this employee
+            assigned_zones = db.query(EmployeeZoneDB).filter(
+                EmployeeZoneDB.employee_id == session.employee_id,
+                EmployeeZoneDB.is_designated == True,
+            ).all()
+            assigned_zone_ids = {az.zone_id for az in assigned_zones}
+
+            # Fetch completed zone visits for this employee during the session window
+            zone_visits = db.query(ZoneVisitDB).filter(
+                ZoneVisitDB.person_identifier == session.employee_id,
+                ZoneVisitDB.entry_time >= session.start_time,
+            ).all()
+
+            desig_sec = 0.0
+            outside_sec = 0.0
+            common_sec = 0.0
+
+            for zv in zone_visits:
+                dur = zv.duration_seconds or 0.0
+                if not assigned_zone_ids or zv.zone_id in assigned_zone_ids:
+                    desig_sec += dur
+                else:
+                    outside_sec += dur
 
             # Upsert into EmployeeDailySummary
             summary = (
@@ -213,7 +331,12 @@ class WorkerSessionManager:
                     working_seconds=0.0,
                     idle_seconds=0.0,
                     walking_seconds=0.0,
+                    designated_zone_seconds=0.0,
+                    outside_zone_seconds=0.0,
+                    common_area_seconds=0.0,
+                    break_seconds=0.0,
                     total_seconds=0.0,
+                    productivity_score=100.0,
                     check_in_count=0,
                     first_seen=None,
                     last_seen=None,
@@ -221,11 +344,21 @@ class WorkerSessionManager:
                 db.add(summary)
 
             # Accumulate (not overwrite) so multiple check-ins stack up
-            summary.working_seconds      += agg["working"]
-            summary.idle_seconds         += agg["idle"]
-            summary.walking_seconds      += agg["walking"]
-            summary.total_seconds        += total
-            summary.check_in_count       += 1
+            summary.working_seconds         += agg["working"]
+            summary.idle_seconds            += agg["idle"]
+            summary.walking_seconds         += agg["walking"]
+            summary.designated_zone_seconds += desig_sec
+            summary.outside_zone_seconds    += outside_sec
+            summary.common_area_seconds     += common_sec
+            summary.total_seconds           += total
+            summary.check_in_count          += 1
+
+            tot_sec = summary.total_seconds if summary.total_seconds > 0 else 1.0
+            summary.productivity_score = round(
+                (summary.designated_zone_seconds / tot_sec) * 100.0, 1
+            ) if summary.designated_zone_seconds > 0 else (
+                round((summary.working_seconds / tot_sec) * 100.0, 1) if summary.working_seconds > 0 else 0.0
+            )
 
             # Track earliest/latest appearance today
             if summary.first_seen is None or session.start_time < summary.first_seen:
@@ -236,9 +369,9 @@ class WorkerSessionManager:
             db.commit()
 
             print(
-                f"[Identity] 📊 Daily summary updated for {session.employee_id} "
+                f"[Identity] [SUMMARY] Daily summary updated for {session.employee_id} "
                 f"| +working={agg['working']:.1f}s  +idle={agg['idle']:.1f}s  "
-                f"+walking={agg['walking']:.1f}s"
+                f"+designated_zone={desig_sec:.1f}s  score={summary.productivity_score}%"
             )
 
     # ------------------------------------------------------------------
@@ -250,6 +383,7 @@ class WorkerSessionManager:
             row = WorkerSessionDB(
                 session_id=session.session_id,
                 employee_id=session.employee_id,
+                persistent_track_id=session.persistent_track_id,
                 current_track_id=session.current_track_id,
                 camera_id=session.camera_id,
                 start_time=session.start_time,

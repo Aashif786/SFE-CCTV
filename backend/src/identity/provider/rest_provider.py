@@ -30,12 +30,16 @@ class RESTSimulatorProvider(IdentityEventProvider):
     PROVIDER_NAME: str = "REST_SIMULATOR"
 
     def receive_event(self, payload: IdentityEventCreate) -> IdentityEvent:
+        allowed = [str(c) for c in payload.allowed_cameras] if payload.allowed_cameras else []
         return IdentityEvent(
             event_id=str(uuid.uuid4()),
             employee_id=payload.employee_id,
-            event_type="ENTRY",
-            timestamp=payload.timestamp or datetime.now(timezone.utc).replace(tzinfo=None),
+            event_type=payload.event_type or "ENTRY",
+            timestamp=payload.timestamp or datetime.now(timezone.utc),
             entry_gate=payload.entry_gate,
             provider=self.PROVIDER_NAME,
             correlation_status="WAITING_FOR_TRACK",
+            allowed_cameras=allowed,
+            correlation_window_seconds=payload.correlation_window_seconds,
         )
+

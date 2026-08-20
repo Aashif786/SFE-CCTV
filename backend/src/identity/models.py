@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import uuid
 from datetime import datetime
-from typing import Literal, Optional
+from typing import Literal, Optional, List, Union
 
 from pydantic import BaseModel, Field
 
@@ -29,6 +29,11 @@ class IdentityEventCreate(BaseModel):
     employee_id: str = Field(alias="employeeId")
     entry_gate: str = Field(alias="entryGate")
     timestamp: Optional[datetime] = Field(default=None)
+    event_type: Literal["ENTRY", "EXIT"] = Field(default="ENTRY", alias="eventType")
+    allowed_cameras: Optional[List[Union[int, str]]] = Field(default=None, alias="allowedCameras")
+    portal_id: Optional[str] = Field(default=None, alias="portalId")
+    portal_role: Optional[Literal["START", "END", "AUTO"]] = Field(default="AUTO", alias="portalRole")
+    correlation_window_seconds: Optional[float] = Field(default=None, alias="correlationWindowSeconds")
 
 
 # ---------------------------------------------------------------------------
@@ -43,15 +48,48 @@ class IdentityEvent(BaseModel):
     """
     event_id: str = Field(default_factory=lambda: str(uuid.uuid4()))
     employee_id: str
-    event_type: Literal["ENTRY"] = "ENTRY"
+    employee_name: Optional[str] = None
+    event_type: Literal["ENTRY", "EXIT"] = "ENTRY"
     timestamp: datetime
     entry_gate: str
     provider: str           # "REST_SIMULATOR" | "RFID" | "NFC" | "MQTT" …
     correlation_status: Literal["WAITING_FOR_TRACK", "MATCHED", "EXPIRED"] = "WAITING_FOR_TRACK"
+    allowed_cameras: List[str] = Field(default_factory=list)
+    portal_id: Optional[str] = None
+    portal_role: Literal["START", "END", "AUTO"] = "AUTO"
+    correlation_window_seconds: Optional[float] = None
     # Populated when matched
     matched_track_id: Optional[str] = None
+    matched_camera_id: Optional[str] = None
     matched_at: Optional[datetime] = None
     correlation_delay_seconds: Optional[float] = None
+
+
+# ---------------------------------------------------------------------------
+# Door Controller Configuration
+# ---------------------------------------------------------------------------
+
+class DoorConfigItem(BaseModel):
+    """
+    Configuration for a single Door ACS unit.
+
+    Each physical door has one or more ACS units (one per side).
+    Each ACS unit is its own access controller with its own IP.
+    `cameras` lists the camera IDs expected to see the person
+    after a card swipe on this specific ACS.
+    `door_group` is an optional cosmetic label grouping multiple
+    ACS units that belong to the same physical door.
+    """
+    ip: str
+    name: str
+    door_group: str = ""
+    username: str = "admin"
+    password: str = ""
+    cameras: List[Union[int, str]] = Field(default_factory=list)
+    portal_id: Optional[str] = ""
+    portal_role: Literal["START", "END", "AUTO"] = "AUTO"
+    correlation_window_seconds: float = 10.0
+
 
 
 # ---------------------------------------------------------------------------
@@ -86,6 +124,7 @@ class WorkerSession(BaseModel):
     """
     session_id: str = Field(default_factory=lambda: str(uuid.uuid4()))
     employee_id: str
+    persistent_track_id: str        # The track ID assigned at initial check-in (e.g. ai-1:272)
     current_track_id: str           # updated in-place if tracker reassigns
     camera_id: str
     start_time: datetime

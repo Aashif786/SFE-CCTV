@@ -10,3 +10,8 @@ python-multipart
 websockets
 opencv-python-headless
 numpy
+cryptography
+onnxruntime
+psutil
+watchfiles
+lapx

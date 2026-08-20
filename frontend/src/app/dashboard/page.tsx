@@ -1,1 +1,5 @@
-export default function Page() { return <div>Dashboard</div>; }
+import Dashboard from "../page";
+
+export default function DashboardPage() {
+  return <Dashboard />;
+}

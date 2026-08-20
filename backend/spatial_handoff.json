@@ -1,0 +1,344 @@
+{
+  "facilities": [
+    {
+      "id": "main-facility",
+      "cameras": [
+        {
+          "id": "reception",
+          "portals": [
+            {
+              "id": "to-kitchen",
+              "kind": "EXIT_PORTAL",
+              "polygon": [
+                [
+                  0.88,
+                  0.25
+                ],
+                [
+                  1,
+                  0.25
+                ],
+                [
+                  1,
+                  0.9
+                ],
+                [
+                  0.88,
+                  0.9
+                ]
+              ],
+              "direction": [
+                1,
+                0
+              ],
+              "minDirectionCosine": 0.2
+            }
+          ]
+        },
+        {
+          "id": "kitchen",
+          "portals": [
+            {
+              "id": "from-reception",
+              "kind": "ENTRY_PORTAL",
+              "polygon": [
+                [
+                  0,
+                  0.25
+                ],
+                [
+                  0.12,
+                  0.25
+                ],
+                [
+                  0.12,
+                  0.9
+                ],
+                [
+                  0,
+                  0.9
+                ]
+              ],
+              "direction": [
+                1,
+                0
+              ],
+              "minDirectionCosine": 0.2
+            }
+          ]
+        },
+        {
+          "id": "1",
+          "portals": [
+            {
+              "id": "entrance-door",
+              "kind": "ENTRY_PORTAL",
+              "polygon": [
+                [
+                  0.7521749493504946,
+                  0.0033899202839058236
+                ],
+                [
+                  0.7512215468954833,
+                  0.2813633835641834
+                ],
+                [
+                  0.8770706709569777,
+                  0.3050928255515241
+                ],
+                [
+                  0.9049607892512762,
+                  -0.005019428683824739
+                ]
+              ],
+              "enabled": true
+            },
+            {
+              "id": "rec-kitchen",
+              "kind": "EXIT_PORTAL",
+              "polygon": [
+                [
+                  0.38034799189607915,
+                  0.005084880425858735
+                ],
+                [
+                  0.45529379815109206,
+                  0.4802403929992756
+                ],
+                [
+                  0.5328923846978906,
+                  0.36611139066182896
+                ],
+                [
+                  0.501430103682517,
+                  0.0016949601419529118
+                ]
+              ],
+              "enabled": true
+            },
+            {
+              "id": "rec-entry2",
+              "kind": "EXIT_PORTAL",
+              "polygon": [
+                [
+                  0.9609504535127777,
+                  0.2872658559523501
+                ],
+                [
+                  0.8669117874322597,
+                  0.8293673897778986
+                ],
+                [
+                  0.7426409248003814,
+                  0.8712095129637967
+                ],
+                [
+                  0.8255869383863663,
+                  0.31865250668714745
+                ]
+              ],
+              "enabled": true
+            }
+          ]
+        },
+        {
+          "id": "5",
+          "portals": [
+            {
+              "id": "entry2",
+              "kind": "ENTRY_PORTAL",
+              "polygon": [
+                [
+                  0.0616164713124094,
+                  0.16295512497571
+                ],
+                [
+                  0.24708223417863323,
+                  0.054082729085270814
+                ],
+                [
+                  0.4063028419222782,
+                  0.9903853337430477
+                ],
+                [
+                  0.25583061921949285,
+                  0.9966066135082157
+                ]
+              ],
+              "enabled": true
+            }
+          ]
+        },
+        {
+          "id": "15",
+          "portals": [
+            {
+              "id": "from-rec",
+              "kind": "ENTRY_PORTAL",
+              "polygon": [
+                [
+                  0.3307710642354904,
+                  0.9830768823326889
+                ],
+                [
+                  0.23733762364438088,
+                  0.5254376440054027
+                ],
+                [
+                  0.6949708020498153,
+                  0.6118806112450011
+                ],
+                [
+                  0.7092718388749851,
+                  0.9898567229005005
+                ]
+              ],
+              "enabled": true
+            },
+            {
+              "id": "to-ext-way",
+              "kind": "ENTRY_PORTAL",
+              "polygon": [
+                [
+                  0.4318317244666905,
+                  0.005084880425858735
+                ],
+                [
+                  0.44803956620188296,
+                  0.45424931804338037
+                ],
+                [
+                  0.7064116315099511,
+                  0.45424931804338037
+                ],
+                [
+                  0.7321534977952568,
+                  0.005084880425858735
+                ]
+              ],
+              "enabled": true
+            }
+          ]
+        },
+        {
+          "id": "10",
+          "portals": [
+            {
+              "id": "exit-way-st",
+              "kind": "ENTRY_PORTAL",
+              "polygon": [
+                [
+                  0.004707424621618401,
+                  0.3779761116554993
+                ],
+                [
+                  0.7226194732451436,
+                  0.9881617627585476
+                ],
+                [
+                  0.0028006197115957574,
+                  0.9966365634683122
+                ]
+              ],
+              "enabled": true
+            },
+            {
+              "id": "exit-way-end",
+              "kind": "ENTRY_PORTAL",
+              "polygon": [
+                [
+                  0.9991061851984269,
+                  0.008474800709764559
+                ],
+                [
+                  0.9952925753783816,
+                  0.12203713022060965
+                ],
+                [
+                  0.8475151948516267,
+                  0.23051457930559602
+                ],
+                [
+                  0.8427481825765701,
+                  0.47797876003072115
+                ],
+                [
+                  0.6396734596591587,
+                  0.37289123122964063
+                ],
+                [
+                  0.6444404719342153,
+                  0.005084880425858735
+                ]
+              ],
+              "enabled": true
+            }
+          ]
+        },
+        {
+          "id": "17",
+          "portals": [
+            {
+              "id": "das2-entry",
+              "polygon": [
+                [
+                  0.2453325571704613,
+                  -0.0019087888012407626
+                ],
+                [
+                  0.21733772503971052,
+                  0.30604455957457294
+                ],
+                [
+                  0.5287802324943128,
+                  0.3091551994571569
+                ],
+                [
+                  0.5480266795842039,
+                  0.016755050494263096
+                ]
+              ],
+              "enabled": true
+            }
+          ]
+        }
+      ],
+      "connections": []
+    }
+  ],
+  "connections": [
+    {
+      "id": "edge-mspxvwis",
+      "exitPortal": "main-facility:1:rec-kitchen",
+      "entryPortal": "main-facility:15:from-rec",
+      "minTransitSeconds": 3,
+      "maxTransitSeconds": 20,
+      "minSimilarity": 0.72
+    },
+    {
+      "id": "edge-mspxw0ba",
+      "exitPortal": "main-facility:15:to-ext-way",
+      "entryPortal": "main-facility:10:exit-way-st",
+      "minTransitSeconds": 4,
+      "maxTransitSeconds": 10,
+      "minSimilarity": 0.72
+    },
+    {
+      "id": "edge-mspxw41p",
+      "exitPortal": "main-facility:10:exit-way-end",
+      "entryPortal": "main-facility:17:das2-entry",
+      "minTransitSeconds": 1,
+      "maxTransitSeconds": 6,
+      "minSimilarity": 0.72
+    },
+    {
+      "id": "edge-mspxwvy8",
+      "exitPortal": "main-facility:1:rec-entry2",
+      "entryPortal": "main-facility:5:entry2",
+      "minTransitSeconds": 3,
+      "maxTransitSeconds": 20,
+      "minSimilarity": 0.72
+    }
+  ],
+  "canvasPositions": {}
+}
