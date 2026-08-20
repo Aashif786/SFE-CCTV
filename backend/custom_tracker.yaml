@@ -1,10 +1,10 @@
 # Auto-generated BoT-SORT tracker configuration
 tracker_type: botsort
-track_high_thresh: 0.3
+track_high_thresh: 0.38
 track_low_thresh: 0.1
-new_track_thresh: 0.66
-track_buffer: 120
-match_thresh: 0.8
+new_track_thresh: 0.36
+track_buffer: 240
+match_thresh: 0.89
 fuse_score: True
 
 # GMC Optimization
@@ -13,5 +13,5 @@ gmc_method: none
 # ReID (GPU Native Acceleration)
 with_reid: True
 model: auto
-proximity_thresh: 0.13
-appearance_thresh: 0.5
+proximity_thresh: 0.7
+appearance_thresh: 0.43
