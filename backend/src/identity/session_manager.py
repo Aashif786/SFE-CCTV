@@ -78,6 +78,120 @@ class WorkerSessionManager:
         self._persist(session)
         return session
 
+    def bind_employee_to_track(
+        self,
+        employee_id: str,
+        track_id: str,
+        camera_id: str,
+        correlation_delay: float,
+    ) -> WorkerSession:
+        """Bind an employee identity to an existing track, or create a new session.
+
+        If the track already has an ACTIVE WorkerSession, the employee_id is
+        associated with that session (overriding any previous identity) and the
+        existing session is returned — preserving tracking continuity.
+
+        If no session exists, a fresh WorkerSession is created as usual.
+
+        This is the primary entry point for ACS door correlation when the person
+        may already be under an anonymous tracking ID.
+        """
+        existing = self._sessions.get(track_id)
+        if existing is not None:
+            old_emp = existing.employee_id
+            existing.employee_id = employee_id
+            existing.correlation_delay_seconds = round(correlation_delay, 3)
+            # Persist the employee override to DB
+            with SessionLocal() as db:
+                row = db.query(WorkerSessionDB).filter(
+                    WorkerSessionDB.session_id == existing.session_id
+                ).first()
+                if row:
+                    row.employee_id = employee_id
+                    row.correlation_delay_seconds = existing.correlation_delay_seconds
+                    db.commit()
+            print(
+                f"[Identity] 🔗 Bound employee {employee_id} to existing session "
+                f"(track={track_id}, prev_employee={old_emp})"
+            )
+            return existing
+        # No existing session — create a new one
+        return self.create_session(
+            employee_id=employee_id,
+            track_id=track_id,
+            camera_id=camera_id,
+            correlation_delay=correlation_delay,
+        )
+
+    def associate_track_continuity(
+        self,
+        origin_track_key: str,
+        new_track_key: str,
+        camera_id: str,
+        correlation_delay: float,
+    ) -> Optional[WorkerSession]:
+        """Transfer tracking continuity for anonymous cross-camera handoff.
+
+        When a Re-ID match confirms the same person crossed from one camera to
+        another without an employee identity, this method carries over the
+        session (if any) from the origin track to the new track.
+
+        If the origin has a session (in _sessions or _pending_handoffs), it is
+        transferred to the new track.  If not, no session is created — the
+        handoff is still recorded for display-level track ID continuity by the
+        caller.
+
+        Returns the transferred session, or None if no origin session existed.
+        """
+        # Check active sessions first, then pending handoffs
+        session = self._sessions.get(origin_track_key)
+        source = "_sessions"
+        if session is None:
+            # Search pending handoffs by origin track key
+            for sid, s in list(self._pending_handoffs.items()):
+                if s.current_track_id == origin_track_key:
+                    session = s
+                    source = "_pending_handoffs"
+                    break
+        if session is None:
+            return None
+
+        # Prevent stealing an occupied destination track
+        occupied = self._sessions.get(new_track_key)
+        if occupied is not None and occupied.session_id != session.session_id:
+            print(
+                f"[IdentityTransfer] ❌ associate_track_continuity: destination "
+                f"{new_track_key} occupied by {occupied.employee_id}"
+            )
+            return None
+
+        # Move session to the new track
+        if source == "_sessions":
+            self._sessions.pop(origin_track_key, None)
+        else:
+            self._pending_handoffs.pop(session.session_id, None)
+
+        session.current_track_id = new_track_key
+        session.camera_id = camera_id
+        session.correlation_delay_seconds = round(correlation_delay, 3)
+        self._sessions[new_track_key] = session
+
+        with SessionLocal() as db:
+            row = db.query(WorkerSessionDB).filter(
+                WorkerSessionDB.session_id == session.session_id
+            ).first()
+            if row:
+                row.current_track_id = new_track_key
+                row.camera_id = camera_id
+                row.correlation_delay_seconds = session.correlation_delay_seconds
+                db.commit()
+
+        print(
+            f"[IdentityTransfer] 🔄 Anonymous continuity: {origin_track_key} → "
+            f"{new_track_key} on {camera_id} (employee={session.employee_id})"
+        )
+        return session
+
     def update_track(self, old_track_id: str, new_track_id: str) -> bool:
         """
         Reassign a WorkerSession to a new track ID without duplicating the employee.

@@ -153,7 +153,17 @@ class SpatialHandoffEngine:
                             )
                             results.append(session)
                     else:
-                        # Anonymous track continuity handoff
+                        # ── Anonymous track continuity handoff ─────────────────
+                        # The matched person has no employee_id but was Re-ID
+                        # matched across cameras. Transfer any existing session
+                        # from the origin track, and emit a handoff result so
+                        # the AI stream can propagate the display track ID.
+                        transferred = worker_session_manager.associate_track_continuity(
+                            origin_track_key=match.record.origin_track_key,
+                            new_track_key=crossing.track_key,
+                            camera_id=destination_camera,
+                            correlation_delay=match.transit_seconds,
+                        )
                         self.cache.consume(match.record.record_id)
                         self._audit(
                             "HANDOFF_COMPLETED_ANON", crossing,
@@ -163,7 +173,24 @@ class SpatialHandoffEngine:
                             transit_seconds=round(match.transit_seconds, 3),
                             connection_id=match.connection.id,
                         )
-                        print(f"[HANDOFF] 🔄 Anonymous handoff completed: {match.record.origin_track_key} -> {crossing.track_key} via connection {match.connection.id}")
+                        # Return a result dict that the caller can use for
+                        # display-level track ID continuity mapping.
+                        handoff_info = {
+                            "type": "ANON_HANDOFF",
+                            "origin_track_key": match.record.origin_track_key,
+                            "new_track_key": crossing.track_key,
+                            "similarity": match.similarity,
+                            "session": transferred,
+                        }
+                        results.append(handoff_info)
+                        if transferred:
+                            print(f"[HANDOFF] 🔄 Anonymous handoff completed (with session): "
+                                  f"{match.record.origin_track_key} -> {crossing.track_key} "
+                                  f"employee={transferred.employee_id} via {match.connection.id}")
+                        else:
+                            print(f"[HANDOFF] 🔄 Anonymous handoff completed (no session): "
+                                  f"{match.record.origin_track_key} -> {crossing.track_key} "
+                                  f"via {match.connection.id}")
         return results
 
     def _audit(self, kind: str, crossing, **details) -> None:

@@ -122,23 +122,19 @@ class ZoneDwellTracker:
                 self._close_visit_in_db(active_visit, now)
                 cam_visits.pop(str_trk_id, None)
 
-            # Check if another track in the same zone on this camera was active within the last 3.0 seconds (Track Stitching)
+            # If person_identifier is provided, check if that same identified employee had an active visit in this zone
             stitched_visit = None
-            for trk_key, v in list(cam_visits.items()):
-                if trk_key != str_trk_id and v.zone_id == current_zone_id:
-                    if (_to_utc(now) - _to_utc(v.last_updated)).total_seconds() <= 3.0:
+            if person_identifier:
+                for trk_key, v in list(cam_visits.items()):
+                    if trk_key != str_trk_id and v.person_identifier == person_identifier and v.zone_id == current_zone_id:
                         stitched_visit = v
                         cam_visits.pop(trk_key, None)
                         break
 
             if stitched_visit:
-                # Reuse existing visit — seamless track ID re-identification
+                # Reuse existing visit — seamless track ID re-identification for the identified person
                 stitched_visit.tracking_id = str_trk_id
                 stitched_visit.last_updated = now
-                if person_identifier and not stitched_visit.person_identifier:
-                    stitched_visit.person_identifier = person_identifier
-                    self._update_person_identifier_in_db(stitched_visit.db_visit_id, person_identifier)
-
                 cam_visits[str_trk_id] = stitched_visit
                 dwell_sec = max(0.0, (_to_utc(now) - _to_utc(stitched_visit.entry_time)).total_seconds())
                 return {

@@ -35,7 +35,7 @@
       5
     ],
     "portal_id": "",
-    "portal_role": "AUTO",
+    "portal_role": "START",
     "correlation_window_seconds": 12.0
   },
   {
@@ -61,7 +61,7 @@
       15
     ],
     "portal_id": "main-facility:15:to-ext-way",
-    "portal_role": "AUTO",
+    "portal_role": "START",
     "correlation_window_seconds": 7.0
   }
 ]

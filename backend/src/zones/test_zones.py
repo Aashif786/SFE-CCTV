@@ -80,6 +80,60 @@ class TestDwellTracker(unittest.TestCase):
         self.assertEqual(format_dwell_time(125), "02:05")
         self.assertEqual(format_dwell_time(3665), "01:01:05")
 
+    def test_concurrent_multi_person_tracking(self):
+        tracker = ZoneDwellTracker()
+        # Mock _open_visit_in_db and _close_visit_in_db to avoid needing real SQLite session
+        tracker._open_visit_in_db = lambda **kwargs: 1
+        tracker._close_visit_in_db = lambda *args, **kwargs: None
+
+        zone_dict = {"id": "zone-2", "name": "Zone 2", "color": "#EF4444"}
+
+        # Simulate 6 distinct people entering zone 2
+        for i in range(1, 7):
+            status, dwell = tracker.update_track_zone(
+                camera_id="17",
+                track_id=f"track-{i}",
+                current_zone=zone_dict,
+                person_identifier=None,
+            )
+            self.assertIsNotNone(status)
+            self.assertEqual(status["zone_id"], "zone-2")
+
+        # Verify all 6 are concurrently tracked in memory
+        self.assertEqual(tracker.get_active_visits_count(camera_id="17", zone_id="zone-2"), 6)
+        active_details = tracker.get_all_active_visits_detail()
+        self.assertEqual(len(active_details), 6)
+
+    def test_identified_person_stitching(self):
+        tracker = ZoneDwellTracker()
+        tracker._open_visit_in_db = lambda **kwargs: 1
+        tracker._close_visit_in_db = lambda *args, **kwargs: None
+
+        zone_dict = {"id": "zone-2", "name": "Zone 2", "color": "#EF4444"}
+
+        # Person with employee ID EMP101 enters on track-1
+        tracker.update_track_zone(
+            camera_id="17",
+            track_id="track-1",
+            current_zone=zone_dict,
+            person_identifier="EMP101",
+        )
+
+        # Track ID switches to track-99 for same employee EMP101
+        tracker.update_track_zone(
+            camera_id="17",
+            track_id="track-99",
+            current_zone=zone_dict,
+            person_identifier="EMP101",
+        )
+
+        # Should stitch to 1 active visit under track-99
+        self.assertEqual(tracker.get_active_visits_count(camera_id="17", zone_id="zone-2"), 1)
+        active_details = tracker.get_all_active_visits_detail()
+        self.assertEqual(len(active_details), 1)
+        self.assertEqual(active_details[0]["track_id"], "track-99")
+        self.assertEqual(active_details[0]["person_identifier"], "EMP101")
+
 
 if __name__ == "__main__":
     unittest.main()
