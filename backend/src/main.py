@@ -44,7 +44,7 @@ from .state import preload_model_cache
 # Create / migrate tables on startup
 Base.metadata.create_all(bind=engine)
 
-# Ensure new columns exist on employee_daily_summary table
+# Ensure new columns exist on tables
 try:
     from sqlalchemy import text
     with engine.connect() as conn:
@@ -55,6 +55,7 @@ try:
         conn.execute(text('ALTER TABLE employee_daily_summary ADD COLUMN IF NOT EXISTS productivity_score FLOAT DEFAULT 100.0 NOT NULL;'))
         conn.execute(text('ALTER TABLE identity_events ADD COLUMN IF NOT EXISTS allowed_cameras TEXT;'))
         conn.execute(text('ALTER TABLE identity_events ADD COLUMN IF NOT EXISTS matched_camera_id TEXT;'))
+        conn.execute(text('ALTER TABLE worker_sessions ADD COLUMN IF NOT EXISTS persistent_track_id VARCHAR;'))
         conn.commit()
 
 except Exception as _mig_err:
