@@ -133,75 +133,20 @@ if (-not (Test-Path $PythonPath)) {
     exit 1
 }
 
-$BackendProcess = $null
-$StartupFailed = $false
+Write-Host "=========================================" -ForegroundColor Cyan
+Write-Host "[OK] CALVISION Backend is running!" -ForegroundColor Green
+Write-Host "   - Backend API: http://localhost:8000"
+Write-Host "   - API Docs:    http://localhost:8000/docs"
+Write-Host "   - Frontend:    Run 'npm run dev' in the frontend\ folder" -ForegroundColor Yellow
+Write-Host "Press Ctrl+C to stop the backend." -ForegroundColor Yellow
+Write-Host "=========================================" -ForegroundColor Cyan
 
+Push-Location (Join-Path $ProjectRoot "backend")
 try {
-    $BackendProcess = Start-Process -FilePath $PythonPath -ArgumentList "-m uvicorn src.main:app --host 0.0.0.0 --port 8000" -WorkingDirectory (Join-Path $ProjectRoot "backend") -NoNewWindow -PassThru
-
-    Write-Host "[INFO] Waiting for backend to become ready..." -ForegroundColor Yellow
-    $BackendReady = $false
-    $ServiceDeadline = (Get-Date).AddSeconds(60)
-    while ((Get-Date) -lt $ServiceDeadline) {
-        if ($BackendProcess.HasExited) {
-            break
-        }
-
-        try {
-            Invoke-WebRequest -Uri "http://127.0.0.1:8000/docs" -UseBasicParsing -TimeoutSec 3 -ErrorAction Stop | Out-Null
-            $BackendReady = $true
-            break
-        } catch {}
-
-        Start-Sleep -Seconds 2
-    }
-
-    if (-not $BackendReady) {
-        $StartupFailed = $true
-        Write-Host "[ERROR] Backend stopped or did not become ready within 60 seconds." -ForegroundColor Red
-        exit 1
-    }
-
-    Write-Host "=========================================" -ForegroundColor Cyan
-    Write-Host "[OK] CALVISION Backend is running!" -ForegroundColor Green
-    Write-Host "   - Backend API: http://localhost:8000"
-    Write-Host "   - API Docs:    http://localhost:8000/docs"
-    Write-Host "   - Frontend:    Run 'npm run dev' in the frontend\ folder" -ForegroundColor Yellow
-    Write-Host "Press Ctrl+C to stop the backend." -ForegroundColor Yellow
-    Write-Host "=========================================" -ForegroundColor Cyan
-
-    # Keep script running while backend is active
-    $BackendDownCount = 0
-    $MAX_DOWN_COUNT = 15
-
-    while ($true) {
-        Start-Sleep -Seconds 2
-        
-        $BackendListening = $false
-        try {
-            $BackendConn = Get-NetTCPConnection -LocalPort 8000 -State Listen -ErrorAction SilentlyContinue
-            if ($BackendConn) { $BackendListening = $true }
-        } catch {}
-
-        if ($BackendListening -or (-not $BackendProcess.HasExited)) {
-            $BackendDownCount = 0
-        } else {
-            $BackendDownCount++
-        }
-
-        if ($BackendDownCount -ge $MAX_DOWN_COUNT) {
-            $StartupFailed = $true
-            Write-Host "[ERROR] Backend service stopped listening on port 8000." -ForegroundColor Red
-            break
-        }
-    }
+    & $PythonPath -m uvicorn src.main:app --host 0.0.0.0 --port 8000
 } finally {
+    Pop-Location
     Write-Host ""
-    Write-Host "[INFO] Shutting down CALVISION backend..." -ForegroundColor Yellow
-    if ($BackendProcess -and -not $BackendProcess.HasExited) {
-        Stop-Process -Id $BackendProcess.Id -Force -ErrorAction SilentlyContinue
-    }
-    Write-Host "[OK] Backend shutdown complete." -ForegroundColor Green
+    Write-Host "[INFO] CALVISION backend stopped." -ForegroundColor Yellow
 }
 
-if ($StartupFailed) { exit 1 }
