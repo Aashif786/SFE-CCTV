@@ -362,6 +362,20 @@ async def camera_snapshot(camera_id: int, format: str = "jpeg"):
     return Response(content=jpeg, media_type="image/jpeg")
 
 
+@router.get("/api/cameras/export", summary="Export cameras configuration JSON")
+async def export_cameras(db: Session = Depends(get_db)):
+    """Export all cameras configuration to a downloadable JSON file."""
+    from ..api.system import export_specific_config
+    return await export_specific_config("cameras", db)
+
+
+@router.post("/api/cameras/import", summary="Import cameras configuration JSON")
+async def import_cameras(request: Request, file: Optional[UploadFile] = None, mode: str = "merge", db: Session = Depends(get_db)):
+    """Import cameras configuration from JSON body or uploaded file."""
+    from ..api.system import import_specific_config
+    return await import_specific_config("cameras", request, file, mode=mode, db=db)
+
+
 # ---------------------------------------------------------------------------
 # Seed data (runs once on first import if table is empty)
 # ---------------------------------------------------------------------------

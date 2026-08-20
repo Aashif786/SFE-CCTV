@@ -26,8 +26,11 @@ import {
   X,
   ZoomIn,
   ZoomOut,
+  Download,
+  Upload,
 } from "lucide-react";
 import { useCameras } from "@/hooks/useCameras";
+import ConfigImportModal from "@/components/ConfigImportModal";
 
 type PortalShape = {
   id: string;
@@ -86,6 +89,18 @@ export default function PortalFlowPage() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [notice, setNotice] = useState<{ error: boolean; text: string } | null>(null);
+  const [importModalOpen, setImportModalOpen] = useState(false);
+
+  const handleExportFlow = () => {
+    const url = `${apiBase()}/api/spatial-handoff/export`;
+    const link = document.createElement("a");
+    link.href = url;
+    link.setAttribute("download", "spatial_handoff.json");
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    setNotice({ error: false, text: "Exported spatial flow layout successfully!" });
+  };
 
   // Left Panel Search
   const [searchQuery, setSearchQuery] = useState("");
@@ -674,6 +689,24 @@ export default function PortalFlowPage() {
             <div className="h-5 w-px bg-[hsl(var(--border))]" />
 
             <button
+              onClick={handleExportFlow}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-[hsl(var(--border))] bg-[hsl(var(--bg-card))] hover:bg-[hsl(var(--bg-hover))] text-xs font-semibold text-[hsl(var(--text-secondary))] shadow-sm"
+              title="Export spatial_handoff.json"
+            >
+              <Download className="w-3.5 h-3.5 text-purple-500" /> Export Flow JSON
+            </button>
+
+            <button
+              onClick={() => setImportModalOpen(true)}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-[hsl(var(--border))] bg-[hsl(var(--bg-card))] hover:bg-[hsl(var(--bg-hover))] text-xs font-semibold text-[hsl(var(--text-secondary))] shadow-sm"
+              title="Import spatial_handoff.json"
+            >
+              <Upload className="w-3.5 h-3.5 text-emerald-500" /> Import Flow JSON
+            </button>
+
+            <div className="h-5 w-px bg-[hsl(var(--border))]" />
+
+            <button
               onClick={saveFlow}
               disabled={saving}
               className="inline-flex items-center gap-2 px-4 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white text-xs font-bold shadow-sm transition-all"
@@ -1077,6 +1110,17 @@ export default function PortalFlowPage() {
           </div>
         </div>
       )}
+
+      {/* Config Import Modal */}
+      <ConfigImportModal
+        isOpen={importModalOpen}
+        onClose={() => setImportModalOpen(false)}
+        title="Import Spatial Flow & Portal Layout"
+        configType="spatial_handoff"
+        onSuccess={() => {
+          window.location.reload();
+        }}
+      />
     </div>
   );
 }

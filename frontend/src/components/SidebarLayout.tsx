@@ -5,7 +5,7 @@ import Link from 'next/link';
 import {
   LayoutDashboard, History, Settings, Bell,
   Fingerprint, BarChart2, Menu, UserCheck, Sun, Moon, DoorClosed, Wifi,
-  Video, SlidersHorizontal, Radar, Layers, Clock, Network, GitFork
+  Video, SlidersHorizontal, Radar, Layers, Clock, Network, GitFork, Package
 } from 'lucide-react';
 import { usePathname } from 'next/navigation';
 import { useTheme } from '@/context/ThemeContext';
@@ -33,7 +33,7 @@ export default function SidebarLayout({ children }: { children: React.ReactNode 
   ];
 
   const miscLinks = [
-    { href: "/tools",               icon: Radar,              label: "Network Scanner" },
+    { href: "/tools",               icon: Package,            label: "Tools & Backup" },
   ];
 
   return (

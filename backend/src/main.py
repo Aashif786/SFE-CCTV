@@ -29,6 +29,7 @@ from .api.zones import router as zones_router
 from .api.stats import router as stats_router
 from .api.tools import router as tools_router
 from .api.resources import router as resources_router
+from .api.system import router as system_router
 from .spatial.api import router as spatial_handoff_router
 
 # WebSocket handlers
@@ -106,6 +107,7 @@ app.include_router(settings_router)
 app.include_router(zones_router)
 app.include_router(stats_router)
 app.include_router(tools_router)
+app.include_router(system_router)
 app.include_router(resources_router)
 app.include_router(spatial_handoff_router)
 
