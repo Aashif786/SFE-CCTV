@@ -288,10 +288,7 @@ class HikvisionProvider(IdentityEventProvider):
             allowed_cams = []
             corr_window = 10.0
             if matched_door:
-                if ev_type == "EXIT":
-                    allowed_cams = [str(c) for c in (matched_door.get("check_out_cameras") or [])]
-                else:
-                    allowed_cams = [str(c) for c in (matched_door.get("check_in_cameras") or [])]
+                allowed_cams = [str(c) for c in (matched_door.get("cameras") or [])]
                 corr_window = float(matched_door.get("correlation_window_seconds") or 10.0)
 
             import uuid

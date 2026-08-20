@@ -52,3 +52,31 @@ async def status():
         ],
         "recent_events": spatial_handoff_engine.events[-50:],
     }
+
+
+@router.get("/portals")
+async def get_portals():
+    """Return all portals configured in spatial layout with their pathway topology roles."""
+    config = spatial_handoff_engine.configuration
+    raw = config.snapshot()
+    portals_list = []
+    for facility in raw.get("facilities", []):
+        fac_id = facility.get("id", "")
+        for cam in facility.get("cameras", []):
+            cam_id = str(cam.get("id", ""))
+            for p in cam.get("portals", []):
+                local_id = str(p.get("id", ""))
+                portal_id = f"{fac_id}:{cam_id}:{local_id}"
+                has_out = bool(config.outgoing(portal_id))
+                has_in = bool(config.incoming(portal_id))
+                role = "TRANSIT" if (has_out and has_in) else ("START" if has_out else ("END" if has_in else "STANDALONE"))
+                portals_list.append({
+                    "id": portal_id,
+                    "facility_id": fac_id,
+                    "camera_id": cam_id,
+                    "local_id": local_id,
+                    "role": role,
+                    "has_outgoing": has_out,
+                    "has_incoming": has_in,
+                })
+    return portals_list

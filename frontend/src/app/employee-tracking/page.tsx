@@ -319,10 +319,10 @@ export default function EmployeeTrackingPage() {
           </div>
         </div>
 
-        {/* Global Tracking Mode Info Banner */}
+        {/* Global Tracking Mode Switcher Banner */}
         <div
-          className={`p-4 rounded-2xl border flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 ${
-            trackingMode === "TRACK_ALL"
+          className={`p-4 rounded-2xl border flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 transition-all ${
+            trackingMode === "NORMAL" || trackingMode === "TRACK_ALL"
               ? "bg-blue-500/10 border-blue-500/20 text-blue-600 dark:text-blue-400"
               : "bg-emerald-500/10 border-emerald-500/20 text-emerald-600 dark:text-emerald-400"
           }`}
@@ -331,24 +331,58 @@ export default function EmployeeTrackingPage() {
             <Radio className="w-5 h-5 shrink-0" />
             <div>
               <div className="text-sm font-bold flex items-center gap-2">
-                <span>Active System Mode: {trackingMode === "TRACK_ALL" ? "Track All People" : "Track Specific People"}</span>
+                <span>
+                  Active System Mode:{" "}
+                  {trackingMode === "NORMAL" || trackingMode === "TRACK_ALL"
+                    ? "Normal Tracking (Track All People)"
+                    : "Door-Based Tracking"}
+                </span>
                 <span className="text-[10px] uppercase font-bold tracking-wider px-2 py-0.5 rounded-full bg-white/20">
-                  {trackingMode}
+                  {trackingMode === "DOOR_BASED" || trackingMode === "TRACK_SPECIFIC" ? "DOOR_BASED" : "NORMAL"}
                 </span>
               </div>
               <p className="text-xs opacity-90 mt-0.5">
-                {trackingMode === "TRACK_ALL"
-                  ? "All detected individuals are automatically tracked. Individual employee tracking toggles below are set to read-only."
-                  : "Only employees with 'Tracking = ON' are included in the AI detection and dwell analytics pipeline."}
+                {trackingMode === "NORMAL" || trackingMode === "TRACK_ALL"
+                  ? "All detected individuals are tracked and shown across feeds. Standard open monitoring without check-in gating."
+                  : "Tracks only employees who checked in through a Door ACS. Follows them on designated cameras and connected portals via Portal Flow."}
               </p>
             </div>
           </div>
-          <a
-            href="/settings"
-            className="text-xs font-bold underline shrink-0 hover:opacity-80 transition-opacity"
-          >
-            Configure Mode in Settings &rarr;
-          </a>
+
+          <div className="flex items-center gap-2 shrink-0">
+            <button
+              onClick={async () => {
+                const nextMode = (trackingMode === "NORMAL" || trackingMode === "TRACK_ALL") ? "DOOR_BASED" : "NORMAL";
+                const api = getApiBase();
+                try {
+                  const res = await fetch(`${api}/api/settings/tracking-mode`, {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ tracking_mode: nextMode }),
+                  });
+                  if (res.ok) {
+                    const data = await res.json();
+                    setTrackingMode(data.tracking_mode);
+                  }
+                } catch (err) {
+                  console.error("Failed to switch tracking mode:", err);
+                }
+              }}
+              className={`px-3.5 py-2 rounded-xl text-xs font-bold transition-all shadow-sm flex items-center gap-1.5 ${
+                trackingMode === "NORMAL" || trackingMode === "TRACK_ALL"
+                  ? "bg-blue-600 hover:bg-blue-500 text-white"
+                  : "bg-emerald-600 hover:bg-emerald-500 text-white"
+              }`}
+            >
+              <span>Switch to {(trackingMode === "NORMAL" || trackingMode === "TRACK_ALL") ? "Door-Based Tracking" : "Normal Tracking"}</span>
+            </button>
+            <a
+              href="/settings"
+              className="text-xs font-semibold underline px-2 hover:opacity-80 transition-opacity"
+            >
+              Settings &rarr;
+            </a>
+          </div>
         </div>
 
         {/* Metric Cards */}

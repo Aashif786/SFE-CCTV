@@ -12,6 +12,7 @@ from __future__ import annotations
 import json
 
 from fastapi import APIRouter
+from pydantic import BaseModel
 
 from ..config import config, SETTINGS_FILE, SettingsPayload, sync_tracker_config, env_settings, _update_env_file
 from ..identity.api import _provider
@@ -200,4 +201,45 @@ async def save_settings(payload: SettingsPayload):
         "idle_threshold_seconds": config.idle_threshold_seconds,
         "movement_sensitivity": config.movement_sensitivity,
         "confidence_threshold": config.confidence_threshold,
+    }
+
+
+class TrackingModePayload(BaseModel):
+    tracking_mode: str  # "NORMAL" (or "TRACK_ALL") | "DOOR_BASED" (or "TRACK_SPECIFIC")
+
+
+@router.get("/api/settings/tracking-mode")
+async def get_tracking_mode():
+    """Return the active tracking mode: NORMAL or DOOR_BASED."""
+    mode = getattr(config, "tracking_mode", "NORMAL").upper()
+    canonical_mode = "DOOR_BASED" if mode in ("DOOR_BASED", "TRACK_SPECIFIC", "DOOR") else "NORMAL"
+    return {
+        "tracking_mode": canonical_mode,
+        "raw_mode": getattr(config, "tracking_mode", "NORMAL"),
+    }
+
+
+@router.post("/api/settings/tracking-mode")
+async def set_tracking_mode(payload: TrackingModePayload):
+    """Toggle or set the tracking mode: NORMAL vs DOOR_BASED."""
+    mode = payload.tracking_mode.strip().upper()
+    canonical_mode = "DOOR_BASED" if mode in ("DOOR_BASED", "TRACK_SPECIFIC", "DOOR") else "NORMAL"
+    config.tracking_mode = canonical_mode
+
+    # Persist tracking_mode to settings.json
+    try:
+        data = {}
+        if os.path.exists(SETTINGS_FILE):
+            with open(SETTINGS_FILE, "r", encoding="utf-8") as f:
+                data = json.load(f)
+        data["tracking_mode"] = canonical_mode
+        with open(SETTINGS_FILE, "w", encoding="utf-8") as f:
+            json.dump(data, f, indent=4)
+        print(f"⚙️  Tracking mode switched to: {canonical_mode}")
+    except Exception as e:
+        print(f"Warning: Failed to persist tracking_mode to settings.json: {e}")
+
+    return {
+        "status": "updated",
+        "tracking_mode": canonical_mode,
     }

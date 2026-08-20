@@ -31,10 +31,19 @@ class PortalManager:
                 if self._direction_allowed(portal.direction, portal.min_direction_cosine, direction):
                     events.append(PortalCrossing(portal, track_key, timestamp, direction, confidence, embedding))
 
-            # Arrival crossing: this portal is the entry in at least one connection.
-            if bool(self._configuration.incoming(portal.id)) and inside and not was_inside:
-                if self._direction_allowed(portal.direction, portal.min_direction_cosine, direction):
+            # Arrival crossing: this portal is an entry in a connection or has a pending door claim.
+            # Trigger on outside -> inside entry, or retry while the track remains inside
+            # the entry portal if it has not yet matched to a known employee session.
+            from ..identity.correlation import correlation_engine
+            is_entry_capable = bool(self._configuration.incoming(portal.id)) or correlation_engine.has_pending_portal(portal.id)
+            if is_entry_capable and inside:
+                from ..identity.session_manager import worker_session_manager
+                is_initial_entry = not was_inside
+                needs_match = is_initial_entry or (worker_session_manager.get_by_track(track_key) is None)
+                if needs_match and self._direction_allowed(portal.direction, portal.min_direction_cosine, direction):
                     events.append(PortalCrossing(portal, track_key, timestamp, direction, confidence, embedding))
+
+
 
             self._inside[state_key], self._positions[state_key] = inside, point
         return events
@@ -70,6 +79,15 @@ class PortalManager:
         if expected is None or minimum <= -1.0:
             return True
         if actual is None:
-            return False
+            return True  # If direction cannot be calculated yet (e.g. initial frame), do not drop the crossing
         length = math.hypot(*expected)
         return length > 0 and ((expected[0] * actual[0] + expected[1] * actual[1]) / length) >= minimum
+
+    def get_tracks_inside_portal(self, portal_id: str) -> set[str]:
+        """Return the set of track_keys currently inside the specified portal polygon."""
+        return {
+            track_key
+            for (pid, track_key), inside in self._inside.items()
+            if pid == portal_id and inside
+        }
+

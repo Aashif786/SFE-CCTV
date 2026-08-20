@@ -2,62 +2,66 @@
   {
     "ip": "192.168.1.231",
     "name": "main Door",
+    "door_group": "",
     "username": "admin",
     "password": "",
-    "check_in_cameras": [
+    "cameras": [
       1
     ],
-    "check_out_cameras": [
-      13
-    ],
-    "correlation_window_seconds": 10.0
+    "portal_id": "",
+    "portal_role": "AUTO",
+    "correlation_window_seconds": 7.0
   },
   {
     "ip": "192.168.1.232",
     "name": "Door 01 out",
+    "door_group": "",
     "username": "admin",
     "password": "",
-    "check_in_cameras": [],
-    "check_out_cameras": [
-      10
+    "cameras": [
+      1
     ],
-    "correlation_window_seconds": 12.0
+    "portal_id": "",
+    "portal_role": "AUTO",
+    "correlation_window_seconds": 6.0
   },
   {
     "ip": "192.168.1.233",
     "name": "Door 01 IN",
+    "door_group": "",
     "username": "admin",
     "password": "",
-    "check_in_cameras": [
+    "cameras": [
       5
     ],
-    "check_out_cameras": [
-      1
-    ],
+    "portal_id": "",
+    "portal_role": "AUTO",
     "correlation_window_seconds": 12.0
   },
   {
     "ip": "192.168.1.234",
     "name": "Door Exit IN",
+    "door_group": "",
     "username": "admin",
     "password": "",
-    "check_in_cameras": [
-      13
+    "cameras": [
+      10
     ],
-    "check_out_cameras": [],
-    "correlation_window_seconds": 12.0
+    "portal_id": "main-facility:10:exit-way-st",
+    "portal_role": "AUTO",
+    "correlation_window_seconds": 8.0
   },
   {
     "ip": "192.168.1.235",
     "name": "Door Exit OUT",
+    "door_group": "",
     "username": "admin",
     "password": "",
-    "check_in_cameras": [
-      10
-    ],
-    "check_out_cameras": [
+    "cameras": [
       15
     ],
-    "correlation_window_seconds": 10.0
+    "portal_id": "main-facility:15:to-ext-way",
+    "portal_role": "AUTO",
+    "correlation_window_seconds": 7.0
   }
 ]

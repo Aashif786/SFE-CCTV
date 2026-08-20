@@ -119,6 +119,7 @@ class WorkerSessionDB(Base):
     id = Column(Integer, primary_key=True, index=True)
     session_id = Column(String, unique=True, nullable=False, index=True)
     employee_id = Column(String, nullable=False, index=True)
+    persistent_track_id = Column(String, nullable=True) # Persisted application track ID
     current_track_id = Column(String, nullable=False)   # updated if tracker reassigns
     camera_id = Column(String, nullable=False, index=True)
     start_time = Column(DateTime, nullable=False, index=True)
