@@ -60,13 +60,16 @@ class SpatialConfigurationService:
 
     def portals_for_camera(self, camera_id: str) -> tuple[Portal, ...]:
         with self._lock:
-            requested = str(camera_id)
+            requested = str(camera_id).strip()
             direct = tuple(p for p in self._portals.values() if p.camera_id == requested and p.enabled)
             if direct:
                 return direct
-            # Legacy streams supply only a DB camera ID. Permit that only when
-            # it resolves to one facility; ambiguity must never yield a match.
-            matches = tuple(p for p in self._portals.values() if p.camera_id.rsplit(":", 1)[-1] == requested and p.enabled)
+            # Support raw DB camera ID and stream prefixed keys (e.g. "1", "ai-1", "cam-1").
+            clean_id = requested.replace("ai-", "").replace("cam-", "").strip()
+            matches = tuple(
+                p for p in self._portals.values()
+                if (p.camera_id.rsplit(":", 1)[-1] in (requested, clean_id)) and p.enabled
+            )
             facilities = {p.camera_id.rsplit(":", 1)[0] for p in matches}
             return matches if len(facilities) <= 1 else ()
 

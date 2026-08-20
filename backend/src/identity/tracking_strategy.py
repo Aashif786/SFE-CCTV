@@ -2,9 +2,10 @@
 Modular Person Tracking Strategy Framework.
 
 Supports switching between Tracking Modes:
-  1. TRACK_ALL (Default): Tracks, analyzes, and logs all detected people.
-  2. TRACK_SPECIFIC: Only actively monitors designated personnel after check-in.
-     Non-checked-in or non-designated individuals are bypassed to optimize compute.
+  1. NORMAL (or TRACK_ALL): Tracks, analyzes, and logs all detected people in camera feeds.
+  2. DOOR_BASED (or TRACK_SPECIFIC): Only tracks employees who have successfully checked in/accessed
+     through a Door ACS, then tracks them on their designated cameras and follows their identity
+     across connected cameras according to the configured Portal Flow.
 """
 
 from __future__ import annotations
@@ -26,12 +27,12 @@ class BaseTrackingStrategy(ABC):
         camera_id: str,
         person_identifier: Optional[str] = None,
     ) -> bool:
-        """Return True if this detected person/track should be actively analyzed."""
+        """Return True if this detected person/track should be actively analyzed and tracked."""
         pass
 
 
-class TrackAllStrategy(BaseTrackingStrategy):
-    """Default strategy: track and analyze every detected person."""
+class NormalTrackingStrategy(BaseTrackingStrategy):
+    """Normal Tracking mode: track, analyze, and display all detected people."""
 
     def should_track(
         self,
@@ -42,12 +43,18 @@ class TrackAllStrategy(BaseTrackingStrategy):
         return True
 
 
-class TrackSpecificStrategy(BaseTrackingStrategy):
+# Backward-compatible alias
+TrackAllStrategy = NormalTrackingStrategy
+
+
+class DoorBasedTrackingStrategy(BaseTrackingStrategy):
     """
-    Track Specific People strategy:
-    - Only tracks individuals whose tracking status (is_tracked) is enabled
-      AND have successfully checked in (has an active WorkerSession).
-    - Un-checked-in anonymous tracks or employees with tracking OFF are ignored to minimize compute.
+    Door-Based Tracking mode:
+    - Only tracks employees who have successfully checked in/accessed through a Door ACS
+      (has an active WorkerSession).
+    - Un-checked-in anonymous tracks are ignored (bypassed from AI analysis and metrics),
+      focusing compute strictly on authenticated personnel as they move through designated
+      cameras and connected portals.
     """
 
     def should_track(
@@ -67,7 +74,7 @@ class TrackSpecificStrategy(BaseTrackingStrategy):
         if target_ids and str(emp_id) in target_ids:
             return True
 
-        # Check DB for employee tracking status
+        # Check DB for employee tracking status if registered
         try:
             from ..db.database import SessionLocal
             from ..db.models import EmployeeDB
@@ -81,15 +88,22 @@ class TrackSpecificStrategy(BaseTrackingStrategy):
         return True
 
 
+# Backward-compatible alias
+TrackSpecificStrategy = DoorBasedTrackingStrategy
+
+
 class TrackingStrategyFactory:
     """Factory creating the appropriate tracking strategy based on system config."""
 
     _strategies = {
-        "TRACK_ALL": TrackAllStrategy(),
-        "TRACK_SPECIFIC": TrackSpecificStrategy(),
+        "NORMAL": NormalTrackingStrategy(),
+        "TRACK_ALL": NormalTrackingStrategy(),
+        "DOOR_BASED": DoorBasedTrackingStrategy(),
+        "DOOR": DoorBasedTrackingStrategy(),
+        "TRACK_SPECIFIC": DoorBasedTrackingStrategy(),
     }
 
     @classmethod
     def get_strategy(cls) -> BaseTrackingStrategy:
-        mode = getattr(config, "tracking_mode", "TRACK_ALL").upper()
-        return cls._strategies.get(mode, cls._strategies["TRACK_ALL"])
+        mode = getattr(config, "tracking_mode", "NORMAL").upper()
+        return cls._strategies.get(mode, cls._strategies["NORMAL"])

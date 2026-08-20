@@ -30,6 +30,7 @@ except ImportError:
 _cached_resources = {
     "cpu_percent": 0.0,
     "memory_percent": 0.0,
+    "ram_percent": 0.0,
     "disk_percent": 0.0,
     "gpu": {
         "available": False,
@@ -131,6 +132,7 @@ def _resource_sampler_loop():
             with _cache_lock:
                 _cached_resources["cpu_percent"] = cpu
                 _cached_resources["memory_percent"] = mem
+                _cached_resources["ram_percent"] = mem
                 _cached_resources["disk_percent"] = disk_pct
                 _cached_resources["gpu"] = gpu
         except Exception as e:

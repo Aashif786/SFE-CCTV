@@ -369,6 +369,12 @@ async def camera_ai_endpoint(websocket: WebSocket, camera_id: int):
                     if not tracking_strategy.should_track(str_trk_id, str(camera_id), person_identifier=employee_id):
                         continue
 
+                    # Determine the ID to expose downstream
+                    exposed_track_id = trk_id
+                    if worker_session and worker_session.persistent_track_id:
+                        pers_parts = worker_session.persistent_track_id.split(":")
+                        exposed_track_id = int(pers_parts[-1]) if pers_parts[-1].isdigit() else pers_parts[-1]
+
                     keypoints_to_send = p.get("keypoints", [])
 
                     # Collect peer positions (other tracked workers this frame)
@@ -458,7 +464,7 @@ async def camera_ai_endpoint(websocket: WebSocket, camera_id: int):
                     )
 
                     detections_out.append({
-                        "track_id": trk_id,
+                        "track_id": exposed_track_id,
                         "activity": activity,
                         "activity_colour": activity_colour,
                         "activity_display_name": classifier.get_display_name(activity),
@@ -548,7 +554,14 @@ async def camera_ai_endpoint(websocket: WebSocket, camera_id: int):
                     "detection_count": len(detections_out),
                     "image": image_b64,
                 }
-                await websocket.send_text(json.dumps(response))
+                try:
+                    await websocket.send_text(json.dumps(response))
+                except (WebSocketDisconnect, RuntimeError, asyncio.CancelledError):
+                    break
+                except Exception as send_err:
+                    if "websocket.close" in str(send_err) or "response already completed" in str(send_err):
+                        break
+                    raise send_err
 
                 # ── Throttle to target FPS ────────────────────────────────
                 # Sleep only the remaining budget. If inference already took
@@ -569,8 +582,13 @@ async def camera_ai_endpoint(websocket: WebSocket, camera_id: int):
             except (asyncio.CancelledError, Exception):
                 pass
 
-    except WebSocketDisconnect:
-        print(f"🧠 [AI-WS] Disconnected for camera {camera_id}")
+    except (WebSocketDisconnect, asyncio.CancelledError):
+        print(f"🧠 [AI-WS] Client disconnected for camera {camera_id}")
+    except RuntimeError as r_err:
+        if "websocket.close" in str(r_err) or "response already completed" in str(r_err) or "websocket.send" in str(r_err):
+            print(f"🧠 [AI-WS] Client connection closed for camera {camera_id}")
+        else:
+            print(f"❌ [AI-WS] RuntimeError for camera {camera_id}: {r_err}")
     except Exception as e:
         print(f"❌ [AI-WS] Fatal error for camera {camera_id}: {e}")
     finally:

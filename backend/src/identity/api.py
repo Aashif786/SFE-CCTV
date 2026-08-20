@@ -486,9 +486,39 @@ from .models import DoorConfigItem
 @router.get("/doors/config", summary="Get doors configurations")
 async def get_doors_config():
     """
-    Returns the list of configured doors (including credentials).
+    Returns the list of configured Door ACS units.
+    Transparently migrates old-format records (check_in_cameras/check_out_cameras)
+    to the new unified `cameras` field so the frontend always receives the new shape.
     """
-    return env_settings.hikvision_doors
+    doors = env_settings.hikvision_doors
+    migrated = []
+    needs_save = False
+    for d in doors:
+        entry = dict(d)
+        # Migrate old format: fold check_in_cameras/check_out_cameras → cameras
+        if "cameras" not in entry or entry["cameras"] is None:
+            old_in = entry.pop("check_in_cameras", None) or []
+            old_out = entry.pop("check_out_cameras", None) or []
+            entry["cameras"] = old_in if old_in else old_out
+            entry.setdefault("door_group", "")
+            needs_save = True
+        else:
+            entry.pop("check_in_cameras", None)
+            entry.pop("check_out_cameras", None)
+            entry.setdefault("door_group", "")
+        migrated.append(entry)
+
+    # Persist migration so subsequent reads are clean
+    if needs_save:
+        doors_file = os.path.join(os.path.dirname(__file__), "..", "..", "doors.json")
+        try:
+            with open(doors_file, "w", encoding="utf-8") as f:
+                json.dump(migrated, f, indent=2)
+            env_settings.reload_doors()
+        except Exception as e:
+            print(f"[doors/config] Warning: auto-migration write failed: {e}")
+
+    return migrated
 
 @router.post("/doors/config", summary="Save doors configurations")
 async def save_doors_config(payload: List[DoorConfigItem]):

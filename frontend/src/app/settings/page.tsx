@@ -52,7 +52,7 @@ export default function SettingsPage() {
   const [appearanceThresh, setAppearanceThresh] = useState(75);
 
   // 3. Identity & Person Tracking Mode
-  const [trackingMode, setTrackingMode] = useState<"TRACK_ALL" | "TRACK_SPECIFIC">("TRACK_ALL");
+  const [trackingMode, setTrackingMode] = useState<string>("NORMAL");
   const [trackedEmployeesText, setTrackedEmployeesText] = useState("");
   const [identityProvider, setIdentityProvider] = useState("REST_SIMULATOR");
   const [correlationWindow, setCorrelationWindow] = useState(5);
@@ -834,45 +834,45 @@ export default function SettingsPage() {
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                     <button
                       type="button"
-                      onClick={() => setTrackingMode("TRACK_ALL")}
+                      onClick={() => setTrackingMode("NORMAL")}
                       className={`p-4 rounded-xl border text-left transition-all ${
-                        trackingMode === "TRACK_ALL"
+                        trackingMode === "NORMAL" || trackingMode === "TRACK_ALL"
                           ? "border-emerald-500 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 font-medium"
                           : "border-[hsl(var(--border))] bg-[hsl(var(--bg-input))] text-[hsl(var(--text-secondary))] hover:border-[hsl(var(--border-strong))]"
                       }`}
                     >
                       <div className="font-bold text-sm text-[hsl(var(--text-primary))] flex items-center justify-between">
-                        <span>Track All People (Default)</span>
-                        {trackingMode === "TRACK_ALL" && <CheckCircle2 className="w-4 h-4 text-emerald-500" />}
+                        <span>Normal Tracking Mode</span>
+                        {(trackingMode === "NORMAL" || trackingMode === "TRACK_ALL") && <CheckCircle2 className="w-4 h-4 text-emerald-500" />}
                       </div>
                       <p className="text-xs text-[hsl(var(--text-muted))] mt-2 leading-relaxed">
-                        Every detected person in frame is tracked, analyzed, and logged. Ideal for full security monitoring.
+                        Tracks, analyzes, and logs all detected people in all camera feeds. Standard open monitoring without check-in gating.
                       </p>
                     </button>
 
                     <button
                       type="button"
-                      onClick={() => setTrackingMode("TRACK_SPECIFIC")}
+                      onClick={() => setTrackingMode("DOOR_BASED")}
                       className={`p-4 rounded-xl border text-left transition-all ${
-                        trackingMode === "TRACK_SPECIFIC"
+                        trackingMode === "DOOR_BASED" || trackingMode === "TRACK_SPECIFIC"
                           ? "border-emerald-500 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 font-medium"
                           : "border-[hsl(var(--border))] bg-[hsl(var(--bg-input))] text-[hsl(var(--text-secondary))] hover:border-[hsl(var(--border-strong))]"
                       }`}
                     >
                       <div className="font-bold text-sm text-[hsl(var(--text-primary))] flex items-center justify-between">
-                        <span>Track Specific People</span>
-                        {trackingMode === "TRACK_SPECIFIC" && <CheckCircle2 className="w-4 h-4 text-emerald-500" />}
+                        <span>Door-Based Tracking Mode</span>
+                        {(trackingMode === "DOOR_BASED" || trackingMode === "TRACK_SPECIFIC") && <CheckCircle2 className="w-4 h-4 text-emerald-500" />}
                       </div>
                       <p className="text-xs text-[hsl(var(--text-muted))] mt-2 leading-relaxed">
-                        Only monitors designated personnel after check-in. Non-checked-in anonymous tracks are ignored to optimize compute.
+                        Tracks only employees who have checked in through a Door ACS. Follows them on designated cameras and connected portals via Portal Flow.
                       </p>
                     </button>
                   </div>
 
-                  {trackingMode === "TRACK_SPECIFIC" && (
+                  {(trackingMode === "DOOR_BASED" || trackingMode === "TRACK_SPECIFIC") && (
                     <div className="p-4 rounded-xl bg-emerald-500/10 border border-emerald-500/20 text-xs text-emerald-700 dark:text-emerald-300 flex items-center justify-between">
                       <div>
-                        <span className="font-bold">Individual Employee Toggles Enabled:</span> Manage which specific employees to track on the new <strong className="underline">Employee Tracking</strong> page.
+                        <span className="font-bold">Door-Based Filtering Active:</span> Unchecked-in anonymous people are ignored. Employees are tracked upon card swipe and followed through Portal Flow connections.
                       </div>
                     </div>
                   )}

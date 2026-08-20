@@ -3,7 +3,7 @@ import { useEffect, useState, useCallback } from "react";
 import {
   Server, DoorClosed, Plus, Trash2, Edit2, CheckCircle2,
   AlertCircle, Loader2, RefreshCw, Send, ShieldAlert, Key, Check, Info,
-  Camera, Video, ArrowRightCircle, ArrowLeftCircle, Clock, ShieldCheck
+  Camera, Video, Clock, ShieldCheck, Layers, Tag, GitFork
 } from "lucide-react";
 
 const API = "http://localhost:8000";
@@ -27,33 +27,48 @@ interface CameraItem {
 interface DoorConfig {
   ip: string;
   name: string;
+  door_group?: string;
   username?: string;
   password?: string;
-  check_in_cameras?: (number | string)[];
-  check_out_cameras?: (number | string)[];
+  cameras?: (number | string)[];
+  portal_id?: string;
+  portal_role?: "START" | "END" | "AUTO";
   correlation_window_seconds?: number;
+}
+
+interface SpatialPortal {
+  id: string;
+  facility_id: string;
+  camera_id: string;
+  local_id: string;
+  role: "START" | "END" | "TRANSIT" | "STANDALONE";
+  has_outgoing: boolean;
+  has_incoming: boolean;
 }
 
 export default function DoorConfigsPage() {
   const [doors, setDoors] = useState<DoorStatus[]>([]);
   const [configs, setConfigs] = useState<DoorConfig[]>([]);
   const [cameras, setCameras] = useState<CameraItem[]>([]);
+  const [trackingMode, setTrackingMode] = useState<string>("NORMAL");
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [lastRefresh, setLastRefresh] = useState(new Date());
   const [mounted, setMounted] = useState(false);
 
-  
   // Form states
   const [ip, setIp] = useState("");
   const [name, setName] = useState("");
+  const [doorGroup, setDoorGroup] = useState("");
   const [username, setUsername] = useState("admin");
   const [password, setPassword] = useState("");
-  const [checkInCameras, setCheckInCameras] = useState<(number | string)[]>([]);
-  const [checkOutCameras, setCheckOutCameras] = useState<(number | string)[]>([]);
+  const [selectedCameras, setSelectedCameras] = useState<(number | string)[]>([]);
+  const [portals, setPortals] = useState<SpatialPortal[]>([]);
+  const [portalId, setPortalId] = useState<string>("");
+  const [portalRole, setPortalRole] = useState<"START" | "END" | "AUTO">("AUTO");
   const [correlationWindow, setCorrelationWindow] = useState<number>(10);
   const [editingIp, setEditingIp] = useState<string | null>(null);
-  
+
   // Simulator states
   const [simEmployeeId, setSimEmployeeId] = useState("");
   const [simGate, setSimGate] = useState("");
@@ -68,19 +83,30 @@ export default function DoorConfigsPage() {
         fetch(`${API}/api/identity/doors/config`),
         fetch(`${API}/api/cameras`)
       ]);
-      
+
       if (statusRes.ok) setDoors(await statusRes.json());
       if (configRes.ok) {
         const cfgs: DoorConfig[] = await configRes.json();
         setConfigs(cfgs);
         if (cfgs.length > 0 && !simGate) {
-          setSimGate(cfgs[0].name); // default simulator gate
+          setSimGate(cfgs[0].name);
         }
       }
       if (camerasRes.ok) {
         const cams = await camerasRes.json();
         setCameras(cams);
       }
+
+      fetch(`${API}/api/spatial-handoff/portals`)
+        .then(r => r.json())
+        .then(d => { if (Array.isArray(d)) setPortals(d); })
+        .catch(() => {});
+
+      fetch(`${API}/api/settings/tracking-mode`)
+        .then(r => r.json())
+        .then(d => { if (d.tracking_mode) setTrackingMode(d.tracking_mode); })
+        .catch(() => {});
+
       setLastRefresh(new Date());
     } catch (err) {
       console.error("Failed to fetch door data:", err);
@@ -97,14 +123,8 @@ export default function DoorConfigsPage() {
   }, [fetchData]);
 
 
-  const toggleCheckInCam = (camId: number) => {
-    setCheckInCameras(prev =>
-      prev.includes(camId) ? prev.filter(id => id !== camId) : [...prev, camId]
-    );
-  };
-
-  const toggleCheckOutCam = (camId: number) => {
-    setCheckOutCameras(prev =>
+  const toggleCamera = (camId: number) => {
+    setSelectedCameras(prev =>
       prev.includes(camId) ? prev.filter(id => id !== camId) : [...prev, camId]
     );
   };
@@ -119,10 +139,12 @@ export default function DoorConfigsPage() {
     const doorItem: DoorConfig = {
       ip: ip.trim(),
       name: name.trim(),
+      door_group: doorGroup.trim(),
       username: username.trim(),
       password: password,
-      check_in_cameras: checkInCameras,
-      check_out_cameras: checkOutCameras,
+      cameras: selectedCameras,
+      portal_id: portalId.trim(),
+      portal_role: portalRole,
       correlation_window_seconds: Number(correlationWindow) || 10
     };
 
@@ -130,7 +152,7 @@ export default function DoorConfigsPage() {
       updatedConfigs = updatedConfigs.map(c => c.ip === editingIp ? doorItem : c);
     } else {
       if (configs.some(c => c.ip === doorItem.ip)) {
-        alert("A door controller with this IP already exists.");
+        alert("A door ACS with this IP already exists.");
         setSaving(false);
         return;
       }
@@ -160,8 +182,8 @@ export default function DoorConfigsPage() {
   };
 
   const handleDelete = async (targetIp: string) => {
-    if (!confirm("Are you sure you want to delete this door controller configuration?")) return;
-    
+    if (!confirm("Are you sure you want to delete this Door ACS configuration?")) return;
+
     setSaving(true);
     const updatedConfigs = configs.filter(c => c.ip !== targetIp);
 
@@ -189,10 +211,12 @@ export default function DoorConfigsPage() {
     setEditingIp(c.ip);
     setIp(c.ip);
     setName(c.name);
+    setDoorGroup(c.door_group || "");
     setUsername(c.username || "admin");
     setPassword(c.password || "");
-    setCheckInCameras(c.check_in_cameras || []);
-    setCheckOutCameras(c.check_out_cameras || []);
+    setSelectedCameras(c.cameras || []);
+    setPortalId(c.portal_id || "");
+    setPortalRole(c.portal_role || "AUTO");
     setCorrelationWindow(c.correlation_window_seconds ?? 10);
   };
 
@@ -200,10 +224,12 @@ export default function DoorConfigsPage() {
     setEditingIp(null);
     setIp("");
     setName("");
+    setDoorGroup("");
     setUsername("admin");
     setPassword("");
-    setCheckInCameras([]);
-    setCheckOutCameras([]);
+    setSelectedCameras([]);
+    setPortalId("");
+    setPortalRole("AUTO");
     setCorrelationWindow(10);
   };
 
@@ -214,11 +240,8 @@ export default function DoorConfigsPage() {
     setSimulating(true);
     setSimResult(null);
 
-    // Find selected gate config
     const targetDoor = configs.find(c => c.name === simGate || c.ip === simGate);
-    const expectedCams = targetDoor
-      ? (simType === "EXIT" ? (targetDoor.check_out_cameras || []) : (targetDoor.check_in_cameras || []))
-      : [];
+    const allowedCams = targetDoor?.cameras || [];
 
     try {
       const res = await fetch(`${API}/api/identity/entry`, {
@@ -228,21 +251,21 @@ export default function DoorConfigsPage() {
           employeeId: simEmployeeId.trim().toUpperCase(),
           entryGate: simGate,
           eventType: simType,
-          allowedCameras: expectedCams,
+          allowedCameras: allowedCams,
           correlationWindowSeconds: targetDoor?.correlation_window_seconds || 10
         })
       });
 
       if (res.ok) {
         const data = await res.json();
-        const camsStr = expectedCams.length > 0 
-          ? expectedCams.map(c => `Cam ${c}`).join(", ") 
+        const camsStr = allowedCams.length > 0
+          ? allowedCams.map(c => `Cam ${c}`).join(", ")
           : "All enabled cameras";
 
         setSimResult({
           ok: true,
-          msg: `Simulated ${simType} scan for ${data.employee_id} at "${simGate}". Person is now expected in [${camsStr}] within ${targetDoor?.correlation_window_seconds || 10}s!`,
-          allowed: expectedCams.map(String)
+          msg: `Simulated ${simType} scan for ${data.employee_id} at "${simGate}". Person expected in [${camsStr}] within ${targetDoor?.correlation_window_seconds || 10}s.`,
+          allowed: allowedCams.map(String)
         });
         setSimEmployeeId("");
       } else {
@@ -269,17 +292,21 @@ export default function DoorConfigsPage() {
     return door ? door.last_error : null;
   };
 
-  // Helper to get camera name by id
   const getCameraName = (camId: number | string) => {
     const cam = cameras.find(c => String(c.id) === String(camId));
     return cam ? `${cam.name} (Cam ${cam.id})` : `Camera ${camId}`;
   };
 
-  // Selected gate config for simulator preview
+  // Group configs by door_group for display
+  const grouped = configs.reduce<Record<string, DoorConfig[]>>((acc, cfg) => {
+    const grp = cfg.door_group?.trim() || "";
+    if (!acc[grp]) acc[grp] = [];
+    acc[grp].push(cfg);
+    return acc;
+  }, {});
+
   const activeSimDoor = configs.find(c => c.name === simGate || c.ip === simGate);
-  const activeSimAllowedCams = activeSimDoor 
-    ? (simType === "EXIT" ? (activeSimDoor.check_out_cameras || []) : (activeSimDoor.check_in_cameras || []))
-    : [];
+  const activeSimCams = activeSimDoor?.cameras || [];
 
   return (
     <div className="p-6 sm:p-8 space-y-8 max-w-7xl mx-auto">
@@ -288,36 +315,68 @@ export default function DoorConfigsPage() {
         <div>
           <h2 className="text-3xl font-extrabold text-[hsl(var(--text-primary))] tracking-tight flex items-center gap-3">
             <DoorClosed className="w-8 h-8 text-emerald-500" />
-            Door &amp; Event Correlation Configurations
+            Door ACS Configuration
           </h2>
           <p className="text-sm text-[hsl(var(--text-muted))] mt-1">
-            Configure door terminals and map independent check-in and check-out camera expectations for physical event correlation.
+            Each Door ACS unit (access controller) is configured independently with its own camera set.
+            Multiple ACS units on the same physical door are grouped by Door Group label.
           </p>
         </div>
-        <button
-          onClick={fetchData}
-          className="self-start sm:self-center flex items-center gap-2 text-xs font-semibold
-            text-[hsl(var(--text-secondary))] hover:text-[hsl(var(--text-primary))]
-            bg-[hsl(var(--bg-card))] px-4 py-2.5 rounded-lg
-            border border-[hsl(var(--border))] hover:border-[hsl(var(--border-strong))]
-            transition-all shadow-sm"
-        >
-          <RefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin text-emerald-500' : ''}`} />
-          <span>Last Poll: {mounted ? lastRefresh.toLocaleTimeString() : "--:--:--"}</span>
-        </button>
+        <div className="flex flex-wrap items-center gap-3 self-start sm:self-center">
+          {/* Tracking Mode Switcher */}
+          <button
+            onClick={async () => {
+              const nextMode = trackingMode === "DOOR_BASED" ? "NORMAL" : "DOOR_BASED";
+              try {
+                const res = await fetch(`${API}/api/settings/tracking-mode`, {
+                  method: "POST",
+                  headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify({ tracking_mode: nextMode }),
+                });
+                if (res.ok) {
+                  const data = await res.json();
+                  setTrackingMode(data.tracking_mode);
+                }
+              } catch (err) {
+                console.error("Failed to toggle tracking mode:", err);
+              }
+            }}
+            className={`flex items-center gap-2 text-xs font-bold px-3.5 py-2.5 rounded-lg border transition-all shadow-sm ${
+              trackingMode === "DOOR_BASED"
+                ? "bg-emerald-500/10 border-emerald-500/30 text-emerald-600 dark:text-emerald-400 hover:bg-emerald-500/20"
+                : "bg-blue-500/10 border-blue-500/30 text-blue-600 dark:text-blue-400 hover:bg-blue-500/20"
+            }`}
+            title="Click to toggle system tracking mode between Normal Tracking and Door-Based Tracking"
+          >
+            <span className="w-2 h-2 rounded-full animate-pulse bg-current" />
+            <span>Mode: {trackingMode === "DOOR_BASED" ? "Door-Based Tracking" : "Normal Tracking"}</span>
+            <span className="text-[10px] underline ml-1 opacity-80">(Switch)</span>
+          </button>
 
+          <button
+            onClick={fetchData}
+            className="flex items-center gap-2 text-xs font-semibold
+              text-[hsl(var(--text-secondary))] hover:text-[hsl(var(--text-primary))]
+              bg-[hsl(var(--bg-card))] px-4 py-2.5 rounded-lg
+              border border-[hsl(var(--border))] hover:border-[hsl(var(--border-strong))]
+              transition-all shadow-sm"
+          >
+            <RefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin text-emerald-500' : ''}`} />
+            <span>Last Poll: {mounted ? lastRefresh.toLocaleTimeString() : "--:--:--"}</span>
+          </button>
+        </div>
       </div>
 
-      {/* Main Grid: Terminals List & Add / Simulation */}
+      {/* Main Grid */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-        
-        {/* Left Column: Configured Terminals list */}
+
+        {/* Left Column: Configured ACS list */}
         <div className="lg:col-span-2 space-y-6">
           <div className="bg-[hsl(var(--bg-card))] border border-[hsl(var(--border))] rounded-xl p-6 shadow-sm">
             <div className="flex items-center justify-between mb-4">
               <div className="flex items-center gap-2">
                 <Server className="w-5 h-5 text-emerald-500" />
-                <h3 className="font-bold text-[hsl(var(--text-primary))] text-base">Connected Terminals</h3>
+                <h3 className="font-bold text-[hsl(var(--text-primary))] text-base">Configured ACS Units</h3>
               </div>
               <span className="text-xs text-[hsl(var(--text-muted))] font-semibold">
                 {configs.length} Configured
@@ -327,158 +386,194 @@ export default function DoorConfigsPage() {
             {configs.length === 0 ? (
               <div className="bg-[hsl(var(--bg-table-head))]/30 rounded-lg p-10 border border-dashed border-[hsl(var(--border-strong))] text-center">
                 <AlertCircle className="w-10 h-10 text-[hsl(var(--text-muted))] mx-auto mb-3" />
-                <p className="text-sm text-[hsl(var(--text-secondary))] font-semibold">No configured doors yet</p>
-                <p className="text-xs text-[hsl(var(--text-muted))] mt-1">Use the panel on the right to register your first door controller and configure its cameras.</p>
+                <p className="text-sm text-[hsl(var(--text-secondary))] font-semibold">No ACS units configured yet</p>
+                <p className="text-xs text-[hsl(var(--text-muted))] mt-1">
+                  Use the panel on the right to register your first Door ACS controller and assign its cameras.
+                </p>
               </div>
             ) : (
-              <div className="grid grid-cols-1 gap-4">
-                {configs.map((cfg) => {
-                  const status = getStatus(cfg.ip);
-                  const lastError = getLastError(cfg.ip);
-                  const inCams = cfg.check_in_cameras || [];
-                  const outCams = cfg.check_out_cameras || [];
-                  const windowSec = cfg.correlation_window_seconds ?? 10;
-                  
-                  return (
-                    <div
-                      key={cfg.ip}
-                      className="p-5 bg-[hsl(var(--bg-table-head))]/40 border border-[hsl(var(--border))] rounded-xl flex flex-col gap-3 relative hover:border-[hsl(var(--border-strong))] transition-all"
-                    >
-                      <div className="flex items-start justify-between">
-                        <div>
-                          <div className="flex items-center gap-2.5">
-                            <h4 className="font-bold text-[hsl(var(--text-primary))] text-base">{cfg.name}</h4>
-                            <span className="text-xs px-2 py-0.5 rounded-full bg-slate-500/10 text-[hsl(var(--text-muted))] font-mono font-medium border border-[hsl(var(--border))]">
-                              {cfg.ip}
-                            </span>
-                            <span className="text-[11px] px-2 py-0.5 rounded-full bg-blue-500/10 text-blue-600 dark:text-blue-400 font-semibold border border-blue-500/20 flex items-center gap-1">
-                              <Clock className="w-3 h-3" />
-                              {windowSec}s Window
-                            </span>
-                          </div>
-                        </div>
-                        <span className={`text-[11px] font-bold px-2.5 py-0.5 rounded-full flex items-center gap-1.5 ${
-                          status === "Connected"
-                            ? "bg-emerald-500/10 text-emerald-700 dark:text-emerald-400 border border-emerald-500/20"
-                            : status === "Connecting"
-                            ? "bg-amber-500/10 text-amber-700 dark:text-amber-400 border border-amber-500/20"
-                            : "bg-red-500/10 text-red-600 dark:text-red-400 border border-red-500/20"
-                        }`}>
-                          <span className={`w-1.5 h-1.5 rounded-full ${
-                            status === "Connected" ? "bg-emerald-500 animate-pulse"
-                            : status === "Connecting" ? "bg-amber-500 animate-spin"
-                            : "bg-red-500"
-                          }`} />
-                          {status}
+              <div className="space-y-6">
+                {Object.entries(grouped).map(([grp, acs_list]) => (
+                  <div key={grp || "__ungrouped__"}>
+                    {/* Door Group header */}
+                    {grp && (
+                      <div className="flex items-center gap-2 mb-2 px-1">
+                        <Layers className="w-3.5 h-3.5 text-blue-400" />
+                        <span className="text-xs font-bold text-blue-500 dark:text-blue-400 uppercase tracking-widest">
+                          {grp}
                         </span>
+                        <div className="flex-1 h-px bg-blue-500/20" />
+                        <span className="text-[10px] text-[hsl(var(--text-muted))]">{acs_list.length} ACS unit{acs_list.length !== 1 ? "s" : ""}</span>
                       </div>
+                    )}
+                    <div className="grid grid-cols-1 gap-3">
+                      {acs_list.map((cfg) => {
+                        const status = getStatus(cfg.ip);
+                        const lastError = getLastError(cfg.ip);
+                        const cams = cfg.cameras || [];
+                        const windowSec = cfg.correlation_window_seconds ?? 10;
 
-                      {/* Camera Mappings Display */}
-                      <div className="grid grid-cols-1 md:grid-cols-2 gap-3 pt-2">
-                        {/* Check-In Cameras */}
-                        <div className="p-3 bg-[hsl(var(--bg-card))] border border-emerald-500/20 rounded-lg">
-                          <div className="flex items-center gap-1.5 text-xs font-semibold text-emerald-600 dark:text-emerald-400 mb-1.5">
-                            <ArrowRightCircle className="w-3.5 h-3.5 text-emerald-500" />
-                            <span>Check-in Expected Cameras (ENTRY)</span>
-                          </div>
-                          {inCams.length === 0 ? (
-                            <span className="text-[11px] text-[hsl(var(--text-muted))] italic">All cameras (unrestricted)</span>
-                          ) : (
-                            <div className="flex flex-wrap gap-1.5">
-                              {inCams.map(cid => (
-                                <span key={cid} className="text-[11px] px-2 py-0.5 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300 rounded font-medium border border-emerald-500/30 flex items-center gap-1">
-                                  <Video className="w-3 h-3 text-emerald-500" />
-                                  {getCameraName(cid)}
-                                </span>
-                              ))}
-                            </div>
-                          )}
-                        </div>
-
-                        {/* Check-Out Cameras */}
-                        <div className="p-3 bg-[hsl(var(--bg-card))] border border-purple-500/20 rounded-lg">
-                          <div className="flex items-center gap-1.5 text-xs font-semibold text-purple-600 dark:text-purple-400 mb-1.5">
-                            <ArrowLeftCircle className="w-3.5 h-3.5 text-purple-500" />
-                            <span>Check-out Expected Cameras (EXIT)</span>
-                          </div>
-                          {outCams.length === 0 ? (
-                            <span className="text-[11px] text-[hsl(var(--text-muted))] italic">None configured (auto-close)</span>
-                          ) : (
-                            <div className="flex flex-wrap gap-1.5">
-                              {outCams.map(cid => (
-                                <span key={cid} className="text-[11px] px-2 py-0.5 bg-purple-500/10 text-purple-700 dark:text-purple-300 rounded font-medium border border-purple-500/30 flex items-center gap-1">
-                                  <Video className="w-3 h-3 text-purple-500" />
-                                  {getCameraName(cid)}
-                                </span>
-                              ))}
-                            </div>
-                          )}
-                        </div>
-                      </div>
-
-                      {lastError && (
-                        <div className="p-2.5 bg-red-500/5 rounded-lg border border-red-500/10 text-[11px] text-red-600 dark:text-red-400 font-mono break-all leading-relaxed">
-                          <span className="font-semibold block mb-0.5">Connection Error:</span>
-                          {lastError}
-                        </div>
-                      )}
-
-                      <div className="flex items-center justify-between text-[11px] text-[hsl(var(--text-muted))] border-t border-[hsl(var(--border))]/50 pt-2 mt-1">
-                        <div className="flex items-center gap-1">
-                          <Key className="w-3.5 h-3.5 text-[hsl(var(--text-muted))]" />
-                          <span>Auth User: <span className="text-[hsl(var(--text-secondary))] font-medium">{cfg.username || "admin"}</span></span>
-                        </div>
-
-                        {/* Config Actions */}
-                        <div className="flex items-center gap-2">
-                          <button
-                            onClick={() => handleEdit(cfg)}
-                            className="p-1.5 text-[hsl(var(--text-secondary))] hover:text-emerald-500 hover:bg-[hsl(var(--bg-table-head))] border border-[hsl(var(--border))] rounded transition-all flex items-center gap-1 text-xs"
-                            title="Edit Door & Camera Mappings"
+                        return (
+                          <div
+                            key={cfg.ip}
+                            className="p-5 bg-[hsl(var(--bg-table-head))]/40 border border-[hsl(var(--border))] rounded-xl flex flex-col gap-3 relative hover:border-[hsl(var(--border-strong))] transition-all"
                           >
-                            <Edit2 className="w-3.5 h-3.5" />
-                            <span>Edit</span>
-                          </button>
-                          <button
-                            onClick={() => handleDelete(cfg.ip)}
-                            disabled={saving}
-                            className="p-1.5 text-[hsl(var(--text-muted))] hover:text-red-500 hover:bg-red-500/5 border border-[hsl(var(--border))] rounded transition-all disabled:opacity-50 flex items-center gap-1 text-xs"
-                            title="Delete Door"
-                          >
-                            <Trash2 className="w-3.5 h-3.5" />
-                            <span>Delete</span>
-                          </button>
-                        </div>
-                      </div>
+                            <div className="flex items-start justify-between">
+                              <div>
+                                <div className="flex items-center gap-2.5 flex-wrap">
+                                  <h4 className="font-bold text-[hsl(var(--text-primary))] text-base">{cfg.name}</h4>
+                                  <span className="text-xs px-2 py-0.5 rounded-full bg-slate-500/10 text-[hsl(var(--text-muted))] font-mono font-medium border border-[hsl(var(--border))]">
+                                    {cfg.ip}
+                                  </span>
+                                  <span className="text-[11px] px-2 py-0.5 rounded-full bg-blue-500/10 text-blue-600 dark:text-blue-400 font-semibold border border-blue-500/20 flex items-center gap-1">
+                                    <Clock className="w-3 h-3" />
+                                    {windowSec}s Window
+                                  </span>
+                                </div>
+                              </div>
+                              <span className={`text-[11px] font-bold px-2.5 py-0.5 rounded-full flex items-center gap-1.5 ${
+                                status === "Connected"
+                                  ? "bg-emerald-500/10 text-emerald-700 dark:text-emerald-400 border border-emerald-500/20"
+                                  : status === "Connecting"
+                                  ? "bg-amber-500/10 text-amber-700 dark:text-amber-400 border border-amber-500/20"
+                                  : "bg-red-500/10 text-red-600 dark:text-red-400 border border-red-500/20"
+                              }`}>
+                                <span className={`w-1.5 h-1.5 rounded-full ${
+                                  status === "Connected" ? "bg-emerald-500 animate-pulse"
+                                  : status === "Connecting" ? "bg-amber-500 animate-spin"
+                                  : "bg-red-500"
+                                }`} />
+                                {status}
+                              </span>
+                            </div>
+
+                            {/* Assigned Cameras */}
+                            <div className="p-3 bg-[hsl(var(--bg-card))] border border-emerald-500/20 rounded-lg">
+                              <div className="flex items-center gap-1.5 text-xs font-semibold text-emerald-600 dark:text-emerald-400 mb-1.5">
+                                <Camera className="w-3.5 h-3.5 text-emerald-500" />
+                                <span>Assigned Cameras</span>
+                                <span className="ml-auto text-[10px] text-[hsl(var(--text-muted))] font-normal">
+                                  Person expected here after card swipe
+                                </span>
+                              </div>
+                              {cams.length === 0 ? (
+                                <span className="text-[11px] text-[hsl(var(--text-muted))] italic">All cameras (unrestricted)</span>
+                              ) : (
+                                <div className="flex flex-wrap gap-1.5">
+                                  {cams.map(cid => (
+                                    <span key={cid} className="text-[11px] px-2 py-0.5 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300 rounded font-medium border border-emerald-500/30 flex items-center gap-1">
+                                      <Video className="w-3 h-3 text-emerald-500" />
+                                      {getCameraName(cid)}
+                                    </span>
+                                  ))}
+                                </div>
+                              )}
+                            </div>
+
+                            {/* Associated Portal & Pathway Role */}
+                            <div className="p-3 bg-[hsl(var(--bg-card))] border border-purple-500/20 rounded-lg">
+                              <div className="flex items-center gap-1.5 text-xs font-semibold text-purple-600 dark:text-purple-400 mb-1.5">
+                                <GitFork className="w-3.5 h-3.5 text-purple-500" />
+                                <span>Associated Portal & Pathway Role</span>
+                              </div>
+                              <div className="flex flex-wrap items-center gap-2">
+                                {cfg.portal_id ? (
+                                  <span className="text-[11px] px-2.5 py-0.5 bg-purple-500/10 text-purple-700 dark:text-purple-300 rounded font-medium border border-purple-500/30">
+                                    {cfg.portal_id}
+                                  </span>
+                                ) : (
+                                  <span className="text-[11px] text-[hsl(var(--text-muted))] italic">Automatic (nearest camera portal)</span>
+                                )}
+                                <span className={`text-[10px] px-2 py-0.5 rounded font-bold uppercase ${
+                                  cfg.portal_role === "START"
+                                    ? "bg-amber-500/15 text-amber-600 dark:text-amber-400 border border-amber-500/30"
+                                    : cfg.portal_role === "END"
+                                    ? "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border border-emerald-500/30"
+                                    : "bg-blue-500/15 text-blue-600 dark:text-blue-400 border border-blue-500/30"
+                                }`}>
+                                  {cfg.portal_role === "START" ? "START Node (Register Appearance)" : cfg.portal_role === "END" ? "END Node (Match Appearance)" : "AUTO (Topology)"}
+                                </span>
+                              </div>
+                            </div>
+
+                            {lastError && (
+                              <div className="p-2.5 bg-red-500/5 rounded-lg border border-red-500/10 text-[11px] text-red-600 dark:text-red-400 font-mono break-all leading-relaxed">
+                                <span className="font-semibold block mb-0.5">Connection Error:</span>
+                                {lastError}
+                              </div>
+                            )}
+
+                            <div className="flex items-center justify-between text-[11px] text-[hsl(var(--text-muted))] border-t border-[hsl(var(--border))]/50 pt-2 mt-1">
+                              <div className="flex items-center gap-1">
+                                <Key className="w-3.5 h-3.5 text-[hsl(var(--text-muted))]" />
+                                <span>Auth User: <span className="text-[hsl(var(--text-secondary))] font-medium">{cfg.username || "admin"}</span></span>
+                              </div>
+
+                              <div className="flex items-center gap-2">
+                                <button
+                                  onClick={() => handleEdit(cfg)}
+                                  className="p-1.5 text-[hsl(var(--text-secondary))] hover:text-emerald-500 hover:bg-[hsl(var(--bg-table-head))] border border-[hsl(var(--border))] rounded transition-all flex items-center gap-1 text-xs"
+                                  title="Edit ACS & Camera Assignments"
+                                >
+                                  <Edit2 className="w-3.5 h-3.5" />
+                                  <span>Edit</span>
+                                </button>
+                                <button
+                                  onClick={() => handleDelete(cfg.ip)}
+                                  disabled={saving}
+                                  className="p-1.5 text-[hsl(var(--text-muted))] hover:text-red-500 hover:bg-red-500/5 border border-[hsl(var(--border))] rounded transition-all disabled:opacity-50 flex items-center gap-1 text-xs"
+                                  title="Delete ACS"
+                                >
+                                  <Trash2 className="w-3.5 h-3.5" />
+                                  <span>Delete</span>
+                                </button>
+                              </div>
+                            </div>
+                          </div>
+                        );
+                      })}
                     </div>
-                  );
-                })}
+                  </div>
+                ))}
               </div>
             )}
           </div>
 
-          {/* Event Correlation Architecture Guide */}
+          {/* Architecture Guide */}
           <div className="bg-[hsl(var(--bg-card))] border border-[hsl(var(--border))] rounded-xl p-6 shadow-sm text-xs space-y-4 text-[hsl(var(--text-secondary))]">
             <h4 className="font-bold text-[hsl(var(--text-primary))] text-sm flex items-center gap-2">
               <ShieldCheck className="w-4 h-4 text-emerald-500" />
-              Event-Driven Camera Correlation Logic
+              ACS-Centric Event Correlation
             </h4>
             <p className="leading-relaxed">
-              When a person checks in or checks out at a door terminal, the system establishes an event-driven expectation:
+              Each physical door has independent Door ACS units on either side. When a card is swiped,
+              the correlation engine looks for the employee on the cameras assigned to <strong>that specific ACS</strong> — not the other side.
             </p>
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1">
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 pt-1">
               <div className="p-3 bg-[hsl(var(--bg-table-head))]/30 border border-emerald-500/20 rounded-lg space-y-1">
-                <span className="font-bold text-emerald-600 dark:text-emerald-400 block text-xs">1. Check-In (ENTRY) Path</span>
+                <span className="font-bold text-emerald-600 dark:text-emerald-400 block text-xs">1. Card Swipe</span>
                 <p className="text-[11px] text-[hsl(var(--text-muted))] leading-relaxed">
-                  Person scans card / face at terminal &rarr; System creates an active expectation exclusively for the door&apos;s <strong>Check-in cameras</strong> within the configured time window. Detections on other cameras will NOT match this entry.
+                  Employee taps card at a Door ACS unit. The ACS reports the event to this system.
+                </p>
+              </div>
+              <div className="p-3 bg-[hsl(var(--bg-table-head))]/30 border border-blue-500/20 rounded-lg space-y-1">
+                <span className="font-bold text-blue-600 dark:text-blue-400 block text-xs">2. Camera Lookup</span>
+                <p className="text-[11px] text-[hsl(var(--text-muted))] leading-relaxed">
+                  System resolves which cameras are assigned to <em>that ACS unit</em> and creates a timed expectation.
                 </p>
               </div>
               <div className="p-3 bg-[hsl(var(--bg-table-head))]/30 border border-purple-500/20 rounded-lg space-y-1">
-                <span className="font-bold text-purple-600 dark:text-purple-400 block text-xs">2. Check-Out (EXIT) Path</span>
+                <span className="font-bold text-purple-600 dark:text-purple-400 block text-xs">3. Track Match</span>
                 <p className="text-[11px] text-[hsl(var(--text-muted))] leading-relaxed">
-                  Person scans out &rarr; System looks for the person in the door&apos;s <strong>Check-out cameras</strong> to record departure, and closes active tracking sessions cleanly.
+                  When the person appears on a matched camera within the correlation window, the Track ID is bound to the Employee ID.
                 </p>
               </div>
+            </div>
+            <div className="p-3 bg-blue-500/5 border border-blue-500/15 rounded-lg flex gap-2">
+              <Info className="w-3.5 h-3.5 text-blue-400 shrink-0 mt-0.5" />
+              <p className="text-[11px] text-[hsl(var(--text-muted))] leading-relaxed">
+                <strong className="text-[hsl(var(--text-secondary))]">Door Group</strong> — Use the optional Door Group label to visually group multiple ACS units that belong to the same physical door (e.g. "Main Entrance Side A" and "Main Entrance Side B" both in group "Main Entrance").
+              </p>
             </div>
           </div>
         </div>
@@ -489,7 +584,7 @@ export default function DoorConfigsPage() {
           <div className="bg-[hsl(var(--bg-card))] border border-[hsl(var(--border))] rounded-xl p-6 shadow-sm">
             <h3 className="font-bold text-[hsl(var(--text-primary))] text-base mb-4 flex items-center gap-2">
               <Plus className="w-5 h-5 text-emerald-500" />
-              {editingIp ? "Edit Door & Camera Mappings" : "Add Door Controller"}
+              {editingIp ? "Edit ACS & Camera Assignments" : "Add Door ACS Unit"}
             </h3>
 
             <form onSubmit={handleSave} className="space-y-4">
@@ -509,16 +604,32 @@ export default function DoorConfigsPage() {
               </div>
 
               <div>
-                <label className="block text-xs font-semibold text-[hsl(var(--text-secondary))] mb-1.5 uppercase tracking-wider">Gate / Door Name</label>
+                <label className="block text-xs font-semibold text-[hsl(var(--text-secondary))] mb-1.5 uppercase tracking-wider">ACS Unit Name</label>
                 <input
                   type="text"
-                  placeholder="e.g. Entrance Gate 01"
+                  placeholder="e.g. Main Entrance — Side A"
                   value={name}
                   onChange={e => setName(e.target.value)}
                   required
                   className="w-full bg-[hsl(var(--bg-input))] border border-[hsl(var(--border-strong))]
                     rounded-lg px-3.5 py-2.5 text-[hsl(var(--text-primary))] text-xs
                     focus:outline-none focus:border-emerald-500 transition-colors"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-[hsl(var(--text-secondary))] mb-1.5 uppercase tracking-wider flex items-center gap-1">
+                  <Tag className="w-3 h-3 text-blue-400" />
+                  Door Group <span className="text-[10px] normal-case font-normal text-[hsl(var(--text-muted))]">(optional — groups ACS units visually)</span>
+                </label>
+                <input
+                  type="text"
+                  placeholder="e.g. Main Entrance"
+                  value={doorGroup}
+                  onChange={e => setDoorGroup(e.target.value)}
+                  className="w-full bg-[hsl(var(--bg-input))] border border-[hsl(var(--border-strong))]
+                    rounded-lg px-3.5 py-2.5 text-[hsl(var(--text-primary))] text-xs
+                    focus:outline-none focus:border-blue-400 transition-colors"
                 />
               </div>
 
@@ -549,26 +660,26 @@ export default function DoorConfigsPage() {
                 </div>
               </div>
 
-              {/* Check-In Cameras Selection */}
+              {/* Assigned Cameras */}
               <div className="pt-1">
                 <div className="flex items-center justify-between mb-1.5">
                   <label className="text-xs font-semibold text-emerald-600 dark:text-emerald-400 uppercase tracking-wider flex items-center gap-1">
-                    <ArrowRightCircle className="w-3.5 h-3.5 text-emerald-500" />
-                    Check-in Cameras (ENTRY)
+                    <Camera className="w-3.5 h-3.5 text-emerald-500" />
+                    Assigned Cameras
                   </label>
-                  <span className="text-[10px] text-[hsl(var(--text-muted))]">{checkInCameras.length} selected</span>
+                  <span className="text-[10px] text-[hsl(var(--text-muted))]">{selectedCameras.length} selected</span>
                 </div>
-                <div className="bg-[hsl(var(--bg-input))] border border-[hsl(var(--border-strong))] rounded-lg p-2.5 max-h-36 overflow-y-auto space-y-1.5">
+                <div className="bg-[hsl(var(--bg-input))] border border-[hsl(var(--border-strong))] rounded-lg p-2.5 max-h-44 overflow-y-auto space-y-1.5">
                   {cameras.length === 0 ? (
                     <span className="text-xs text-[hsl(var(--text-muted))] italic">No cameras found.</span>
                   ) : (
                     cameras.map(c => {
-                      const isSelected = checkInCameras.some(id => String(id) === String(c.id));
+                      const isSelected = selectedCameras.some(id => String(id) === String(c.id));
                       return (
                         <button
                           key={c.id}
                           type="button"
-                          onClick={() => toggleCheckInCam(c.id)}
+                          onClick={() => toggleCamera(c.id)}
                           className={`w-full text-left px-2.5 py-1.5 rounded text-xs flex items-center justify-between transition-all ${
                             isSelected
                               ? "bg-emerald-500/20 text-emerald-700 dark:text-emerald-300 font-semibold border border-emerald-500/30"
@@ -585,47 +696,86 @@ export default function DoorConfigsPage() {
                     })
                   )}
                 </div>
+                <p className="text-[10px] text-[hsl(var(--text-muted))] mt-1">
+                  Leave empty to allow matching on any active camera.
+                </p>
               </div>
 
-              {/* Check-Out Cameras Selection */}
-              <div className="pt-1">
-                <div className="flex items-center justify-between mb-1.5">
-                  <label className="text-xs font-semibold text-purple-600 dark:text-purple-400 uppercase tracking-wider flex items-center gap-1">
-                    <ArrowLeftCircle className="w-3.5 h-3.5 text-purple-500" />
-                    Check-out Cameras (EXIT)
-                  </label>
-                  <span className="text-[10px] text-[hsl(var(--text-muted))]">{checkOutCameras.length} selected</span>
-                </div>
-                <div className="bg-[hsl(var(--bg-input))] border border-[hsl(var(--border-strong))] rounded-lg p-2.5 max-h-36 overflow-y-auto space-y-1.5">
-                  {cameras.length === 0 ? (
-                    <span className="text-xs text-[hsl(var(--text-muted))] italic">No cameras found.</span>
-                  ) : (
-                    cameras.map(c => {
-                      const isSelected = checkOutCameras.some(id => String(id) === String(c.id));
-                      return (
-                        <button
-                          key={c.id}
-                          type="button"
-                          onClick={() => toggleCheckOutCam(c.id)}
-                          className={`w-full text-left px-2.5 py-1.5 rounded text-xs flex items-center justify-between transition-all ${
-                            isSelected
-                              ? "bg-purple-500/20 text-purple-700 dark:text-purple-300 font-semibold border border-purple-500/30"
-                              : "text-[hsl(var(--text-secondary))] hover:bg-[hsl(var(--bg-table-head))] border border-transparent"
-                          }`}
-                        >
-                          <span className="flex items-center gap-2">
-                            <Video className={`w-3.5 h-3.5 ${isSelected ? "text-purple-500" : "text-[hsl(var(--text-muted))]"}`} />
-                            <span>{c.name} (Cam {c.id})</span>
-                          </span>
-                          {isSelected && <Check className="w-3.5 h-3.5 text-purple-500" />}
-                        </button>
-                      );
-                    })
-                  )}
-                </div>
+              {/* Associated Portal Selection */}
+              <div>
+                <label className="block text-xs font-semibold text-[hsl(var(--text-secondary))] mb-1.5 uppercase tracking-wider flex items-center gap-1">
+                  <GitFork className="w-3.5 h-3.5 text-purple-500" />
+                  Associated Portal (Optional)
+                </label>
+                <select
+                  value={portalId}
+                  onChange={e => setPortalId(e.target.value)}
+                  className="w-full bg-[hsl(var(--bg-input))] border border-[hsl(var(--border-strong))]
+                    rounded-lg px-3 py-2 text-[hsl(var(--text-primary))] text-xs
+                    focus:outline-none focus:border-purple-500 transition-colors"
+                >
+                  <option value="">Auto-select nearest camera portal</option>
+                  {portals
+                    .filter(p => selectedCameras.length === 0 || selectedCameras.some(c => String(c) === String(p.camera_id)))
+                    .map(p => (
+                      <option key={p.id} value={p.id}>
+                        {p.id} ({p.role} Node)
+                      </option>
+                    ))}
+                </select>
+                <span className="text-[10px] text-[hsl(var(--text-muted))] mt-1 block">
+                  Link this Door ACS to a spatial portal from the Portal Flow diagram.
+                </span>
               </div>
 
-              {/* Correlation Window Seconds */}
+              {/* Pathway Node Role */}
+              <div>
+                <label className="block text-xs font-semibold text-[hsl(var(--text-secondary))] mb-1.5 uppercase tracking-wider">
+                  Pathway Role
+                </label>
+                <div className="grid grid-cols-3 gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setPortalRole("AUTO")}
+                    className={`py-2 px-2.5 rounded-lg text-xs font-semibold border transition-all text-center ${
+                      portalRole === "AUTO"
+                        ? "bg-blue-500/20 text-blue-600 dark:text-blue-400 border-blue-500/40"
+                        : "border-[hsl(var(--border))] text-[hsl(var(--text-secondary))] hover:bg-[hsl(var(--bg-table-head))]"
+                    }`}
+                  >
+                    AUTO
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setPortalRole("START")}
+                    className={`py-2 px-2.5 rounded-lg text-xs font-semibold border transition-all text-center ${
+                      portalRole === "START"
+                        ? "bg-amber-500/20 text-amber-600 dark:text-amber-400 border-amber-500/40"
+                        : "border-[hsl(var(--border))] text-[hsl(var(--text-secondary))] hover:bg-[hsl(var(--bg-table-head))]"
+                    }`}
+                  >
+                    START Node
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setPortalRole("END")}
+                    className={`py-2 px-2.5 rounded-lg text-xs font-semibold border transition-all text-center ${
+                      portalRole === "END"
+                        ? "bg-emerald-500/20 text-emerald-600 dark:text-emerald-400 border-emerald-500/40"
+                        : "border-[hsl(var(--border))] text-[hsl(var(--text-secondary))] hover:bg-[hsl(var(--bg-table-head))]"
+                    }`}
+                  >
+                    END Node
+                  </button>
+                </div>
+                <p className="text-[10px] text-[hsl(var(--text-muted))] mt-1">
+                  {portalRole === "START" && "START: Person appearance is captured & registered on check-in for downstream transitions."}
+                  {portalRole === "END" && "END: Person appearance is matched from incoming pathway connections."}
+                  {portalRole === "AUTO" && "AUTO: Engine dynamically selects strategy based on Portal Flow topology."}
+                </p>
+              </div>
+
+              {/* Correlation Window */}
               <div>
                 <label className="block text-xs font-semibold text-[hsl(var(--text-secondary))] mb-1.5 uppercase tracking-wider flex items-center gap-1">
                   <Clock className="w-3.5 h-3.5 text-blue-500" />
@@ -643,7 +793,7 @@ export default function DoorConfigsPage() {
                     focus:outline-none focus:border-emerald-500 transition-colors"
                 />
                 <span className="text-[10px] text-[hsl(var(--text-muted))] mt-1 block">
-                  Time allowed after scan for the person to appear on the configured camera(s).
+                  Max seconds after card swipe for the person to appear on an assigned camera.
                 </span>
               </div>
 
@@ -656,9 +806,9 @@ export default function DoorConfigsPage() {
                     text-white font-semibold text-xs transition-all shadow-sm"
                 >
                   {saving ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Check className="w-3.5 h-3.5" />}
-                  <span>{editingIp ? "Save Changes" : "Register Door & Mappings"}</span>
+                  <span>{editingIp ? "Save Changes" : "Register ACS Unit"}</span>
                 </button>
-                
+
                 {editingIp && (
                   <button
                     type="button"
@@ -673,14 +823,14 @@ export default function DoorConfigsPage() {
             </form>
           </div>
 
-          {/* Check-in Simulation Panel */}
+          {/* Event Simulator */}
           <div className="bg-[hsl(var(--bg-card))] border border-[hsl(var(--border))] rounded-xl p-6 shadow-sm">
             <h3 className="font-bold text-[hsl(var(--text-primary))] text-base mb-1.5 flex items-center gap-2">
               <Send className="w-4 h-4 text-emerald-500" />
-              Event Simulator
+              Event Simulator(Legacy)
             </h3>
             <p className="text-xs text-[hsl(var(--text-muted))] mb-4">
-              Inject a simulated card swipe/face scan to test camera correlation with live feeds.
+              Inject a simulated card swipe to test ACS → camera correlation with live feeds.
             </p>
 
             <form onSubmit={handleSimulate} className="space-y-4">
@@ -700,7 +850,7 @@ export default function DoorConfigsPage() {
 
               <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <label className="block text-xs font-semibold text-[hsl(var(--text-secondary))] mb-1.5 uppercase tracking-wider">Gate</label>
+                  <label className="block text-xs font-semibold text-[hsl(var(--text-secondary))] mb-1.5 uppercase tracking-wider">ACS Unit</label>
                   <select
                     value={simGate}
                     onChange={e => setSimGate(e.target.value)}
@@ -710,7 +860,7 @@ export default function DoorConfigsPage() {
                       focus:outline-none focus:border-emerald-500 transition-colors"
                   >
                     {configs.length === 0 ? (
-                      <option value="">No configured gates</option>
+                      <option value="">No configured ACS units</option>
                     ) : (
                       configs.map(c => (
                         <option key={c.ip} value={c.name}>{c.name}</option>
@@ -733,23 +883,18 @@ export default function DoorConfigsPage() {
                 </div>
               </div>
 
-              {/* Preview of allowed cameras for this simulated event */}
+              {/* Preview of cameras for this ACS */}
               <div className="p-2.5 bg-[hsl(var(--bg-table-head))]/40 border border-[hsl(var(--border))] rounded-lg text-[11px] space-y-1">
                 <span className="font-semibold text-[hsl(var(--text-secondary))] block">
-                  Expected Cameras for this event:
+                  Cameras for this ACS unit:
                 </span>
-                {activeSimAllowedCams.length === 0 ? (
-                  <span className="text-[hsl(var(--text-muted))] italic">
-                    {simType === "ENTRY" ? "All cameras (unrestricted)" : "No exit cameras (immediate session close)"}
-                  </span>
+                {activeSimCams.length === 0 ? (
+                  <span className="text-[hsl(var(--text-muted))] italic">All cameras (unrestricted)</span>
                 ) : (
                   <div className="flex flex-wrap gap-1">
-                    {activeSimAllowedCams.map(cid => (
-                      <span key={cid} className={`px-1.5 py-0.5 rounded font-mono text-[10px] font-semibold border ${
-                        simType === "ENTRY" 
-                          ? "bg-emerald-500/10 text-emerald-700 dark:text-emerald-300 border-emerald-500/25"
-                          : "bg-purple-500/10 text-purple-700 dark:text-purple-300 border-purple-500/25"
-                      }`}>
+                    {activeSimCams.map(cid => (
+                      <span key={cid} className="px-1.5 py-0.5 rounded font-mono text-[10px] font-semibold border
+                        bg-emerald-500/10 text-emerald-700 dark:text-emerald-300 border-emerald-500/25">
                         Cam {cid}
                       </span>
                     ))}

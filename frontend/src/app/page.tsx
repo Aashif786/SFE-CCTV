@@ -54,9 +54,11 @@ interface StatsData {
 
 interface ResourceData {
   cpu_percent: number;
-  ram_percent: number;
-  memory_used_mb: number;
-  memory_total_mb: number;
+  memory_percent?: number;
+  ram_percent?: number;
+  disk_percent?: number;
+  memory_used_mb?: number;
+  memory_total_mb?: number;
 }
 
 interface ActiveSession {
@@ -89,6 +91,7 @@ export default function Dashboard() {
   const [resources, setResources] = useState<ResourceData>({
     cpu_percent: 0,
     ram_percent: 0,
+    memory_percent: 0,
     memory_used_mb: 0,
     memory_total_mb: 0,
   });
@@ -302,11 +305,11 @@ export default function Dashboard() {
               </span>
             </div>
             <span className="text-xs font-mono text-[hsl(var(--text-muted))]">
-              RAM {resources.ram_percent.toFixed(0)}%
+              RAM {(resources?.ram_percent ?? resources?.memory_percent ?? 0).toFixed(0)}%
             </span>
           </div>
           <div className="mt-3 pt-3 border-t border-[hsl(var(--border))] flex items-center justify-between text-xs text-[hsl(var(--text-secondary))]">
-            <span>CPU: {resources.cpu_percent.toFixed(0)}%</span>
+            <span>CPU: {(resources?.cpu_percent ?? 0).toFixed(0)}%</span>
             <span className="font-mono text-emerald-500">FastAPI Async</span>
           </div>
         </div>

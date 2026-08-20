@@ -67,6 +67,7 @@ class WorkerSessionManager:
         session = WorkerSession(
             session_id=str(uuid.uuid4()),
             employee_id=employee_id,
+            persistent_track_id=track_id,
             current_track_id=track_id,
             camera_id=camera_id,
             start_time=_utcnow(),
@@ -118,10 +119,12 @@ class WorkerSessionManager:
         """
         session = self._sessions.get(old_track_id) or self._pending_handoffs.get(session_id)
         if session is None or session.session_id != session_id:
+            print(f"[IdentityTransfer] ❌ transfer_session failed: session {session_id} not found in _sessions or _pending_handoffs")
             return None
         # A destination track must never silently steal an already active identity.
         occupied = self._sessions.get(new_track_id)
         if occupied is not None and occupied.session_id != session_id:
+            print(f"[IdentityTransfer] ❌ transfer_session failed: destination track {new_track_id} already occupied by session {occupied.session_id} ({occupied.employee_id})")
             return None
         self._sessions.pop(old_track_id, None)
         self._pending_handoffs.pop(session_id, None)
@@ -136,6 +139,7 @@ class WorkerSessionManager:
                 row.camera_id = camera_id
                 row.correlation_delay_seconds = session.correlation_delay_seconds
                 db.commit()
+        print(f"[IdentityTransfer] 🔄 Successfully transferred session for Employee {session.employee_id}: {old_track_id} -> {new_track_id} on {camera_id}")
         return session
 
     def hold_for_handoff(self, track_id: str) -> bool:
@@ -379,6 +383,7 @@ class WorkerSessionManager:
             row = WorkerSessionDB(
                 session_id=session.session_id,
                 employee_id=session.employee_id,
+                persistent_track_id=session.persistent_track_id,
                 current_track_id=session.current_track_id,
                 camera_id=session.camera_id,
                 start_time=session.start_time,
