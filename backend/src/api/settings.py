@@ -10,17 +10,35 @@ POST /api/settings   — save settings, sync tracker config, reload provider
 from __future__ import annotations
 
 import json
+import os
+from typing import Optional
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends, HTTPException, Request, UploadFile
 from pydantic import BaseModel
+from sqlalchemy.orm import Session
 
 from ..config import config, SETTINGS_FILE, SettingsPayload, sync_tracker_config, env_settings, _update_env_file
+from ..db.database import get_db
 from ..identity.api import _provider
 from ..identity.correlation import correlation_engine
 from ..cameras.stream_manager import stream_manager
 from ..activity.classifier import profile_registry
 
 router = APIRouter(tags=["settings"])
+
+
+@router.get("/api/settings/export", summary="Export settings configuration JSON")
+async def export_settings_json(db: Session = Depends(get_db)):
+    """Export settings to downloadable JSON file."""
+    from .system import export_specific_config
+    return await export_specific_config("settings", db)
+
+
+@router.post("/api/settings/import", summary="Import settings configuration JSON")
+async def import_settings_json(request: Request, file: Optional[UploadFile] = None, db: Session = Depends(get_db)):
+    """Import settings from JSON body or uploaded file."""
+    from .system import import_specific_config
+    return await import_specific_config("settings", request, file, db=db)
 
 
 @router.get("/api/activity/profiles")

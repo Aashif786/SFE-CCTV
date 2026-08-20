@@ -16,10 +16,13 @@ import {
   XCircle,
   RefreshCw,
   Layers,
+  Download,
+  Upload,
 } from "lucide-react";
 import { useCameras, useCameraActions } from "@/hooks/useCameras";
 import CameraFormModal from "@/components/cameras/CameraFormModal";
 import ZoneManagementModal from "@/components/cameras/ZoneManagementModal";
+import ConfigImportModal from "@/components/ConfigImportModal";
 import type { CameraInfo } from "@/hooks/useCameras";
 
 // ---------------------------------------------------------------------------
@@ -127,6 +130,20 @@ export default function CameraManagementPage() {
     refetch();
   };
 
+  const [importModalOpen, setImportModalOpen] = useState(false);
+
+  const handleExport = () => {
+    const apiBase = typeof window === "undefined" ? "http://localhost:8000" : `http://${window.location.hostname}:8000`;
+    const url = `${apiBase}/api/cameras/export`;
+    const link = document.createElement("a");
+    link.href = url;
+    link.setAttribute("download", "cameras.json");
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    showToast(true, "Exported cameras configuration successfully!");
+  };
+
   // ── Render ────────────────────────────────────────────────────────────
 
   return (
@@ -142,13 +159,32 @@ export default function CameraManagementPage() {
             Configure and manage CCTV cameras
           </p>
         </div>
-        <button
-          onClick={handleAdd}
-          className="flex items-center gap-2 bg-emerald-600 hover:bg-emerald-500 text-white px-4 py-2.5 rounded-lg font-medium text-sm transition-colors shadow-sm self-start"
-        >
-          <Plus className="w-4 h-4" />
-          Add Camera
-        </button>
+
+        <div className="flex items-center gap-2.5 self-start sm:self-auto flex-wrap">
+          <button
+            onClick={handleExport}
+            className="flex items-center gap-1.5 px-3.5 py-2.5 rounded-lg bg-[hsl(var(--bg-card))] hover:bg-[hsl(var(--bg-hover))] text-[hsl(var(--text-secondary))] border border-[hsl(var(--border))] text-sm font-semibold transition-all shadow-sm active:scale-95"
+            title="Export all camera configs as JSON"
+          >
+            <Download className="w-4 h-4 text-blue-500" />
+            Export JSON
+          </button>
+          <button
+            onClick={() => setImportModalOpen(true)}
+            className="flex items-center gap-1.5 px-3.5 py-2.5 rounded-lg bg-[hsl(var(--bg-card))] hover:bg-[hsl(var(--bg-hover))] text-[hsl(var(--text-secondary))] border border-[hsl(var(--border))] text-sm font-semibold transition-all shadow-sm active:scale-95"
+            title="Import camera configs from JSON"
+          >
+            <Upload className="w-4 h-4 text-emerald-500" />
+            Import JSON
+          </button>
+          <button
+            onClick={handleAdd}
+            className="flex items-center gap-2 bg-emerald-600 hover:bg-emerald-500 text-white px-4 py-2.5 rounded-lg font-medium text-sm transition-colors shadow-sm"
+          >
+            <Plus className="w-4 h-4" />
+            Add Camera
+          </button>
+        </div>
       </div>
 
       {/* Search */}
@@ -418,6 +454,18 @@ export default function CameraManagementPage() {
         isOpen={!!zoneModalCamera}
         onClose={() => setZoneModalCamera(null)}
         onZonesUpdated={refetch}
+      />
+
+      {/* Config Import Modal */}
+      <ConfigImportModal
+        isOpen={importModalOpen}
+        onClose={() => setImportModalOpen(false)}
+        title="Import Camera Configurations"
+        configType="cameras"
+        onSuccess={() => {
+          refetch();
+          showToast(true, "Cameras imported successfully");
+        }}
       />
     </div>
   );
