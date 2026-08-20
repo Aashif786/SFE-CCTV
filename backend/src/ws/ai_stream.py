@@ -195,6 +195,12 @@ async def camera_ai_endpoint(websocket: WebSocket, camera_id: int):
         # frame, so an EXIT_PORTAL can fire even when the last step is stream loss.
         last_track_attributes: dict[int, tuple[float, tuple[float, ...] | None]] = {}
 
+        # ── Cross-camera anonymous tracking ID continuity ────────────────
+        # Maps new_track_key → origin_track_key for display-level persistence.
+        # When an anonymous Re-ID handoff succeeds, the destination track
+        # inherits the origin track's numeric ID for UI continuity.
+        track_id_continuity_map: dict[str, str] = {}
+
         frame_count = 0
         fps_measured = 0.0
         fps_window_start = time.monotonic()
@@ -356,10 +362,20 @@ async def camera_ai_endpoint(websocket: WebSocket, camera_id: int):
                     embedding = tuple(p["reid_embedding"]) if p.get("reid_embedding") is not None else None
                     last_track_attributes[trk_id] = (float(p["confidence"]), embedding)
                     # Process portal crossings before the optional activity filter.
-                    spatial_handoff_engine.observe_track(
+                    handoff_results = spatial_handoff_engine.observe_track(
                         str(camera_id), str_trk_id, portal_point, now_time,
                         float(p["confidence"]), embedding,
                     )
+                    # ── Record anonymous handoff mappings ─────────────────────
+                    if handoff_results:
+                        for hr in handoff_results:
+                            if isinstance(hr, dict) and hr.get("type") == "ANON_HANDOFF":
+                                origin_key = hr["origin_track_key"]
+                                new_key = hr["new_track_key"]
+                                # Resolve transitively: if origin was itself mapped,
+                                # follow the chain to the root persistent track.
+                                root_key = track_id_continuity_map.get(origin_key, origin_key)
+                                track_id_continuity_map[new_key] = root_key
 
                     # Resolve identity (single lookup — used throughout)
                     worker_session = worker_session_manager.get_by_track(str_trk_id)
@@ -374,6 +390,14 @@ async def camera_ai_endpoint(websocket: WebSocket, camera_id: int):
                     if worker_session and worker_session.persistent_track_id:
                         pers_parts = worker_session.persistent_track_id.split(":")
                         exposed_track_id = int(pers_parts[-1]) if pers_parts[-1].isdigit() else pers_parts[-1]
+                    elif str_trk_id in track_id_continuity_map:
+                        # Anonymous cross-camera continuity: show the origin track's numeric ID
+                        origin_key = track_id_continuity_map[str_trk_id]
+                        origin_parts = origin_key.rsplit(":", 1)
+                        if len(origin_parts) == 2 and origin_parts[-1].isdigit():
+                            exposed_track_id = int(origin_parts[-1])
+                        else:
+                            exposed_track_id = origin_parts[-1] if len(origin_parts) == 2 else origin_key
 
                     keypoints_to_send = p.get("keypoints", [])
 

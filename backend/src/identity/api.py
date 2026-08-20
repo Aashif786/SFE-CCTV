@@ -25,7 +25,7 @@ import urllib3
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
-from fastapi import APIRouter, HTTPException, Depends
+from fastapi import APIRouter, HTTPException, Depends, Request, UploadFile, File
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
@@ -565,6 +565,20 @@ async def save_doors_config(payload: List[DoorConfigItem]):
         raise HTTPException(status_code=500, detail=f"Error restarting streams: {e}")
 
     return {"status": "success", "doors": env_settings.hikvision_doors}
+
+
+@router.get("/doors/export", summary="Export doors configuration JSON")
+async def export_doors_config(db: Session = Depends(get_db)):
+    """Export doors configuration to downloadable JSON file."""
+    from ..api.system import export_specific_config
+    return await export_specific_config("doors", db)
+
+
+@router.post("/doors/import", summary="Import doors configuration JSON")
+async def import_doors_config(request: Request, file: Optional[UploadFile] = None, db: Session = Depends(get_db)):
+    """Import doors configuration from JSON body or uploaded file."""
+    from ..api.system import import_specific_config
+    return await import_specific_config("doors", request, file, db=db)
 
 
 # ---------------------------------------------------------------------------

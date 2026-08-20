@@ -287,9 +287,13 @@ class HikvisionProvider(IdentityEventProvider):
 
             allowed_cams = []
             corr_window = 10.0
+            portal_id = ""
+            portal_role = "AUTO"
             if matched_door:
                 allowed_cams = [str(c) for c in (matched_door.get("cameras") or [])]
                 corr_window = float(matched_door.get("correlation_window_seconds") or 10.0)
+                portal_id = matched_door.get("portal_id") or ""
+                portal_role = matched_door.get("portal_role") or "AUTO"
 
             import uuid
 
@@ -304,6 +308,8 @@ class HikvisionProvider(IdentityEventProvider):
                 correlation_status="WAITING_FOR_TRACK",
                 allowed_cameras=allowed_cams,
                 correlation_window_seconds=corr_window,
+                portal_id=portal_id,
+                portal_role=portal_role,
             )
 
             # Register event with the correlation engine
