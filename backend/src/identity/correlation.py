@@ -212,7 +212,7 @@ class CorrelationEngine:
 
         if matched_track:
             if event.event_type == "ENTRY":
-                worker_session_manager.create_session(
+                worker_session_manager.bind_employee_to_track(
                     employee_id=event.employee_id,
                     track_id=matched_track.track_id,
                     camera_id=matched_track.camera_id,
@@ -285,7 +285,7 @@ class CorrelationEngine:
         self._update_identity_event_matched(event)
 
         if event.event_type == "ENTRY":
-            return worker_session_manager.create_session(
+            return worker_session_manager.bind_employee_to_track(
                 employee_id=event.employee_id,
                 track_id=track_id,
                 camera_id=camera_id,
@@ -352,7 +352,7 @@ class CorrelationEngine:
             self._history.append(matched_event)
 
         if matched_event.event_type == "ENTRY":
-            session = worker_session_manager.create_session(
+            session = worker_session_manager.bind_employee_to_track(
                 employee_id=matched_event.employee_id,
                 track_id=camera_event.track_id,
                 camera_id=camera_event.camera_id,

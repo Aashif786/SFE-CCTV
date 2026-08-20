@@ -1,8 +1,10 @@
 "use client";
 import { useEffect, useState } from "react";
 import { 
-  CheckCircle2, Loader2, Cpu, Eye, EyeOff, Sliders, Shield, HelpCircle, Network, Activity
+  CheckCircle2, Loader2, Cpu, Eye, EyeOff, Sliders, Shield, HelpCircle, Network, Activity,
+  Download, Upload
 } from "lucide-react";
+import ConfigImportModal from "@/components/ConfigImportModal";
 
 const API = "http://localhost:8000";
 
@@ -210,14 +212,47 @@ export default function SettingsPage() {
     }
   };
 
+  const [importModalOpen, setImportModalOpen] = useState(false);
+
+  const handleExportSettings = () => {
+    const url = `${API}/api/settings/export`;
+    const link = document.createElement("a");
+    link.href = url;
+    link.setAttribute("download", "settings.json");
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  };
+
   return (
     <div className="p-6 sm:p-8 space-y-8 max-w-5xl mx-auto">
       {/* Title Header */}
-      <div className="flex flex-col gap-2">
-        <h2 className="text-3xl font-extrabold text-[hsl(var(--text-primary))] tracking-tight">System Settings</h2>
-        <p className="text-sm text-[hsl(var(--text-secondary))]">
-          Tune deep neural network thresholds, camera streaming intervals, identity correlation engines, and security credentials.
-        </p>
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-[hsl(var(--border))] pb-5">
+        <div className="flex flex-col gap-1">
+          <h2 className="text-3xl font-extrabold text-[hsl(var(--text-primary))] tracking-tight">System Settings</h2>
+          <p className="text-sm text-[hsl(var(--text-secondary))]">
+            Tune deep neural network thresholds, camera streaming intervals, identity correlation engines, and security credentials.
+          </p>
+        </div>
+
+        <div className="flex items-center gap-2.5 shrink-0">
+          <button
+            onClick={handleExportSettings}
+            className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-[hsl(var(--bg-card))] hover:bg-[hsl(var(--bg-hover))] text-[hsl(var(--text-secondary))] border border-[hsl(var(--border))] text-xs font-bold transition-all shadow-sm active:scale-95"
+            title="Export settings.json"
+          >
+            <Download className="w-3.5 h-3.5 text-cyan-500" />
+            Export settings.json
+          </button>
+          <button
+            onClick={() => setImportModalOpen(true)}
+            className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-[hsl(var(--bg-card))] hover:bg-[hsl(var(--bg-hover))] text-[hsl(var(--text-secondary))] border border-[hsl(var(--border))] text-xs font-bold transition-all shadow-sm active:scale-95"
+            title="Import settings.json"
+          >
+            <Upload className="w-3.5 h-3.5 text-emerald-500" />
+            Import settings.json
+          </button>
+        </div>
       </div>
 
       {/* Tabs Switcher */}
@@ -1281,6 +1316,17 @@ export default function SettingsPage() {
           </div>
         )}
       </div>
+
+      {/* Config Import Modal */}
+      <ConfigImportModal
+        isOpen={importModalOpen}
+        onClose={() => setImportModalOpen(false)}
+        title="Import AI & System Settings"
+        configType="settings"
+        onSuccess={() => {
+          window.location.reload();
+        }}
+      />
     </div>
   );
 }

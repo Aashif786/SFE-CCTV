@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Optional
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request, UploadFile
 from pydantic import BaseModel
+from sqlalchemy.orm import Session
 
+from ..db.database import get_db
 from .config_service import SpatialConfigurationError
 from .engine import spatial_handoff_engine
 
@@ -80,3 +82,17 @@ async def get_portals():
                     "has_incoming": has_in,
                 })
     return portals_list
+
+
+@router.get("/export", summary="Export spatial handoff layout JSON")
+async def export_spatial_layout(db: Session = Depends(get_db)):
+    """Export spatial handoff layout to downloadable JSON file."""
+    from ..api.system import export_specific_config
+    return await export_specific_config("spatial", db)
+
+
+@router.post("/import", summary="Import spatial handoff layout JSON")
+async def import_spatial_layout(request: Request, file: Optional[UploadFile] = None, db: Session = Depends(get_db)):
+    """Import spatial handoff layout from JSON body or uploaded file."""
+    from ..api.system import import_specific_config
+    return await import_specific_config("spatial", request, file, db=db)

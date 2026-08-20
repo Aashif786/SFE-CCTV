@@ -213,6 +213,20 @@ async def export_camera_zones(camera_id: str, db: Session = Depends(get_db)):
     return Response(content=json_str, headers=headers)
 
 
+@router.get("/api/camera-zones/export-all", summary="Export all camera zones JSON")
+async def export_all_camera_zones(db: Session = Depends(get_db)):
+    """Export all polygonal & workstation zones for all cameras to downloadable JSON file."""
+    from ..api.system import export_specific_config
+    return await export_specific_config("zones", db)
+
+
+@router.post("/api/camera-zones/import-all", summary="Import all camera zones JSON")
+async def import_all_camera_zones(request: Request, file: Optional[UploadFile] = None, mode: str = "merge", db: Session = Depends(get_db)):
+    """Import polygonal & workstation zones from JSON body or uploaded file."""
+    from ..api.system import import_specific_config
+    return await import_specific_config("zones", request, file, mode=mode, db=db)
+
+
 @router.delete("/api/camera-zones/{camera_id}")
 async def clear_camera_zones(camera_id: str, db: Session = Depends(get_db)):
     """Delete all configured zones for a camera."""

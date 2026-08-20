@@ -58,6 +58,8 @@ async def websocket_endpoint(websocket: WebSocket):
     print("✅ WebSocket connected")
     camera_id: Optional[str] = None
     last_track_attributes: dict[int, tuple[float, tuple[float, ...] | None]] = {}
+    # Cross-camera anonymous tracking ID continuity map
+    track_id_continuity_map: dict[str, str] = {}
 
     try:
         while True:
@@ -163,7 +165,15 @@ async def websocket_endpoint(websocket: WebSocket):
                 foot_point = ((float(box[0]) + float(box[2])) / 2.0, float(box[3]))
                 embedding = tuple(p["reid_embedding"]) if p.get("reid_embedding") is not None else None
                 last_track_attributes[trk_id] = (float(p["confidence"]), embedding)
-                spatial_handoff_engine.observe_track(str(camera_id), str_trk_id, foot_point, now_time, float(p["confidence"]), embedding)
+                handoff_results = spatial_handoff_engine.observe_track(str(camera_id), str_trk_id, foot_point, now_time, float(p["confidence"]), embedding)
+                # Record anonymous handoff mappings
+                if handoff_results:
+                    for hr in handoff_results:
+                        if isinstance(hr, dict) and hr.get("type") == "ANON_HANDOFF":
+                            origin_key = hr["origin_track_key"]
+                            new_key = hr["new_track_key"]
+                            root_key = track_id_continuity_map.get(origin_key, origin_key)
+                            track_id_continuity_map[new_key] = root_key
                 worker_session = worker_session_manager.get_by_track(str_trk_id)
                 employee_id = worker_session.employee_id if worker_session else None
 
@@ -201,8 +211,21 @@ async def websocket_endpoint(websocket: WebSocket):
                 # Resolve identity for this track
                 worker_session = worker_session_manager.get_by_track(str_trk_id)
 
+                # Determine the ID to expose downstream
+                exposed_track_id = trk_id
+                if worker_session and worker_session.persistent_track_id:
+                    pers_parts = worker_session.persistent_track_id.split(":")
+                    exposed_track_id = int(pers_parts[-1]) if pers_parts[-1].isdigit() else pers_parts[-1]
+                elif str_trk_id in track_id_continuity_map:
+                    origin_key = track_id_continuity_map[str_trk_id]
+                    origin_parts = origin_key.rsplit(":", 1)
+                    if len(origin_parts) == 2 and origin_parts[-1].isdigit():
+                        exposed_track_id = int(origin_parts[-1])
+                    else:
+                        exposed_track_id = origin_parts[-1] if len(origin_parts) == 2 else origin_key
+
                 detections_out.append({
-                    "track_id": trk_id,
+                    "track_id": exposed_track_id,
                     "activity": activity,
                     "activity_colour": ACTIVITY_COLOUR.get(activity, "#6b7280"),
                     "movement_score": round(p["movement_score"], 5),

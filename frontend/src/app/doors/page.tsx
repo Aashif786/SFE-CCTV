@@ -3,8 +3,9 @@ import { useEffect, useState, useCallback } from "react";
 import {
   Server, DoorClosed, Plus, Trash2, Edit2, CheckCircle2,
   AlertCircle, Loader2, RefreshCw, Send, ShieldAlert, Key, Check, Info,
-  Camera, Video, Clock, ShieldCheck, Layers, Tag, GitFork
+  Camera, Video, Clock, ShieldCheck, Layers, Tag, GitFork, Download, Upload
 } from "lucide-react";
+import ConfigImportModal from "@/components/ConfigImportModal";
 
 const API = "http://localhost:8000";
 
@@ -68,6 +69,18 @@ export default function DoorConfigsPage() {
   const [portalRole, setPortalRole] = useState<"START" | "END" | "AUTO">("AUTO");
   const [correlationWindow, setCorrelationWindow] = useState<number>(10);
   const [editingIp, setEditingIp] = useState<string | null>(null);
+  const [importModalOpen, setImportModalOpen] = useState(false);
+
+  const handleExportDoors = () => {
+    const apiBase = typeof window === "undefined" ? "http://localhost:8000" : `http://${window.location.hostname}:8000`;
+    const url = `${apiBase}/api/identity/doors/export`;
+    const link = document.createElement("a");
+    link.href = url;
+    link.setAttribute("download", "doors.json");
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  };
 
   // Simulator states
   const [simEmployeeId, setSimEmployeeId] = useState("");
@@ -363,6 +376,24 @@ export default function DoorConfigsPage() {
           >
             <RefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin text-emerald-500' : ''}`} />
             <span>Last Poll: {mounted ? lastRefresh.toLocaleTimeString() : "--:--:--"}</span>
+          </button>
+
+          <button
+            onClick={handleExportDoors}
+            className="flex items-center gap-1.5 px-3.5 py-2.5 rounded-lg bg-[hsl(var(--bg-card))] hover:bg-[hsl(var(--bg-hover))] text-[hsl(var(--text-secondary))] border border-[hsl(var(--border))] text-xs font-bold transition-all shadow-sm active:scale-95"
+            title="Export doors.json"
+          >
+            <Download className="w-3.5 h-3.5 text-amber-500" />
+            Export doors.json
+          </button>
+
+          <button
+            onClick={() => setImportModalOpen(true)}
+            className="flex items-center gap-1.5 px-3.5 py-2.5 rounded-lg bg-[hsl(var(--bg-card))] hover:bg-[hsl(var(--bg-hover))] text-[hsl(var(--text-secondary))] border border-[hsl(var(--border))] text-xs font-bold transition-all shadow-sm active:scale-95"
+            title="Import doors.json"
+          >
+            <Upload className="w-3.5 h-3.5 text-emerald-500" />
+            Import doors.json
           </button>
         </div>
       </div>
@@ -927,6 +958,17 @@ export default function DoorConfigsPage() {
         </div>
 
       </div>
+
+      {/* Config Import Modal */}
+      <ConfigImportModal
+        isOpen={importModalOpen}
+        onClose={() => setImportModalOpen(false)}
+        title="Import Doors & ACS Configuration"
+        configType="doors"
+        onSuccess={() => {
+          fetchData();
+        }}
+      />
     </div>
   );
 }
