@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useRef, useCallback, useEffect } from "react";
+import { createPortal } from "react-dom";
 import {
   Maximize2,
   Minimize2,
@@ -42,20 +43,43 @@ interface CameraTileProps {
   camera: LiveCamera;
   onRefresh?: () => void;
   onOpenSettings?: (camera: LiveCamera) => void;
+  onExpandChange?: (isExpanded: boolean) => void;
 }
 
-export default function CameraTile({ camera, onRefresh, onOpenSettings }: CameraTileProps) {
+export default function CameraTile({ camera, onRefresh, onOpenSettings, onExpandChange }: CameraTileProps) {
   const [isExpanded, setIsExpanded] = useState(false);
   const [showInfo, setShowInfo] = useState(false);
   const [restarting, setRestarting] = useState(false);
   const [imgError, setImgError] = useState(false);
   const [streamKey, setStreamKey] = useState(() => Date.now());
+  const [mounted, setMounted] = useState(false);
   const imgRef = useRef<HTMLImageElement>(null);
   const { restartStream, getStreamUrl, getSnapshotUrl } = useCameraActions();
+
+  useEffect(() => {
+    setMounted(true);
+  }, []);
 
   const isOnline = camera.status === "ONLINE";
   const statusCfg = STATUS_CONFIG[camera.status] || STATUS_CONFIG.STOPPED;
   const streamUrl = getStreamUrl(camera.id);
+
+  // Sync expanded state changes to parent callback
+  useEffect(() => {
+    onExpandChange?.(isExpanded);
+  }, [isExpanded, onExpandChange]);
+
+  // Close on Escape key when expanded
+  useEffect(() => {
+    if (!isExpanded) return;
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        setIsExpanded(false);
+      }
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [isExpanded]);
 
   // ── Manage MJPEG stream src & clean up HTTP connections on unmount ───
   useEffect(() => {
@@ -116,10 +140,17 @@ export default function CameraTile({ camera, onRefresh, onOpenSettings }: Camera
 
   const tileContent = (
     <div
+      draggable={false}
+      onDragStart={(e) => {
+        e.preventDefault();
+        e.stopPropagation();
+      }}
+      onDoubleClick={handleFullscreen}
+      title={isExpanded ? "Double click to minimize" : "Double click to expand feed"}
       className={
         isExpanded
-          ? "w-full max-w-6xl bg-[hsl(var(--bg-card))] rounded-xl border border-[hsl(var(--border))] shadow-2xl relative my-auto overflow-hidden"
-          : `relative bg-[hsl(var(--bg-card))] rounded-xl overflow-hidden border transition-shadow transition-colors duration-200
+          ? "w-full max-w-6xl bg-[hsl(var(--bg-card))] rounded-xl border border-[hsl(var(--border))] shadow-2xl relative my-auto overflow-hidden select-none cursor-default"
+          : `relative bg-[hsl(var(--bg-card))] rounded-xl overflow-hidden border transition-shadow transition-colors duration-200 cursor-pointer
              ${camera.status === "OFFLINE" || camera.status === "ERROR" || camera.status === "AUTH_FAILED"
                ? "border-red-500/30"
                : "border-[hsl(var(--border))]"
@@ -134,7 +165,10 @@ export default function CameraTile({ camera, onRefresh, onOpenSettings }: Camera
             {camera.name}
           </span>
         </div>
-        <div className="flex items-center gap-1 shrink-0">
+        <div
+          className="flex items-center gap-1 shrink-0"
+          onDoubleClick={(e) => e.stopPropagation()}
+        >
           {/* FPS badge */}
           {isOnline && camera.fps > 0 && (
             <span className="text-[10px] font-mono font-medium text-emerald-600 dark:text-emerald-400 bg-emerald-500/10 px-1.5 py-0.5 rounded">
@@ -143,14 +177,22 @@ export default function CameraTile({ camera, onRefresh, onOpenSettings }: Camera
           )}
           {/* Action buttons */}
           <button
-            onClick={() => setShowInfo(!showInfo)}
+            onClick={(e) => {
+              e.stopPropagation();
+              setShowInfo(!showInfo);
+            }}
+            onDoubleClick={(e) => e.stopPropagation()}
             className="p-1 rounded text-[hsl(var(--text-muted))] hover:text-[hsl(var(--text-primary))] hover:bg-[hsl(var(--bg-table-head))] transition-colors"
             title="Camera Info"
           >
             <Info className="w-3.5 h-3.5" />
           </button>
           <button
-            onClick={handleSnapshot}
+            onClick={(e) => {
+              e.stopPropagation();
+              handleSnapshot();
+            }}
+            onDoubleClick={(e) => e.stopPropagation()}
             disabled={!isOnline}
             className="p-1 rounded text-[hsl(var(--text-muted))] hover:text-[hsl(var(--text-primary))] hover:bg-[hsl(var(--bg-table-head))] transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
             title="Snapshot"
@@ -158,7 +200,11 @@ export default function CameraTile({ camera, onRefresh, onOpenSettings }: Camera
             <Download className="w-3.5 h-3.5" />
           </button>
           <button
-            onClick={handleRestart}
+            onClick={(e) => {
+              e.stopPropagation();
+              handleRestart();
+            }}
+            onDoubleClick={(e) => e.stopPropagation()}
             disabled={restarting}
             className="p-1 rounded text-[hsl(var(--text-muted))] hover:text-[hsl(var(--text-primary))] hover:bg-[hsl(var(--bg-table-head))] transition-colors disabled:opacity-50"
             title="Reconnect Stream"
@@ -167,7 +213,11 @@ export default function CameraTile({ camera, onRefresh, onOpenSettings }: Camera
           </button>
           {onOpenSettings && (
             <button
-              onClick={() => onOpenSettings(camera)}
+              onClick={(e) => {
+                e.stopPropagation();
+                onOpenSettings(camera);
+              }}
+              onDoubleClick={(e) => e.stopPropagation()}
               className="p-1 rounded text-[hsl(var(--text-muted))] hover:text-[hsl(var(--text-primary))] hover:bg-[hsl(var(--bg-table-head))] transition-colors"
               title="Camera Settings"
             >
@@ -175,7 +225,11 @@ export default function CameraTile({ camera, onRefresh, onOpenSettings }: Camera
             </button>
           )}
           <button
-            onClick={handleFullscreen}
+            onClick={(e) => {
+              e.stopPropagation();
+              handleFullscreen();
+            }}
+            onDoubleClick={(e) => e.stopPropagation()}
             className="p-1 rounded text-[hsl(var(--text-muted))] hover:text-[hsl(var(--text-primary))] hover:bg-[hsl(var(--bg-table-head))] transition-colors"
             title={isExpanded ? "Exit Fullscreen" : "Fullscreen"}
           >
@@ -185,13 +239,14 @@ export default function CameraTile({ camera, onRefresh, onOpenSettings }: Camera
       </div>
 
       {/* ── Video Area ───────────────────────────────────────────── */}
-      <div className={`relative bg-black ${isExpanded ? "aspect-video" : "aspect-video"}`}>
+      <div className="relative bg-black aspect-video">
         {isOnline && !imgError ? (
           /* MJPEG stream via <img> */
           <img
             ref={imgRef}
             alt={camera.name}
-            className="w-full h-full object-cover block"
+            draggable={false}
+            className="w-full h-full object-cover block select-none pointer-events-auto"
             onError={() => setImgError(true)}
           />
         ) : (
@@ -215,7 +270,11 @@ export default function CameraTile({ camera, onRefresh, onOpenSettings }: Camera
               </span>
             )}
             <button
-              onClick={handleRestart}
+              onClick={(e) => {
+                e.stopPropagation();
+                handleRestart();
+              }}
+              onDoubleClick={(e) => e.stopPropagation()}
               disabled={restarting}
               className="mt-1 flex items-center gap-1.5 text-xs font-medium text-emerald-400 hover:text-emerald-300 bg-emerald-500/10 hover:bg-emerald-500/20 border border-emerald-500/20 px-3 py-1.5 rounded-lg transition-all disabled:opacity-50"
             >
@@ -227,7 +286,7 @@ export default function CameraTile({ camera, onRefresh, onOpenSettings }: Camera
 
         {/* Live indicator badge */}
         {isOnline && !imgError && (
-          <div className="absolute top-2 left-2 flex items-center gap-1.5 bg-black/60 backdrop-blur-sm px-2 py-1 rounded-md z-10">
+          <div className="absolute top-2 left-2 flex items-center gap-1.5 bg-black/60 backdrop-blur-sm px-2 py-1 rounded-md z-10 pointer-events-none select-none">
             <div className="w-1.5 h-1.5 rounded-full bg-red-500 animate-pulse" />
             <span className="text-[10px] font-bold text-white tracking-wider">LIVE</span>
           </div>
@@ -276,7 +335,11 @@ export default function CameraTile({ camera, onRefresh, onOpenSettings }: Camera
 
       {/* ── Info panel ───────────────────────────────────────────── */}
       {showInfo && (
-        <div className="border-t border-[hsl(var(--border))] bg-[hsl(var(--bg-code))] px-3 py-3 space-y-2 animate-in slide-in-from-top-1">
+        <div
+          onClick={(e) => e.stopPropagation()}
+          onDoubleClick={(e) => e.stopPropagation()}
+          className="border-t border-[hsl(var(--border))] bg-[hsl(var(--bg-code))] px-3 py-3 space-y-2 animate-in slide-in-from-top-1"
+        >
           <div className="flex items-center justify-between">
             <h4 className="text-xs font-bold uppercase tracking-wider text-[hsl(var(--text-secondary))]">
               Camera Information
@@ -307,13 +370,37 @@ export default function CameraTile({ camera, onRefresh, onOpenSettings }: Camera
 
   // Fullscreen wrapper
   if (isExpanded) {
-    return (
-      <div className="fixed inset-0 z-50 bg-black/85 dark:bg-gray-950/95 flex items-center justify-center p-6 backdrop-blur-md" onClick={handleFullscreen}>
-        <div onClick={(e) => e.stopPropagation()} className="w-full max-w-6xl">
+    const fullscreenModal = (
+      <div
+        draggable={false}
+        onDragStart={(e) => {
+          e.preventDefault();
+          e.stopPropagation();
+        }}
+        onDragOver={(e) => {
+          e.preventDefault();
+          e.stopPropagation();
+        }}
+        onDrop={(e) => {
+          e.preventDefault();
+          e.stopPropagation();
+        }}
+        className="fixed inset-0 z-[9999] bg-black/85 dark:bg-gray-950/95 flex items-center justify-center p-6 backdrop-blur-md select-none"
+        onClick={handleFullscreen}
+      >
+        <div
+          onClick={(e) => e.stopPropagation()}
+          className="w-full max-w-6xl"
+        >
           {tileContent}
         </div>
       </div>
     );
+
+    if (mounted && typeof document !== "undefined") {
+      return createPortal(fullscreenModal, document.body);
+    }
+    return fullscreenModal;
   }
 
   return tileContent;

@@ -201,6 +201,7 @@ export default function LiveCamerasPage() {
   const [aiOrder, setAiOrder] = useState<number[]>([]);
 
   // Drag state
+  const [expandedCameraId, setExpandedCameraId] = useState<number | null>(null);
   const [isDragging, setIsDragging] = useState(false);
   const [dragSource, setDragSource] = useState<"cctv" | "ai" | null>(null);
   const [dragOverPanel, setDragOverPanel] = useState<"cctv" | "ai" | null>(null);
@@ -312,6 +313,10 @@ export default function LiveCamerasPage() {
 
   const handleDragStart = useCallback(
     (e: React.DragEvent, cameraId: number, source: "cctv" | "ai") => {
+      if (expandedCameraId !== null) {
+        e.preventDefault();
+        return;
+      }
       e.dataTransfer.setData("text/plain", String(cameraId));
       e.dataTransfer.setData("application/x-source", source);
       e.dataTransfer.effectAllowed = "move";
@@ -334,7 +339,7 @@ export default function LiveCamerasPage() {
         setDragPosition({ x: e.clientX, y: e.clientY });
       }, 0);
     },
-    [cameras]
+    [cameras, expandedCameraId]
   );
 
   const handleDragEnd = useCallback(() => {
@@ -808,12 +813,14 @@ export default function LiveCamerasPage() {
                     return (
                       <div
                         key={cam.id}
-                        draggable
+                        draggable={expandedCameraId === null}
                         onDragStart={(e) => handleDragStart(e, cam.id, "cctv")}
                         onDragEnd={handleDragEnd}
                         onDragOver={(e) => handleCardDragOver(e, cam.id, "cctv")}
                         onDrop={(e) => handleCardDrop(e, cam.id, "cctv")}
-                        className={`cursor-grab active:cursor-grabbing relative group/card select-none transition-all duration-200 ${
+                        className={`relative group/card select-none transition-all duration-200 ${
+                          expandedCameraId === null ? "cursor-grab active:cursor-grabbing" : ""
+                        } ${
                           isBeingDragged
                             ? "opacity-30 scale-95 pointer-events-none"
                             : "opacity-100 animate-in fade-in duration-300"
@@ -826,7 +833,11 @@ export default function LiveCamerasPage() {
                             <div className="flex-1 h-0.5 rounded-full bg-blue-500 shadow-[0_0_6px_rgba(59,130,246,0.8)]" />
                           </div>
                         )}
-                        <CameraTile camera={cam} onRefresh={refetch} />
+                        <CameraTile
+                          camera={cam}
+                          onRefresh={refetch}
+                          onExpandChange={(expanded) => setExpandedCameraId(expanded ? cam.id : null)}
+                        />
                         {/* Insertion indicator — bottom */}
                         {isDropTarget && !dragInsertBeforeRef.current && (
                           <div className="absolute -bottom-2 left-0 right-0 z-20 flex items-center gap-1 pointer-events-none">
@@ -977,12 +988,14 @@ export default function LiveCamerasPage() {
                     return (
                       <div
                         key={cam.id}
-                        draggable
+                        draggable={expandedCameraId === null}
                         onDragStart={(e) => handleDragStart(e, cam.id, "ai")}
                         onDragEnd={handleDragEnd}
                         onDragOver={(e) => handleCardDragOver(e, cam.id, "ai")}
                         onDrop={(e) => handleCardDrop(e, cam.id, "ai")}
-                        className={`cursor-grab active:cursor-grabbing relative group/card select-none transition-all duration-200 ${
+                        className={`relative group/card select-none transition-all duration-200 ${
+                          expandedCameraId === null ? "cursor-grab active:cursor-grabbing" : ""
+                        } ${
                           isBeingDragged
                             ? "opacity-30 scale-95 pointer-events-none"
                             : "opacity-100 animate-in fade-in duration-300"
@@ -995,7 +1008,11 @@ export default function LiveCamerasPage() {
                             <div className="flex-1 h-0.5 rounded-full bg-violet-500 shadow-[0_0_6px_rgba(139,92,246,0.8)]" />
                           </div>
                         )}
-                        <AICameraTile camera={cam} onRefresh={refetch} />
+                        <AICameraTile
+                          camera={cam}
+                          onRefresh={refetch}
+                          onExpandChange={(expanded) => setExpandedCameraId(expanded ? cam.id : null)}
+                        />
                         {/* Insertion indicator — bottom */}
                         {isDropTarget && !dragInsertBeforeRef.current && (
                           <div className="absolute -bottom-2 left-0 right-0 z-20 flex items-center gap-1 pointer-events-none">
