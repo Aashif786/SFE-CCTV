@@ -201,7 +201,6 @@ export default function LiveCamerasPage() {
   const [aiOrder, setAiOrder] = useState<number[]>([]);
 
   // Drag state
-  const [expandedCameraId, setExpandedCameraId] = useState<number | null>(null);
   const [isDragging, setIsDragging] = useState(false);
   const [dragSource, setDragSource] = useState<"cctv" | "ai" | null>(null);
   const [dragOverPanel, setDragOverPanel] = useState<"cctv" | "ai" | null>(null);
@@ -211,6 +210,7 @@ export default function LiveCamerasPage() {
   // Same-panel reorder insertion tracking
   const [dragOverCardId, setDragOverCardId] = useState<number | null>(null);
   const dragInsertBeforeRef = useRef<boolean>(true);
+  const [expandedCameraId, setExpandedCameraId] = useState<number | null>(null);
 
   // Toasts
   const [toasts, setToasts] = useState<Toast[]>([]);
@@ -313,10 +313,11 @@ export default function LiveCamerasPage() {
 
   const handleDragStart = useCallback(
     (e: React.DragEvent, cameraId: number, source: "cctv" | "ai") => {
-      if (expandedCameraId !== null) {
+      if (expandedCameraId !== null || (e.target as HTMLElement).closest(".fixed")) {
         e.preventDefault();
         return;
       }
+
       e.dataTransfer.setData("text/plain", String(cameraId));
       e.dataTransfer.setData("application/x-source", source);
       e.dataTransfer.effectAllowed = "move";
@@ -339,7 +340,7 @@ export default function LiveCamerasPage() {
         setDragPosition({ x: e.clientX, y: e.clientY });
       }, 0);
     },
-    [cameras, expandedCameraId]
+    [cameras]
   );
 
   const handleDragEnd = useCallback(() => {
@@ -810,6 +811,7 @@ export default function LiveCamerasPage() {
                   {cctvCameras.map((cam) => {
                     const isBeingDragged = draggedCameraId === cam.id;
                     const isDropTarget = dragOverCardId === cam.id && dragSource === "cctv";
+                    const isThisExpanded = expandedCameraId === cam.id;
                     return (
                       <div
                         key={cam.id}
@@ -819,7 +821,9 @@ export default function LiveCamerasPage() {
                         onDragOver={(e) => handleCardDragOver(e, cam.id, "cctv")}
                         onDrop={(e) => handleCardDrop(e, cam.id, "cctv")}
                         className={`relative group/card select-none transition-all duration-200 ${
-                          expandedCameraId === null ? "cursor-grab active:cursor-grabbing" : ""
+                          isThisExpanded
+                            ? "cursor-default"
+                            : "cursor-grab active:cursor-grabbing"
                         } ${
                           isBeingDragged
                             ? "opacity-30 scale-95 pointer-events-none"
@@ -836,7 +840,7 @@ export default function LiveCamerasPage() {
                         <CameraTile
                           camera={cam}
                           onRefresh={refetch}
-                          onExpandChange={(expanded) => setExpandedCameraId(expanded ? cam.id : null)}
+                          onExpandChange={(exp) => setExpandedCameraId(exp ? cam.id : null)}
                         />
                         {/* Insertion indicator — bottom */}
                         {isDropTarget && !dragInsertBeforeRef.current && (
@@ -985,6 +989,7 @@ export default function LiveCamerasPage() {
                   {aiCameras.map((cam) => {
                     const isBeingDragged = draggedCameraId === cam.id;
                     const isDropTarget = dragOverCardId === cam.id && dragSource === "ai";
+                    const isThisExpanded = expandedCameraId === cam.id;
                     return (
                       <div
                         key={cam.id}
@@ -994,7 +999,9 @@ export default function LiveCamerasPage() {
                         onDragOver={(e) => handleCardDragOver(e, cam.id, "ai")}
                         onDrop={(e) => handleCardDrop(e, cam.id, "ai")}
                         className={`relative group/card select-none transition-all duration-200 ${
-                          expandedCameraId === null ? "cursor-grab active:cursor-grabbing" : ""
+                          isThisExpanded
+                            ? "cursor-default"
+                            : "cursor-grab active:cursor-grabbing"
                         } ${
                           isBeingDragged
                             ? "opacity-30 scale-95 pointer-events-none"
@@ -1011,7 +1018,7 @@ export default function LiveCamerasPage() {
                         <AICameraTile
                           camera={cam}
                           onRefresh={refetch}
-                          onExpandChange={(expanded) => setExpandedCameraId(expanded ? cam.id : null)}
+                          onExpandChange={(exp) => setExpandedCameraId(exp ? cam.id : null)}
                         />
                         {/* Insertion indicator — bottom */}
                         {isDropTarget && !dragInsertBeforeRef.current && (

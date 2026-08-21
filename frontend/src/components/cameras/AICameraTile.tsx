@@ -1,7 +1,6 @@
 "use client";
 
 import { useRef, useEffect, useState, useCallback } from "react";
-import { createPortal } from "react-dom";
 import {
   Brain,
   Activity,
@@ -65,7 +64,7 @@ const CONNECTIONS = [
 interface AICameraTileProps {
   camera: LiveCamera;
   onRefresh?: () => void;
-  onExpandChange?: (isExpanded: boolean) => void;
+  onExpandChange?: (expanded: boolean) => void;
 }
 
 export default function AICameraTile({ camera, onRefresh, onExpandChange }: AICameraTileProps) {
@@ -76,32 +75,10 @@ export default function AICameraTile({ camera, onRefresh, onExpandChange }: AICa
   const [imgError, setImgError] = useState(false);
   const [restarting, setRestarting] = useState(false);
   const [streamKey, setStreamKey] = useState(() => Date.now());
-  const [mounted, setMounted] = useState(false);
   const { restartStream, getStreamUrl } = useCameraActions();
-
-  useEffect(() => {
-    setMounted(true);
-  }, []);
 
   const isOnline = camera.status === "ONLINE";
   const streamUrl = getStreamUrl(camera.id);
-
-  // Sync expanded state to parent
-  useEffect(() => {
-    onExpandChange?.(isExpanded);
-  }, [isExpanded, onExpandChange]);
-
-  // Close on Escape key when expanded
-  useEffect(() => {
-    if (!isExpanded) return;
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === "Escape") {
-        setIsExpanded(false);
-      }
-    };
-    window.addEventListener("keydown", handleKeyDown);
-    return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [isExpanded]);
 
   // Connect to server-side AI WebSocket
   const {
@@ -124,7 +101,13 @@ export default function AICameraTile({ camera, onRefresh, onExpandChange }: AICa
   const dotClass = ACTIVITY_DOT[activity] ?? "bg-gray-400";
   const label = ACTIVITY_LABEL[activity] ?? activity;
 
-  const handleFullscreen = useCallback(() => setIsExpanded((v) => !v), []);
+  const handleFullscreen = useCallback(() => {
+    setIsExpanded((v) => {
+      const next = !v;
+      onExpandChange?.(next);
+      return next;
+    });
+  }, [onExpandChange]);
 
   // ── Manage stream image src & clean up HTTP connections on unmount ───
   useEffect(() => {
@@ -163,162 +146,164 @@ export default function AICameraTile({ camera, onRefresh, onExpandChange }: AICa
     }
   }, [camera.id, restartStream, onRefresh]);
 
-  function hexToRgba(hex: string, alpha: number): string {
-    let c = (hex || "#3B82F6").replace("#", "");
-    if (c.length === 3) c = c.split("").map((x) => x + x).join("");
-    const num = parseInt(c, 16);
-    if (isNaN(num)) return `rgba(59, 130, 246, ${alpha})`;
-    return `rgba(${(num >> 16) & 255}, ${(num >> 8) & 255}, ${num & 255}, ${alpha})`;
-  }
+function hexToRgba(hex: string, alpha: number): string {
+  let c = (hex || "#3B82F6").replace("#", "");
+  if (c.length === 3) c = c.split("").map((x) => x + x).join("");
+  const num = parseInt(c, 16);
+  if (isNaN(num)) return `rgba(59, 130, 246, ${alpha})`;
+  return `rgba(${(num >> 16) & 255}, ${(num >> 8) & 255}, ${num & 255}, ${alpha})`;
+}
 
   // ── Draw detection overlay on canvas ────────────────────────────────────
+
   useEffect(() => {
     const canvas = canvasRef.current;
-    if (!canvas) return;
+    const img = imgRef.current;
+    if (!canvas || !img || !isOnline) return;
+
     const ctx = canvas.getContext("2d");
     if (!ctx) return;
+
+    const rect = img.getBoundingClientRect();
+    if (rect.width > 0 && rect.height > 0) {
+      if (canvas.width !== rect.width || canvas.height !== rect.height) {
+        canvas.width = rect.width;
+        canvas.height = rect.height;
+      }
+    }
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
 
     const cw = canvas.width;
     const ch = canvas.height;
 
-    // Handle canvas resolution matching display aspect
-    if (
-      canvas.clientWidth > 0 &&
-      canvas.clientHeight > 0 &&
-      (cw !== canvas.clientWidth || ch !== canvas.clientHeight)
-    ) {
-      canvas.width = canvas.clientWidth;
-      canvas.height = canvas.clientHeight;
-    }
-
-    ctx.clearRect(0, 0, canvas.width, canvas.height);
-
-    if (!isOnline) return;
-
-    // ── 0. Draw configured Polygon Zones overlay ───────────────────────────
+    // Draw multi-zone polygonal ROIs
     if (zones && zones.length > 0) {
       zones.forEach((z) => {
-        if (!z.points || z.points.length < 3) return;
+        if (!z.enabled || !z.points || z.points.length < 3) return;
+
+        // Check if points are in pixel coordinates or normalized
+        const maxPx = Math.max(...z.points.map((pt) => pt[0]));
+        const maxPy = Math.max(...z.points.map((pt) => pt[1]));
+        const isPixel = maxPx > 1.0 || maxPy > 1.0;
+
+        const canvasPoints: [number, number][] = z.points.map(([px, py]) => [
+          isPixel ? px : px * cw,
+          isPixel ? py : py * ch,
+        ]);
 
         ctx.beginPath();
-        const startX = z.points[0][0] * cw;
-        const startY = z.points[0][1] * ch;
-        ctx.moveTo(startX, startY);
-
-        for (let i = 1; i < z.points.length; i++) {
-          ctx.lineTo(z.points[i][0] * cw, z.points[i][1] * ch);
+        ctx.moveTo(canvasPoints[0][0], canvasPoints[0][1]);
+        for (let i = 1; i < canvasPoints.length; i++) {
+          ctx.lineTo(canvasPoints[i][0], canvasPoints[i][1]);
         }
         ctx.closePath();
 
-        ctx.fillStyle = hexToRgba(z.color, 0.12);
+        // Semi-transparent fill & border
+        ctx.fillStyle = hexToRgba(z.color, 0.18);
         ctx.fill();
-
-        ctx.strokeStyle = hexToRgba(z.color, 0.6);
-        ctx.lineWidth = 1.5;
-        ctx.setLineDash([4, 4]);
+        ctx.strokeStyle = z.color;
+        ctx.lineWidth = 2;
+        ctx.setLineDash([6, 4]);
         ctx.stroke();
         ctx.setLineDash([]);
 
         // Zone Name Label Tag
-        if (z.points.length > 0) {
-          const labelX = z.points[0][0] * cw + 4;
-          const labelY = z.points[0][1] * ch + 14;
-
-          ctx.font = "bold 9px monospace";
-          ctx.fillStyle = "rgba(0, 0, 0, 0.65)";
-          const textMetrics = ctx.measureText(z.name);
-          ctx.fillRect(labelX - 2, labelY - 9, textMetrics.width + 6, 12);
-
-          ctx.fillStyle = z.color || "#3B82F6";
-          ctx.fillText(z.name, labelX + 1, labelY);
-        }
+        const firstPt = canvasPoints[0];
+        ctx.font = "bold 11px Arial";
+        const tagText = z.name;
+        const tagWidth = ctx.measureText(tagText).width + 12;
+        ctx.fillStyle = z.color;
+        ctx.fillRect(firstPt[0], firstPt[1], tagWidth, 18);
+        ctx.fillStyle = "#ffffff";
+        ctx.fillText(tagText, firstPt[0] + 6, firstPt[1] + 13);
       });
-    }
-
-    // ── 1. Draw single camera-assigned zone (fallback/deprecated) ───────────
-    if (zone && zone.length === 4 && (!zones || zones.length === 0)) {
+    } else if (zone && zone.length === 4) {
+      // Legacy workstation zone boundary fallback
       const [zx1, zy1, zx2, zy2] = zone;
-      if (zx1 > 0 || zy1 > 0 || zx2 < 1 || zy2 < 1) {
-        ctx.strokeStyle = "rgba(16, 185, 129, 0.4)";
-        ctx.lineWidth = 1.5;
-        ctx.setLineDash([4, 4]);
-        ctx.strokeRect(zx1 * cw, zy1 * ch, (zx2 - zx1) * cw, (zy2 - zy1) * ch);
+      const px = zx1 * cw;
+      const py = zy1 * ch;
+      const pw = (zx2 - zx1) * cw;
+      const ph = (zy2 - zy1) * ch;
+      if (zx1 > 0.001 || zy1 > 0.001 || zx2 < 0.999 || zy2 < 0.999) {
+        ctx.strokeStyle = "rgba(251,191,36,0.6)";
+        ctx.lineWidth = 2;
+        ctx.setLineDash([8, 6]);
+        ctx.strokeRect(px, py, pw, ph);
         ctx.setLineDash([]);
+        ctx.fillStyle = "rgba(251,191,36,0.08)";
+        ctx.fillRect(px, py, pw, ph);
+        ctx.fillStyle = "rgba(251,191,36,0.85)";
+        ctx.font = "11px Arial";
+        ctx.fillText("Workstation", px + 6, py + 16);
       }
     }
 
-    if (detections.length === 0) return;
+    // Draw each tracked person
+    detections.forEach((det) => {
+      const colour = det.activity_colour ?? "#6b7280";
+      const actLabel = ACTIVITY_LABEL[det.activity] ?? det.activity;
+      const empId = det.identity?.employee_id;
+      const [bx1n, by1n, bx2n, by2n] = det.box;
+      const bx1 = bx1n * cw;
+      const by1 = by1n * ch;
+      const bx2 = bx2n * cw;
+      const by2 = by2n * ch;
 
-    detections.forEach((det: AIDetection) => {
-      const colour = det.activity_colour || "#10b981";
-      const [x1, y1, x2, y2] = det.box;
+      const personH = by2 - by1;
+      const personW = bx2 - bx1;
+      const personScale = Math.max(0.2, Math.min(1.0, personH / 360));
+      const lineW = Math.max(0.5, 2.0 * personScale);
+      const dotR = Math.max(1.0, 4.0 * personScale);
+      const boxW = Math.max(1.0, 2.5 * personScale);
+      const hipR = Math.max(2.0, 6.0 * personScale);
+      const fontSize = Math.max(8, Math.round(11 * personScale));
+      const pillH = Math.max(16, Math.round(22 * personScale));
 
-      const px1 = x1 * cw;
-      const py1 = y1 * ch;
-      const px2 = x2 * cw;
-      const py2 = y2 * ch;
-      const boxW = px2 - px1;
-      const boxH = py2 - py1;
-
-      // Dynamic scales based on canvas resolution
-      const isExpandedView = cw > 700;
-      const lineW = isExpandedView ? 2.5 : 1.5;
-      const fontSz = isExpandedView ? 11 : 9;
-      const dotR = isExpandedView ? 3 : 2;
-      const hipR = isExpandedView ? 5 : 3.5;
-
-      // Draw bounding box
+      // Bounding box
       ctx.strokeStyle = colour;
-      ctx.lineWidth = lineW;
-      ctx.strokeRect(px1, py1, boxW, boxH);
+      ctx.lineWidth = boxW;
+      ctx.strokeRect(bx1, by1, personW, personH);
 
-      // Label text
-      const activityStr =
-        det.activity === "idle"
-          ? `Idle ${Math.floor(det.idle_seconds)}s`
-          : ACTIVITY_LABEL[det.activity] ?? det.activity;
-
-      const identityStr = det.identity?.employee_id
-        ? `👤 ${det.identity.employee_id}`
-        : `Track-${det.track_id}`;
-
-      const labelText = `${identityStr} · ${activityStr}`;
-
-      // Bounding box header label background
-      ctx.font = `bold ${fontSz}px sans-serif`;
-      const textMetrics = ctx.measureText(labelText);
-      const labelW = textMetrics.width + 10;
-      const labelH = fontSz + 6;
-
+      // Activity pill
+      const pillLabel = empId
+        ? `${empId} · ${actLabel}`
+        : `Track-${det.track_id} · ${actLabel}`;
+      ctx.font = `bold ${fontSize}px Arial`;
+      const pillW = ctx.measureText(pillLabel).width + 12;
       ctx.fillStyle = colour;
-      ctx.fillRect(px1, Math.max(0, py1 - labelH), labelW, labelH);
-
+      ctx.fillRect(bx1, by1 - pillH, pillW, pillH);
       ctx.fillStyle = "#ffffff";
-      ctx.fillText(labelText, px1 + 5, Math.max(fontSz, py1 - 3));
+      ctx.fillText(pillLabel, bx1 + 6, by1 - pillH / 3);
 
-      // Draw skeleton keypoints & connections if available
-      if (det.keypoints && det.keypoints.length >= 17) {
-        const pts = det.keypoints.map(([kx, ky]) => [kx * cw, ky * ch]);
+      // Zone Dwell Badge on top of bounding box if person is in a zone
+      if (det.zone_status) {
+        const zoneTag = `📍 ${det.zone_status.zone_name} (${det.zone_status.formatted_dwell})`;
+        ctx.font = `bold ${Math.max(8, fontSize - 1)}px Arial`;
+        const zPillW = ctx.measureText(zoneTag).width + 10;
+        const zPillH = Math.max(14, pillH - 2);
+        ctx.fillStyle = det.zone_status.zone_color || "#3B82F6";
+        ctx.fillRect(bx1, by1 - pillH - zPillH - 2, zPillW, zPillH);
+        ctx.fillStyle = "#ffffff";
+        ctx.fillText(zoneTag, bx1 + 5, by1 - pillH - 5);
+      }
 
-        // Connection lines
+      // Skeleton
+      if (det.keypoints && det.keypoints.length > 0) {
+        const pts = det.keypoints.map(([px, py]) => [px * cw, py * ch]);
+
         ctx.strokeStyle = colour;
-        ctx.lineWidth = Math.max(1, lineW - 0.5);
-        CONNECTIONS.forEach(([i, j]) => {
-          const p1 = pts[i];
-          const p2 = pts[j];
-          const kp1 = det.keypoints![i];
-          const kp2 = det.keypoints![j];
+        ctx.lineWidth = lineW;
+        CONNECTIONS.forEach(([i1, i2]) => {
+          const kp1 = det.keypoints![i1];
+          const kp2 = det.keypoints![i2];
           if (
-            kp1 &&
-            kp2 &&
-            kp1[0] > 0.01 &&
-            kp1[1] > 0.01 &&
-            kp2[0] > 0.01 &&
-            kp2[1] > 0.01
+            kp1 && kp2 &&
+            kp1[0] > 0.01 && kp1[1] > 0.01 &&
+            kp2[0] > 0.01 && kp2[1] > 0.01
           ) {
             ctx.beginPath();
-            ctx.moveTo(p1[0], p1[1]);
-            ctx.lineTo(p2[0], p2[1]);
+            ctx.moveTo(pts[i1][0], pts[i1][1]);
+            ctx.lineTo(pts[i2][0], pts[i2][1]);
             ctx.stroke();
           }
         });
@@ -410,17 +395,16 @@ export default function AICameraTile({ camera, onRefresh, onExpandChange }: AICa
   const tileContent = (
     <div
       ref={containerRef}
+      onDoubleClick={handleFullscreen}
       draggable={false}
       onDragStart={(e) => {
         e.preventDefault();
         e.stopPropagation();
       }}
-      onDoubleClick={handleFullscreen}
-      title={isExpanded ? "Double click to minimize" : "Double click to expand feed"}
       className={
         isExpanded
-          ? "w-full max-w-6xl bg-[hsl(var(--bg-card))] rounded-xl border border-[hsl(var(--border))] shadow-2xl relative my-auto overflow-hidden select-none cursor-default"
-          : `relative bg-[hsl(var(--bg-card))] rounded-xl overflow-hidden border shadow-sm hover:shadow-md hover:border-[hsl(var(--border-strong))] group cursor-pointer transition-shadow transition-colors duration-200 ${
+          ? "w-full max-w-6xl bg-[hsl(var(--bg-card))] rounded-xl border border-[hsl(var(--border))] shadow-2xl relative my-auto overflow-hidden cursor-default"
+          : `relative bg-[hsl(var(--bg-card))] rounded-xl overflow-hidden border shadow-sm hover:shadow-md hover:border-[hsl(var(--border-strong))] group cursor-pointer ${
               isIdleAlert
                 ? "border-amber-500/60 shadow-[0_0_15px_rgba(245,158,11,0.25)]"
                 : aiStatus === "tracking"
@@ -448,11 +432,7 @@ export default function AICameraTile({ camera, onRefresh, onExpandChange }: AICa
           )}
           {statusBadge}
           <button
-            onClick={(e) => {
-              e.stopPropagation();
-              handleRestart();
-            }}
-            onDoubleClick={(e) => e.stopPropagation()}
+            onClick={handleRestart}
             disabled={restarting}
             className="p-1 rounded text-[hsl(var(--text-muted))] hover:text-[hsl(var(--text-primary))] hover:bg-[hsl(var(--bg-table-head))] transition-colors disabled:opacity-50"
             title="Reconnect Stream"
@@ -460,11 +440,7 @@ export default function AICameraTile({ camera, onRefresh, onExpandChange }: AICa
             <RefreshCw className={`w-3.5 h-3.5 ${restarting ? "animate-spin" : ""}`} />
           </button>
           <button
-            onClick={(e) => {
-              e.stopPropagation();
-              handleFullscreen();
-            }}
-            onDoubleClick={(e) => e.stopPropagation()}
+            onClick={handleFullscreen}
             className="p-1 rounded text-[hsl(var(--text-muted))] hover:text-[hsl(var(--text-primary))] hover:bg-[hsl(var(--bg-table-head))] transition-colors"
             title={isExpanded ? "Exit Fullscreen" : "Fullscreen"}
           >
@@ -481,14 +457,12 @@ export default function AICameraTile({ camera, onRefresh, onExpandChange }: AICa
             <img
               ref={imgRef}
               alt={camera.name}
-              draggable={false}
-              className="w-full h-full object-cover block select-none pointer-events-auto"
+              className="w-full h-full object-cover block"
               onError={() => setImgError(true)}
             />
             {/* Detection overlay canvas */}
             <canvas
               ref={canvasRef}
-              draggable={false}
               className="absolute top-0 left-0 w-full h-full pointer-events-none z-10"
             />
           </>
@@ -499,11 +473,7 @@ export default function AICameraTile({ camera, onRefresh, onExpandChange }: AICa
             </div>
             <span className="text-sm font-medium text-red-400">Offline</span>
             <button
-              onClick={(e) => {
-                e.stopPropagation();
-                handleRestart();
-              }}
-              onDoubleClick={(e) => e.stopPropagation()}
+              onClick={handleRestart}
               disabled={restarting}
               className="mt-1 flex items-center gap-1.5 text-xs font-medium text-emerald-400 hover:text-emerald-300 bg-emerald-500/10 hover:bg-emerald-500/20 border border-emerald-500/20 px-3 py-1.5 rounded-lg transition-all disabled:opacity-50"
             >
@@ -515,7 +485,7 @@ export default function AICameraTile({ camera, onRefresh, onExpandChange }: AICa
 
         {/* Detection count badge */}
         {detectionCount > 0 && aiStatus === "tracking" && (
-          <div className="absolute top-2 right-2 flex items-center gap-1 bg-black/60 backdrop-blur-sm px-2 py-1 rounded-md z-20 pointer-events-none select-none">
+          <div className="absolute top-2 right-2 flex items-center gap-1 bg-black/60 backdrop-blur-sm px-2 py-1 rounded-md z-20">
             <Users className="w-3 h-3 text-emerald-400" />
             <span className="text-[10px] font-bold text-white">
               {detectionCount}
@@ -597,37 +567,29 @@ export default function AICameraTile({ camera, onRefresh, onExpandChange }: AICa
 
   // Fullscreen wrapper
   if (isExpanded) {
-    const fullscreenModal = (
+    return (
       <div
+        className="fixed inset-0 z-50 bg-black/85 dark:bg-gray-950/95 flex items-center justify-center p-6 backdrop-blur-md cursor-default select-none"
+        onClick={handleFullscreen}
         draggable={false}
         onDragStart={(e) => {
           e.preventDefault();
           e.stopPropagation();
         }}
-        onDragOver={(e) => {
-          e.preventDefault();
-          e.stopPropagation();
-        }}
-        onDrop={(e) => {
-          e.preventDefault();
-          e.stopPropagation();
-        }}
-        className="fixed inset-0 z-[9999] bg-black/85 dark:bg-gray-950/95 flex items-center justify-center p-6 backdrop-blur-md select-none"
-        onClick={handleFullscreen}
       >
         <div
           onClick={(e) => e.stopPropagation()}
-          className="w-full max-w-6xl"
+          className="w-full max-w-6xl cursor-default"
+          draggable={false}
+          onDragStart={(e) => {
+            e.preventDefault();
+            e.stopPropagation();
+          }}
         >
           {tileContent}
         </div>
       </div>
     );
-
-    if (mounted && typeof document !== "undefined") {
-      return createPortal(fullscreenModal, document.body);
-    }
-    return fullscreenModal;
   }
 
   return tileContent;
