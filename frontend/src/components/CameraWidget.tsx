@@ -1,5 +1,6 @@
 "use client";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, useCallback } from "react";
+import { createPortal } from "react-dom";
 import {
   Camera, AlertTriangle, Activity, Upload, UserCheck,
   RefreshCw, CameraOff, Maximize2, Minimize2, Bug, Footprints, BriefcaseBusiness
@@ -60,9 +61,26 @@ export default function CameraWidget({ cameraId, name }: { cameraId: string; nam
   const [submittingCheckIn, setSubmittingCheckIn] = useState(false);
   const [checkInStatus, setCheckInStatus] = useState<{ ok: boolean; msg: string } | null>(null);
   const [isExpanded, setIsExpanded] = useState(false);
+  const [mounted, setMounted] = useState(false);
 
   const { clipUrl, clipName, setClip, showDebug, setShowDebug } = useCameraState();
   const [isUsingClip, setIsUsingClip] = useState(!!clipUrl);
+
+  useEffect(() => {
+    setMounted(true);
+  }, []);
+
+  // Close on Escape key when expanded
+  useEffect(() => {
+    if (!isExpanded) return;
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        setIsExpanded(false);
+      }
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [isExpanded]);
 
   useEffect(() => {
     if (clipUrl && videoRef.current && !videoRef.current.src.includes(clipUrl)) {
@@ -161,29 +179,42 @@ export default function CameraWidget({ cameraId, name }: { cameraId: string; nam
   const dotClass = ACTIVITY_DOT[activity] ?? "bg-gray-400";
   const label = ACTIVITY_LABEL[activity] ?? activity;
 
-  return (
-    <div className={isExpanded
-      ? "fixed inset-0 z-50 bg-black/80 dark:bg-gray-950/95 flex flex-col justify-center items-center p-4 backdrop-blur-md overflow-y-auto"
-      : `relative bg-[hsl(var(--bg-card))] rounded-xl overflow-hidden border transition-all duration-300 ${
-          isIdleAlert
-            ? "border-amber-500 shadow-[0_0_15px_rgba(245,158,11,0.3)]"
-            : "border-[hsl(var(--border))]"
-        } shadow-sm`
-    }>
-      <div className={isExpanded
-        ? "w-full max-w-5xl bg-[hsl(var(--bg-card))] rounded-xl border border-[hsl(var(--border))] p-4 space-y-4 shadow-2xl relative my-auto"
-        : "w-full flex flex-col"
-      }>
-
+  const tileContent = (
+    <div
+      draggable={false}
+      onDragStart={(e) => {
+        e.preventDefault();
+        e.stopPropagation();
+      }}
+      onDoubleClick={() => setIsExpanded((v) => !v)}
+      title={isExpanded ? "Double click to minimize" : "Double click to expand feed"}
+      className={
+        isExpanded
+          ? "w-full max-w-5xl bg-[hsl(var(--bg-card))] rounded-xl border border-[hsl(var(--border))] shadow-2xl relative my-auto overflow-hidden select-none cursor-default"
+          : `relative bg-[hsl(var(--bg-card))] rounded-xl overflow-hidden border transition-all duration-300 cursor-pointer ${
+              isIdleAlert
+                ? "border-amber-500 shadow-[0_0_15px_rgba(245,158,11,0.3)]"
+                : "border-[hsl(var(--border))]"
+            } shadow-sm`
+      }
+    >
+      <div className="w-full flex flex-col">
         {/* Header */}
         <div className="p-3 flex justify-between items-center bg-[hsl(var(--bg-table-head))]/60 border-b border-[hsl(var(--border))] rounded-t-xl">
           <div className="flex items-center gap-2">
             <Camera className="w-4 h-4 text-emerald-500" />
             <span className="text-sm font-semibold text-[hsl(var(--text-primary))]">{name}</span>
           </div>
-          <div className="flex items-center gap-2">
+          <div
+            className="flex items-center gap-2"
+            onDoubleClick={(e) => e.stopPropagation()}
+          >
             <button
-              onClick={() => setIsExpanded(!isExpanded)}
+              onClick={(e) => {
+                e.stopPropagation();
+                setIsExpanded(!isExpanded);
+              }}
+              onDoubleClick={(e) => e.stopPropagation()}
               className="p-1.5 rounded bg-[hsl(var(--bg-table-head))] hover:bg-[hsl(var(--border))]
                 text-[hsl(var(--text-secondary))] hover:text-[hsl(var(--text-primary))] transition-colors"
               title={isExpanded ? "Minimize View" : "Expand View"}
@@ -191,7 +222,11 @@ export default function CameraWidget({ cameraId, name }: { cameraId: string; nam
               {isExpanded ? <Minimize2 className="w-4 h-4" /> : <Maximize2 className="w-4 h-4" />}
             </button>
             <button
-              onClick={handleDebugToggle}
+              onClick={(e) => {
+                e.stopPropagation();
+                handleDebugToggle();
+              }}
+              onDoubleClick={(e) => e.stopPropagation()}
               className={`p-1.5 rounded transition-colors ${
                 showDebug
                   ? "bg-amber-500/20 text-amber-600 dark:text-amber-300 hover:bg-amber-500/30"
@@ -206,8 +241,19 @@ export default function CameraWidget({ cameraId, name }: { cameraId: string; nam
 
         {/* Video + Canvas */}
         <div className="relative bg-black border-b border-[hsl(var(--border))]">
-          <video ref={videoRef} className="w-full h-auto block" muted playsInline crossOrigin="anonymous" />
-          <canvas ref={canvasRef} className="absolute top-0 left-0 w-full h-full pointer-events-none" />
+          <video
+            ref={videoRef}
+            draggable={false}
+            className="w-full h-auto block select-none"
+            muted
+            playsInline
+            crossOrigin="anonymous"
+          />
+          <canvas
+            ref={canvasRef}
+            draggable={false}
+            className="absolute top-0 left-0 w-full h-full pointer-events-none"
+          />
         </div>
 
         {/* Footer */}
@@ -272,7 +318,11 @@ export default function CameraWidget({ cameraId, name }: { cameraId: string; nam
 
         {/* Debug Menu */}
         {showDebug && (
-          <div className="border-t border-[hsl(var(--border))] bg-[hsl(var(--bg-code))] p-4 space-y-4 text-[hsl(var(--text-secondary))] relative z-20 rounded-b-xl">
+          <div
+            onClick={(e) => e.stopPropagation()}
+            onDoubleClick={(e) => e.stopPropagation()}
+            className="border-t border-[hsl(var(--border))] bg-[hsl(var(--bg-code))] p-4 space-y-4 text-[hsl(var(--text-secondary))] relative z-20 rounded-b-xl"
+          >
             <div className="flex items-center justify-between border-b border-[hsl(var(--border))] pb-2">
               <h4 className="text-xs font-bold uppercase tracking-wider text-amber-600 dark:text-amber-500 flex items-center gap-1.5">
                 <Bug className="w-3.5 h-3.5" /> Debug Menu
@@ -379,4 +429,41 @@ export default function CameraWidget({ cameraId, name }: { cameraId: string; nam
       </div>
     </div>
   );
+
+  // Fullscreen wrapper
+  if (isExpanded) {
+    const fullscreenModal = (
+      <div
+        draggable={false}
+        onDragStart={(e) => {
+          e.preventDefault();
+          e.stopPropagation();
+        }}
+        onDragOver={(e) => {
+          e.preventDefault();
+          e.stopPropagation();
+        }}
+        onDrop={(e) => {
+          e.preventDefault();
+          e.stopPropagation();
+        }}
+        className="fixed inset-0 z-[9999] bg-black/80 dark:bg-gray-950/95 flex flex-col justify-center items-center p-4 backdrop-blur-md overflow-y-auto select-none"
+        onClick={() => setIsExpanded(false)}
+      >
+        <div
+          onClick={(e) => e.stopPropagation()}
+          className="w-full max-w-5xl"
+        >
+          {tileContent}
+        </div>
+      </div>
+    );
+
+    if (mounted && typeof document !== "undefined") {
+      return createPortal(fullscreenModal, document.body);
+    }
+    return fullscreenModal;
+  }
+
+  return tileContent;
 }
