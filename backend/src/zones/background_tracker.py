@@ -50,7 +50,7 @@ class BackgroundZoneTracker:
                 daemon=True,
             )
             self._thread.start()
-            print("🚀 [BackgroundZoneTracker] Engine started (24/7 continuous tracking)")
+            print("[BackgroundZoneTracker] Engine started (24/7 continuous tracking)")
 
     def stop(self) -> None:
         """Stop the background zone tracking thread."""
@@ -106,6 +106,11 @@ class BackgroundZoneTracker:
                         continue
 
                     try:
+                        camera_zones = self._get_zones_for_camera(str(cid))
+                        if not camera_zones:
+                            # Skip heavy background inference on cameras without active polygon zones
+                            continue
+
                         frame = stream_manager.get_frame(cid)
                         if frame is None:
                             continue
@@ -115,8 +120,6 @@ class BackgroundZoneTracker:
 
                         poses = detector.update(frame)
                         h, w, _ = frame.shape
-
-                        camera_zones = self._get_zones_for_camera(str(cid))
                         now_time = datetime.now(timezone.utc)
                         active_track_ids = set()
 
@@ -175,7 +178,7 @@ class BackgroundZoneTracker:
                     except Exception as cam_err:
                         print(f"⚠️ [BackgroundZoneTracker] Camera {cid} tracking error: {cam_err}")
 
-                time.sleep(0.20)  # ~5 FPS loop budget
+                time.sleep(0.40)  # ~2.5 FPS loop budget (CPU optimized)
 
             except Exception as e:
                 print(f"⚠️ [BackgroundZoneTracker] Loop error: {e}")

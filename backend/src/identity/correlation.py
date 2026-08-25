@@ -6,11 +6,11 @@ ALGORITHM
 1. When an identity event (ENTRY or EXIT) occurs from any door terminal:
    - Door-specific camera configuration (cameras) and correlation_window_seconds
      are attached to the event.
-   - If the door has a portal_id configured → event goes into the portal-pending
-     queue and waits to be claimed by the spatial engine when a track physically
-     enters that specific portal polygon. This is the ONLY source of association
-     for portal-configured doors; camera-wide time-window matching is skipped.
-   - Otherwise → event is queued in the FIFO _pending queue with status
+   - If the door has a portal_id configured — checks if a track recently entered that portal
+     within the correlation window (bi-directional matching). If not, event goes into the
+     portal-pending queue and waits to be claimed when a track physically enters that specific
+     portal polygon.
+   - Otherwise — event is queued in the FIFO _pending queue with status
      WAITING_FOR_TRACK and matched on the next CameraEntryEvent.
 
 2. When the camera pipeline detects a new person / track on a camera:
@@ -26,9 +26,10 @@ ALGORITHM
    - Called by the spatial handoff engine whenever a track enters an entry portal.
    - Checks _portal_pending for any WAITING event keyed by that portal_id.
    - If found, immediately creates/closes a WorkerSession for that specific track.
-   - This prevents identity-theft from other people walking across the camera room.
+   - If not found, buffers the recent portal crossing so if the punch arrives seconds later,
+     it matches instantly.
 
-4. Bi-directional matching (non-portal doors only):
+4. Bi-directional matching (non-portal doors):
    - If a person was detected on an allowed camera slightly before the card swipe,
      the pending anonymous track in _unmatched_tracks is claimed by the identity event.
 """
@@ -37,6 +38,7 @@ from __future__ import annotations
 
 import json
 import threading
+import concurrent.futures
 from collections import deque
 from datetime import datetime, timezone
 from typing import Optional, List, Union
@@ -47,6 +49,7 @@ from ..db.database import SessionLocal
 from ..db.models import IdentityEventDB
 from .session_manager import worker_session_manager
 
+_db_executor = concurrent.futures.ThreadPoolExecutor(max_workers=2, thread_name_prefix="identity_db")
 
 REBIND_WINDOW_SECONDS = 8.0  # max seconds after session close to allow re-binding
 
@@ -126,6 +129,7 @@ class CorrelationEngine:
         self._window: float = correlation_window_seconds
         self._pending: deque[IdentityEvent] = deque()             # WAITING_FOR_TRACK events (no portal)
         self._portal_pending: dict[str, IdentityEvent] = {}       # portal_id -> WAITING event
+        self._recent_portal_crossings: deque[tuple[str, str, str, datetime]] = deque()  # (portal_id, track_id, cam_id, ts)
         self._unmatched_tracks: deque[CameraEntryEvent] = deque() # WAITING_FOR_IDENTITY tracks
         self._history: list[IdentityEvent] = []                   # MATCHED + EXPIRED events
         self._lock = threading.Lock()
@@ -134,20 +138,19 @@ class CorrelationEngine:
         self._window = seconds
 
     # ------------------------------------------------------------------
-    # Called by identity providers (REST, RFID, Hikvision ISAPI, …)
+    # Called by identity providers (REST, RFID, Hikvision ISAPI, etc.)
     # ------------------------------------------------------------------
 
     def register_identity_event(self, event: IdentityEvent) -> None:
         """
         Accept a new IdentityEvent from any provider and queue it for correlation.
-        Persists the event to PostgreSQL immediately.
-
-        If the door has a portal_id configured, the event is placed in the
-        portal-pending queue. Association only happens when the spatial engine
-        reports that a track physically entered that specific portal polygon.
-
-        Otherwise the existing time-window camera-level matching is used.
+        Persists the event to database asynchronously.
         """
+        # Reject historical backlog replays older than 30 seconds
+        event_age = abs((_utcnow() - _to_utc(event.timestamp)).total_seconds())
+        if event_age > 30.0:
+            return
+
         enrich_door_event_config(event)
         event_window = event.correlation_window_seconds or self._window
         portal_id = getattr(event, "portal_id", None) or ""
@@ -157,7 +160,7 @@ class CorrelationEngine:
             self._expire_stale_tracks(event.timestamp)
             self._expire_stale_portal_pending(event.timestamp)
 
-            # Immediate EXIT with no cameras → close sessions now
+            # Immediate EXIT with no cameras -> close sessions now
             if event.event_type == "EXIT" and not event.allowed_cameras:
                 event.correlation_status = "MATCHED"
                 event.matched_at = _utcnow()
@@ -165,12 +168,51 @@ class CorrelationEngine:
                 self._history.append(event)
                 self._persist_identity_event(event)
                 worker_session_manager.close_sessions_for_employee(event.employee_id)
-                print(f"[Identity] 🚪 Immediate EXIT recorded for employee={event.employee_id} at {event.entry_gate} (no exit cameras configured)")
+                print(f"[Identity] Immediate EXIT recorded for employee={event.employee_id} at {event.entry_gate} (no exit cameras configured)")
                 return
 
-            # ── Portal-constrained path ──────────────────────────────────────
-            # Skip camera-wide matching; wait for spatial engine to call claim_portal_event().
+            # -- Portal-constrained path (Bi-Directional) -------------------------
             if portal_id:
+                matched_crossing = None
+                crossing_delay = 0.0
+                still_crossings = deque()
+                ref_ts = _to_utc(event.timestamp)
+
+                for crossing in list(self._recent_portal_crossings):
+                    c_portal, c_track, c_cam, c_ts = crossing
+                    delay = abs((ref_ts - _to_utc(c_ts)).total_seconds())
+                    if c_portal == portal_id and delay <= event_window and matched_crossing is None:
+                        matched_crossing = crossing
+                        crossing_delay = delay
+                    elif delay <= (event_window + 5.0):
+                        still_crossings.append(crossing)
+                self._recent_portal_crossings = still_crossings
+
+                if matched_crossing:
+                    c_portal, c_track, c_cam, c_ts = matched_crossing
+                    event.correlation_status = "MATCHED"
+                    event.matched_track_id = c_track
+                    event.matched_camera_id = _normalize_cam_id(c_cam)
+                    event.matched_at = _utcnow()
+                    event.correlation_delay_seconds = round(crossing_delay, 3)
+                    self._history.append(event)
+                    self._persist_identity_event(event)
+
+                    print(f"[Identity] [PORTAL-MATCHED] Bi-directional Portal Match! Employee {event.employee_id} "
+                          f"matched with recent crossing at portal={portal_id} Track={c_track} Camera={c_cam} | Delay: {crossing_delay:.1f}s")
+
+                    if event.event_type == "ENTRY":
+                        worker_session_manager.bind_employee_to_track(
+                            employee_id=event.employee_id,
+                            track_id=c_track,
+                            camera_id=c_cam,
+                            correlation_delay=crossing_delay,
+                        )
+                    else:
+                        worker_session_manager.close_sessions_for_employee(event.employee_id)
+                    return
+
+                # Otherwise queue in portal_pending waiting for track entry
                 prev = self._portal_pending.get(portal_id)
                 if prev:
                     prev.correlation_status = "EXPIRED"
@@ -182,7 +224,7 @@ class CorrelationEngine:
                 self._persist_identity_event(event)
                 return
 
-            # ── Normal camera-wide matching ──────────────────────────────────
+            # -- Normal camera-wide matching ---------------------------------------
             matched_track: Optional[CameraEntryEvent] = None
             matched_delay: float = 0.0
 
@@ -245,20 +287,19 @@ class CorrelationEngine:
     ) -> Optional[WorkerSession]:
         """
         Called by the spatial engine when a track physically enters an entry portal.
-
-        Checks whether there is a WAITING_FOR_TRACK identity event registered for
-        that portal_id. If found, immediately associates the employee with that
-        specific track and creates or closes the WorkerSession.
-
-        This is the authoritative association path for portal-configured doors.
-        People outside the portal polygon are never considered.
         """
         with self._lock:
             self._expire_stale_portal_pending(timestamp)
             event = self._portal_pending.get(portal_id)
             if event is None:
+                # Buffer this unassociated crossing for bi-directional matching
+                self._recent_portal_crossings.append((portal_id, track_id, camera_id, timestamp))
+                ref_utc = _to_utc(timestamp)
+                self._recent_portal_crossings = deque(
+                    c for c in self._recent_portal_crossings 
+                    if abs((ref_utc - _to_utc(c[3])).total_seconds()) <= (self._window + 5.0)
+                )
                 return None
-
 
             delay = abs((_to_utc(timestamp) - _to_utc(event.timestamp)).total_seconds())
             ev_window = event.correlation_window_seconds or self._window
@@ -280,7 +321,7 @@ class CorrelationEngine:
             event.correlation_delay_seconds = round(delay, 3)
             self._history.append(event)
 
-        print(f"[Identity] [PORTAL-MATCHED] ✅ Employee {event.employee_id} matched at portal={portal_id} "
+        print(f"[Identity] [PORTAL-MATCHED] Employee {event.employee_id} matched at portal={portal_id} "
               f"Track={track_id} Camera={camera_id} | Delay: {delay:.1f}s")
         self._update_identity_event_matched(event)
 
@@ -296,20 +337,20 @@ class CorrelationEngine:
             return None
 
     # ------------------------------------------------------------------
-    # Called by the camera pipeline when a new person/track appears
+    # Called by the camera pipeline on a new track (non-portal doors only)
     # ------------------------------------------------------------------
 
-    def on_new_track(self, camera_event: CameraEntryEvent, active_track_ids: Optional[set[str]] = None) -> Optional[WorkerSession]:
+    def on_new_track(
+        self,
+        camera_event: CameraEntryEvent,
+        active_track_ids: Optional[Set[Union[str, int]]] = None,
+    ) -> Optional[WorkerSession]:
         """
-        Try to match this new camera entry with a pending identity event.
-        Only matches if the camera is permitted by the door event's allowed_cameras.
-
-        NOTE: Events with a portal_id are NOT in _pending — they live in
-        _portal_pending and are exclusively matched by claim_portal_event().
-        This method only handles non-portal, time-window door events.
+        Match a new camera detection to any waiting IdentityEvent in FIFO order.
         """
         with self._lock:
             self._expire_stale(camera_event.timestamp)
+            self._expire_stale_tracks(camera_event.timestamp)
 
             matched_event: Optional[IdentityEvent] = None
             matched_delay: float = 0.0
@@ -317,6 +358,7 @@ class CorrelationEngine:
             for ev in list(self._pending):
                 if not _is_camera_allowed(camera_event.camera_id, ev.allowed_cameras):
                     continue
+
                 delay = abs((_to_utc(camera_event.timestamp) - _to_utc(ev.timestamp)).total_seconds())
                 ev_window = ev.correlation_window_seconds or self._window
                 if delay <= ev_window:
@@ -324,7 +366,8 @@ class CorrelationEngine:
                     matched_delay = delay
                     break
 
-            if matched_event is None:
+            if not matched_event:
+                # Re-bind check
                 rebind_session = worker_session_manager.try_rebind_recent(
                     new_track_id=camera_event.track_id,
                     camera_id=camera_event.camera_id,
@@ -442,54 +485,69 @@ class CorrelationEngine:
 
     @staticmethod
     def _persist_identity_event(event: IdentityEvent) -> None:
-        with SessionLocal() as db:
-            cams_json = json.dumps(event.allowed_cameras) if event.allowed_cameras else None
-            row = IdentityEventDB(
-                event_id=event.event_id,
-                employee_id=event.employee_id,
-                employee_name=event.employee_name,
-                event_type=event.event_type,
-                timestamp=event.timestamp,
-                entry_gate=event.entry_gate,
-                provider=event.provider,
-                correlation_status=event.correlation_status,
-                allowed_cameras=cams_json,
-                matched_track_id=event.matched_track_id,
-                matched_camera_id=event.matched_camera_id,
-                matched_at=event.matched_at,
-                correlation_delay_seconds=event.correlation_delay_seconds,
-            )
-            db.add(row)
-            db.commit()
+        def _task():
+            try:
+                with SessionLocal() as db:
+                    cams_json = json.dumps(event.allowed_cameras) if event.allowed_cameras else None
+                    row = IdentityEventDB(
+                        event_id=event.event_id,
+                        employee_id=event.employee_id,
+                        employee_name=event.employee_name,
+                        event_type=event.event_type,
+                        timestamp=event.timestamp,
+                        entry_gate=event.entry_gate,
+                        provider=event.provider,
+                        correlation_status=event.correlation_status,
+                        allowed_cameras=cams_json,
+                        matched_track_id=event.matched_track_id,
+                        matched_camera_id=event.matched_camera_id,
+                        matched_at=event.matched_at,
+                        correlation_delay_seconds=event.correlation_delay_seconds,
+                    )
+                    db.add(row)
+                    db.commit()
+            except Exception as e:
+                print(f"[IdentityDB] Async persist info: {e}")
+        _db_executor.submit(_task)
 
     @staticmethod
     def _update_identity_event_matched(event: IdentityEvent) -> None:
-        with SessionLocal() as db:
-            row = db.query(IdentityEventDB).filter(
-                IdentityEventDB.event_id == event.event_id
-            ).first()
-            if row:
-                row.correlation_status = "MATCHED"
-                row.matched_track_id = event.matched_track_id
-                row.matched_camera_id = event.matched_camera_id
-                row.matched_at = event.matched_at
-                row.correlation_delay_seconds = event.correlation_delay_seconds
-                if event.allowed_cameras:
-                    row.allowed_cameras = json.dumps(event.allowed_cameras)
-                db.commit()
+        def _task():
+            try:
+                with SessionLocal() as db:
+                    row = db.query(IdentityEventDB).filter(
+                        IdentityEventDB.event_id == event.event_id
+                    ).first()
+                    if row:
+                        row.correlation_status = "MATCHED"
+                        row.matched_track_id = event.matched_track_id
+                        row.matched_camera_id = event.matched_camera_id
+                        row.matched_at = event.matched_at
+                        row.correlation_delay_seconds = event.correlation_delay_seconds
+                        if event.allowed_cameras:
+                            row.allowed_cameras = json.dumps(event.allowed_cameras)
+                        db.commit()
+            except Exception as e:
+                print(f"[IdentityDB] Async update info: {e}")
+        _db_executor.submit(_task)
 
     @staticmethod
     def _update_identity_event_expired(event: IdentityEvent) -> None:
-        with SessionLocal() as db:
-            row = db.query(IdentityEventDB).filter(
-                IdentityEventDB.event_id == event.event_id
-            ).first()
-            if row:
-                row.correlation_status = "EXPIRED"
-                db.commit()
+        def _task():
+            try:
+                with SessionLocal() as db:
+                    row = db.query(IdentityEventDB).filter(
+                        IdentityEventDB.event_id == event.event_id
+                    ).first()
+                    if row:
+                        row.correlation_status = "EXPIRED"
+                        db.commit()
+            except Exception as e:
+                print(f"[IdentityDB] Async expire info: {e}")
+        _db_executor.submit(_task)
 
 
 # ---------------------------------------------------------------------------
-# Module-level singleton — default window (overridden from DetectionConfig)
+# Module-level singleton
 # ---------------------------------------------------------------------------
 correlation_engine = CorrelationEngine(correlation_window_seconds=10.0)

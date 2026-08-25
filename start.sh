@@ -56,7 +56,7 @@ echo "🐍 Starting Backend API server in the background..."
 BACKEND_PID=$!
 
 # 7. Start Frontend
-echo "🚀 Starting Frontend in the background..."
+echo " Starting Frontend in the background..."
 (cd frontend && npm run dev) &
 FRONTEND_PID=$!
 

@@ -362,6 +362,9 @@ class WorkerSessionManager:
         # We rely entirely on BoT-SORT's track_buffer and ReID engine to maintain identity across occlusions.
         return None
 
+    # Alias for backward compatibility
+    try_rebind_absent = try_rebind_recent
+
     def get_by_track(self, track_id: str) -> Optional[WorkerSession]:
         """Look up the active WorkerSession for a given track ID. O(1)."""
         return self._sessions.get(track_id)

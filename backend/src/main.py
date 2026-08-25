@@ -41,6 +41,24 @@ from contextlib import asynccontextmanager
 from .zones.background_tracker import background_tracker
 from .state import preload_model_cache
 
+import logging
+
+# Filter out high-frequency polling & webhook access logs from uvicorn
+class QuietAccessLogFilter(logging.Filter):
+    IGNORED_PATHS = (
+        "/api/identity/hikvision/webhook",
+        "/webhook",
+        "/api/system/resources",
+        "/api/resources",
+        "/api/cameras/live",
+    )
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        msg = record.getMessage()
+        return not any(path in msg for path in self.IGNORED_PATHS)
+
+logging.getLogger("uvicorn.access").addFilter(QuietAccessLogFilter())
+
 # ---------------------------------------------------------------------------
 # Create / migrate tables on startup
 Base.metadata.create_all(bind=engine)
@@ -76,7 +94,7 @@ with SessionLocal() as db:
 # ---------------------------------------------------------------------------
 # Direct Service Initialization (Guaranteed Startup)
 # ---------------------------------------------------------------------------
-print("[Startup] 🚀 Initializing CALVISION services...")
+print("[Startup] Initializing CALVISION services...")
 seed_cameras()
 stream_manager.start_all_enabled()
 background_tracker.start()

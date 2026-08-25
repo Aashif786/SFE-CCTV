@@ -351,7 +351,7 @@ export default function SettingsPage() {
                         <option value="yolov8l-pose.pt">YOLOv8 Large Pose (High Accuracy)</option>
                         <option value="yolov8x-pose.pt">YOLOv8 Extra Large Pose (Max Precision)</option>
                       </optgroup>
-                      <optgroup label="🚀 YOLO11 Pose (Next-Gen Accuracy)">
+                      <optgroup label="YOLO11 Pose (Next-Gen Accuracy)">
                         <option value="yolo11n-pose.pt">YOLO11 Nano Pose (Fastest ~85+ FPS)</option>
                         <option value="yolo11s-pose.pt">YOLO11 Small Pose (Fast ~95+ FPS)</option>
                         <option value="yolo11m-pose.pt">YOLO11 Medium Pose (Balanced ~60+ FPS)</option>

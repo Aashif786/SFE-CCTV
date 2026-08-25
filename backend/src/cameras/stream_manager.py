@@ -333,8 +333,8 @@ class StreamManager:
                 # the AI loop never picks up a stale frame.  E.g. if ai_stream_fps
                 # is 20, encode at 25 FPS = 40ms interval.  Clamped to 5-30 FPS.
                 from ..config import config as _cfg
-                _ai_fps = max(5, min(30, getattr(_cfg, 'ai_stream_fps', 15)))
-                jpeg_interval = 1.0 / (_ai_fps * 1.25)  # 25% faster than AI loop
+                _ai_fps = max(5, min(25, getattr(_cfg, 'ai_stream_fps', 15)))
+                jpeg_interval = 1.0 / _ai_fps  # Match target AI loop FPS for optimal CPU efficiency
 
                 # ── Mod 8: Watchdog heartbeat timestamp ─────────────────────────
                 last_successful_read_time = time.monotonic()
@@ -391,7 +391,7 @@ class StreamManager:
                             disp_frame = frame
 
                         # Encode crisp, high-quality JPEG (Quality 85)
-                        ok_ws, buf_ws = cv2.imencode(".jpg", disp_frame, [cv2.IMWRITE_JPEG_QUALITY, 85])
+                        ok_ws, buf_ws = cv2.imencode(".jpg", disp_frame, [cv2.IMWRITE_JPEG_QUALITY, 75])
 
                         with cs._lock:
                             if ok_ws:

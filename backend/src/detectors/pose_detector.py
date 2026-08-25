@@ -226,15 +226,26 @@ class WorkerDetector:
 
     def __init__(self):
         if torch.cuda.is_available():
-            self.device_id = 0  # int device ID for YOLO track()
-            self.device = "cuda:0"
-            torch.backends.cudnn.benchmark = True
-            torch.backends.cuda.matmul.allow_tf32 = True
-            torch.backends.cudnn.allow_tf32 = True
+            try:
+                # Validate that CUDA kernels actually work on this GPU architecture (e.g. Blackwell sm_120)
+                _test_t = torch.zeros((1, 1), device="cuda:0")
+                _ = _test_t + 1
+                self.device_id = 0  # int device ID for YOLO track()
+                self.device = "cuda:0"
+                torch.backends.cudnn.benchmark = True
+                torch.backends.cuda.matmul.allow_tf32 = True
+                torch.backends.cudnn.allow_tf32 = True
+            except Exception as cu_err:
+                print(f"[WorkerDetector] ⚠️ CUDA device detected but kernel execution failed ({cu_err}). Falling back to CPU.")
+                self.device_id = "cpu"
+                self.device = "cpu"
+                torch.set_num_threads(2)
+                cv2.setNumThreads(1)
         else:
             self.device_id = "cpu"
             self.device = "cpu"
-            torch.set_num_threads(4)
+            torch.set_num_threads(2)
+            cv2.setNumThreads(1)
 
         # Resolve .pt model path from backend/models/
         target_model = getattr(config, "yolo_model", "yolo11m-pose.pt")
@@ -430,9 +441,20 @@ class WorkerDetector:
                         tracker=self.tracker_config,
                     )
             except (torch.cuda.OutOfMemoryError, RuntimeError) as cuda_err:
-                if "out of memory" in str(cuda_err).lower() or isinstance(cuda_err, torch.cuda.OutOfMemoryError):
+                err_str = str(cuda_err).lower()
+                if "out of memory" in err_str or isinstance(cuda_err, torch.cuda.OutOfMemoryError):
                     print(f"[WorkerDetector] ⚠️ CUDA OOM during track — releasing VRAM cache...")
                     torch.cuda.empty_cache()
+                    return []
+                elif "no kernel image" in err_str or "kernel image is available" in err_str or "cudaerrornokernelimagefordevice" in err_str:
+                    if self.device != "cpu":
+                        print(f"[WorkerDetector] ⚠️ CUDA kernel missing for GPU architecture. Automatically switching detector to CPU fallback.")
+                        self.device = "cpu"
+                        self.device_id = "cpu"
+                        self.use_half = False
+                        self.model.to("cpu")
+                        torch.set_num_threads(2)
+                        cv2.setNumThreads(1)
                     return []
                 raise cuda_err
 

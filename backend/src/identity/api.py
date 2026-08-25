@@ -88,6 +88,13 @@ class DynamicProviderProxy:
     def receive_event(self, payload):
         return self._current_provider.receive_event(payload)
 
+    def process_webhook_payload(self, raw_data, client_ip=""):
+        if hasattr(self._current_provider, "process_webhook_payload"):
+            return self._current_provider.process_webhook_payload(raw_data, client_ip=client_ip)
+        elif self._current_provider is not None:
+            return {"statusCode": 1, "statusString": "OK"}
+        return {"statusCode": 0, "statusString": "Provider not initialized"}
+
 _provider = DynamicProviderProxy()
 
 
@@ -125,6 +132,88 @@ async def register_entry(payload: IdentityEventCreate):
         "provider": event.provider,
         "correlation_status": event.correlation_status,
     }
+
+
+# ---------------------------------------------------------------------------
+# POST /api/identity/hikvision/webhook — Instant push receiver from Hikvision
+# ---------------------------------------------------------------------------
+
+def _extract_event_from_stream_bytes(data_bytes: bytes):
+    """Fast non-blocking stream extractor for Hikvision multipart payloads."""
+    if not data_bytes:
+        return None
+    text = data_bytes.decode("utf-8", errors="ignore")
+
+    # 1. Fast JSON extract
+    idx1 = text.find("{")
+    if idx1 != -1:
+        depth = 0
+        for i in range(idx1, len(text)):
+            if text[i] == "{":
+                depth += 1
+            elif text[i] == "}":
+                depth -= 1
+                if depth == 0:
+                    try:
+                        obj = json.loads(text[idx1 : i + 1])
+                        if isinstance(obj, dict):
+                            return obj
+                    except Exception:
+                        pass
+
+    # 2. Fast XML extract
+    for tag in ["<AccessControllerEvent", "<AcsEvent", "<EventNotification", "<EventNotificationAlert", "<?xml"]:
+        idx_xml = text.find(tag)
+        if idx_xml != -1:
+            end_tag_str = "</" + tag.lstrip("<").lstrip("?").split()[0] + ">"
+            end_idx = text.find(end_tag_str, idx_xml)
+            if end_idx != -1:
+                return text[idx_xml : end_idx + len(end_tag_str)]
+            r_idx = text.rfind(">")
+            if r_idx > idx_xml:
+                candidate = text[idx_xml : r_idx + 1]
+                if "</" in candidate:
+                    return candidate
+
+    return None
+
+@router.post("/hikvision/webhook", summary="Receive instant event push from Hikvision devices")
+@router.post("/webhook", summary="Alias for instant device webhook")
+async def hikvision_webhook(request: Request):
+    """
+    Real-time push receiver for Hikvision access control devices.
+    Uses fast streaming chunk extraction to process punch events in <10ms without
+    waiting for heavy multipart camera snapshot images (1-2MB) to upload across TCP.
+    """
+    client_ip = request.client.host if request.client else ""
+    content_type = request.headers.get("content-type", "").lower()
+
+    try:
+        if "multipart/form-data" in content_type:
+            # Fast stream reader: read initial chunk to grab JSON/XML metadata instantly
+            header_buf = bytearray()
+            extracted_payload = None
+
+            async for chunk in request.stream():
+                header_buf.extend(chunk)
+                extracted_payload = _extract_event_from_stream_bytes(bytes(header_buf))
+                if extracted_payload:
+                    break
+                if len(header_buf) > 65536:
+                    break
+
+            if extracted_payload:
+                return _provider.process_webhook_payload(extracted_payload, client_ip=client_ip)
+
+            # Fallback if streaming didn't find structure in first 64KB
+            form = await request.form()
+            payload = form.get("event_log") or form.get("AccessControllerEvent") or form.get("AcsEvent") or dict(form)
+            return _provider.process_webhook_payload(payload, client_ip=client_ip)
+        else:
+            raw_body = await request.body()
+            return _provider.process_webhook_payload(raw_body, client_ip=client_ip)
+    except Exception as e:
+        return {"statusCode": 0, "statusString": f"Error: {str(e)}"}
 
 
 from ..zones.dwell_tracker import dwell_tracker, format_dwell_time

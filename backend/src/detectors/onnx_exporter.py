@@ -83,7 +83,7 @@ def export_onnx_blocking(pt_path: str, imgsz: int = 640) -> str | None:
         return onnx_path
 
     logger.info(
-        "[OnnxExporter] 🚀 Starting ONNX export: %s → %s  (imgsz=%d)",
+        "[OnnxExporter] Starting ONNX export: %s → %s  (imgsz=%d)",
         os.path.basename(pt_path),
         os.path.basename(onnx_path),
         imgsz,
