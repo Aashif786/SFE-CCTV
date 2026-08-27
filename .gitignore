@@ -18,6 +18,7 @@ backend/settings.json
 *.sqlite3
 backend/start_legacy.sh
 backend/models/*.task
+backend/custom_tracker.yaml
 
 # Node / Next.js / Frontend
 frontend/node_modules/
