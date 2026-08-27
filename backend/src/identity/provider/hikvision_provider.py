@@ -9,11 +9,12 @@ import urllib3
 import traceback
 import uuid
 from datetime import datetime, timezone, timedelta
-from typing import Optional, Dict, Set, Any, Union
+from typing import Optional, Dict, Set, Any, Union, Tuple
 
 from .identity_provider import IdentityEventProvider
 from ..models import IdentityEvent, IdentityEventCreate
 from ...config import env_settings
+from ...console import Console
 
 # Suppress insecure request warnings for self-signed certs
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
@@ -27,7 +28,31 @@ if not logger.handlers:
 
 # Valid minor event codes that represent a successful access
 # 1 = Card swipe success, 75 = Face recognition success, 104 = Face+Card combined
-VALID_MINOR_EVENTS: Set[int] = {1, 10, 38, 39, 40, 41, 49, 50, 75, 104}
+VALID_MINOR_EVENTS: Set[int] = {1, 10, 38, 39, 40, 41, 49, 50, 75, 104, 105, 106}
+
+# Comprehensive Event Code Mapping for Hikvision Access Control Terminals
+HIKVISION_EVENT_MAP: Dict[Tuple[int, int], Tuple[str, bool]] = {
+    (5, 1): ("Card Swipe (Authorized)", True),
+    (5, 2): ("Card Swipe (Unauthorized)", False),
+    (5, 21): ("Door Unlocked / Open by Switch", True),
+    (5, 22): ("Door Locked / Closed", True),
+    (5, 38): ("Card + Fingerprint Verify", True),
+    (5, 39): ("Card + Password Verify", True),
+    (5, 40): ("Fingerprint Verify", True),
+    (5, 41): ("Fingerprint + Password", True),
+    (5, 49): ("Card + Face Verify", True),
+    (5, 50): ("Face + Fingerprint Verify", True),
+    (5, 75): ("Face Recognition (Authorized)", True),
+    (5, 76): ("Face Recognition (Failed)", False),
+    (5, 104): ("Face Verification Success", True),
+    (5, 105): ("Card Verification Success", True),
+    (5, 106): ("Fingerprint Verification Success", True),
+    (5, 107): ("Auth Failed (Mismatch/Invalid)", False),
+    (5, 108): ("Door Contact Open", True),
+    (5, 109): ("Door Contact Closed", True),
+    (2, 38): ("Terminal Access Punch", True),
+    (2, 1024): ("Terminal Heartbeat / Door Pulse", True),
+}
 
 # Fallback poll interval (seconds) - acts as safety net behind instant HTTP Webhook push
 FALLBACK_POLL_INTERVAL_SECONDS = 10
@@ -35,6 +60,74 @@ FALLBACK_POLL_INTERVAL_SECONDS = 10
 # Maximum allowed event age (seconds) for real-time live correlation.
 # Ignores device historical backlog dumps (punches from hours/days ago).
 MAX_EVENT_AGE_SECONDS = 30.0
+
+
+def _parse_device_timestamp(time_str: str) -> Tuple[datetime, str]:
+    """
+    Parses device timestamp string from Hikvision ACS.
+    Returns (datetime_utc, formatted_string).
+    """
+    if not time_str:
+        now_utc = datetime.now(timezone.utc)
+        return now_utc, now_utc.strftime("%Y-%m-%d %H:%M:%S")
+
+    clean_str = time_str.strip()
+    try:
+        dt = datetime.fromisoformat(clean_str)
+        if dt.tzinfo is None:
+            dt_utc = dt.replace(tzinfo=timezone.utc)
+        else:
+            dt_utc = dt.astimezone(timezone.utc)
+        return dt_utc, clean_str
+    except Exception:
+        pass
+
+    for fmt in ("%Y-%m-%d %H:%M:%S", "%Y/%m/%d %H:%M:%S", "%Y-%m-%dT%H:%M:%S", "%Y%m%d%H%M%S"):
+        try:
+            dt = datetime.strptime(clean_str, fmt)
+            dt_utc = dt.replace(tzinfo=timezone.utc)
+            return dt_utc, clean_str
+        except Exception:
+            continue
+
+    now_utc = datetime.now(timezone.utc)
+    return now_utc, clean_str
+
+
+def _format_event_log(
+    device_time: str,
+    real_time: datetime,
+    emp_id: str,
+    emp_name: str,
+    gate_name: str,
+    device_ip: str,
+    direction: str,
+    auth_type: str,
+    major: int,
+    minor: int,
+    is_granted: bool,
+    source: str,
+    offset_s: Optional[float] = None,
+    card_no: str = "",
+    serial_no: str = ""
+) -> str:
+    """Constructs a high-visibility structured log string for Hikvision ACS punches."""
+    real_time_local = real_time.astimezone().strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
+    offset_str = f" (Δ: {offset_s:+.2f}s)" if offset_s is not None else ""
+    status_str = "✅ GRANTED" if is_granted else "❌ DENIED"
+    card_str = f" | Card: {card_no}" if (card_no and card_no != emp_id and card_no != "N/A") else ""
+    serial_str = f" | Seq: #{serial_no}" if serial_no else ""
+
+    return (
+        f"[HIKVISION ACS] 🕒 ACS Device Time: {device_time} | "
+        f"⏱️ Real Actual Time: {real_time_local}{offset_str} | "
+        f"👤 {emp_name} (ID: {emp_id}{card_str}) | "
+        f"🚪 {gate_name} ({device_ip}) | "
+        f"🚶 {direction} | "
+        f"🔑 {auth_type} [{major}:{minor}] | "
+        f"{status_str} | "
+        f"📡 {source}{serial_str}"
+    )
 
 
 class HikvisionProvider(IdentityEventProvider):
@@ -59,11 +152,16 @@ class HikvisionProvider(IdentityEventProvider):
         Processes simulated or externally pushed identity events.
         """
         allowed = [str(c) for c in payload.allowed_cameras] if payload.allowed_cameras else []
+        now_actual = datetime.now(timezone.utc)
         event = IdentityEvent(
             event_id=str(uuid.uuid4()),
             employee_id=payload.employee_id,
             event_type=payload.event_type,
-            timestamp=payload.timestamp or datetime.now(timezone.utc).replace(tzinfo=None),
+            timestamp=payload.timestamp or now_actual,
+            device_event_time=payload.timestamp.isoformat() if payload.timestamp else now_actual.strftime("%Y-%m-%d %H:%M:%S"),
+            received_at=now_actual,
+            time_offset_seconds=0.0,
+            auth_type="API Manual Scan",
             entry_gate=payload.entry_gate,
             provider=self.PROVIDER_NAME,
             correlation_status="WAITING_FOR_TRACK",
@@ -136,48 +234,80 @@ class HikvisionProvider(IdentityEventProvider):
         Parses incoming real-time HTTP Push events from Hikvision terminals
         (JSON, XML, or multipart form fields) and registers them with correlation_engine immediately.
         """
+        received_at = datetime.now(timezone.utc)
         try:
             parsed = self._extract_event_info(raw_data)
             if not parsed:
                 return {"statusCode": 1, "statusString": "Ignored: Non-access event"}
 
             emp_id = parsed.get("employee_id", "").strip()
-            emp_name = parsed.get("employee_name", "").strip()
+            emp_name = parsed.get("employee_name", "").strip() or "Unknown"
+            card_no = parsed.get("card_no", "").strip()
+            serial_no = parsed.get("serial_no", "").strip()
             major = parsed.get("major", 5)
-            minor = parsed.get("minor", 0)
+            minor = parsed.get("minor", 75)
             ev_time = parsed.get("time", "")
             device_name = parsed.get("device_name", "")
             device_ip = parsed.get("ip", "") or client_ip
 
             # Validate access event
-            if major != 5 and major != 0:
+            if major != 5 and major != 0 and major != 2:
                 return {"statusCode": 1, "statusString": "Ignored: Non-access control major code"}
 
             if minor and minor not in VALID_MINOR_EVENTS:
                 return {"statusCode": 1, "statusString": f"Ignored: Minor event {minor} not in valid whitelist"}
 
-            if not emp_id:
+            if not emp_id and not card_no:
                 return {"statusCode": 1, "statusString": "Ignored: Missing employee ID"}
 
+            effective_id = emp_id if emp_id and emp_id != "N/A" else (card_no or "UNKNOWN")
+
+            # Parse device timestamp and compute time offset
+            ev_dt_utc, ev_time_str = _parse_device_timestamp(ev_time)
+            offset_seconds = (received_at - ev_dt_utc).total_seconds()
+
             # Check timestamp age to avoid processing historical backlogged events
-            if ev_time:
-                try:
-                    ev_dt = datetime.fromisoformat(ev_time)
-                    ev_dt_utc = ev_dt.astimezone(timezone.utc)
-                    age = (datetime.now(timezone.utc) - ev_dt_utc).total_seconds()
-                    if age > MAX_EVENT_AGE_SECONDS:
-                        # Acknowledge without queuing or printing logs
-                        return {"statusCode": 1, "statusString": "OK: Acknowledged historical event"}
-                except Exception:
-                    pass
+            if abs(offset_seconds) > MAX_EVENT_AGE_SECONDS:
+                return {"statusCode": 1, "statusString": "OK: Acknowledged historical event"}
 
-            # Resolve matching door config
+            # Resolve matching door config and auth mode
             gate_name = self._resolve_door_name(device_ip, device_name)
-            logger.info(f"[WEBHOOK PUSH] Instant Punch received from {gate_name} ({device_ip}): Employee {emp_id} ({emp_name})")
+            is_exit = "out" in gate_name.lower() or "exit" in gate_name.lower()
+            direction = "EXIT" if is_exit else "ENTRY"
 
-            self._process_event(emp_id, gate_name, ev_time, emp_name, major, minor, provider_source="HIKVISION_WEBHOOK")
+            auth_desc, is_granted = HIKVISION_EVENT_MAP.get((major, minor), (f"Access Event [{major}:{minor}]", True))
 
-            return {"statusCode": 1, "statusString": "OK", "employee_id": emp_id, "gate": gate_name}
+            # Output formatted ACS terminal row
+            Console.acs(
+                timestamp=ev_time,
+                status="GRANTED" if is_granted else "DENIED",
+                direction=direction,
+                emp_id=effective_id,
+                emp_name=emp_name,
+                card_no=card_no,
+                door=f"{gate_name} ({device_ip})",
+                auth_type=auth_desc,
+                major=major,
+                minor=minor,
+            )
+
+            self._process_event(
+                emp_id=effective_id,
+                gate_name=gate_name,
+                ev_time=ev_time_str,
+                ev_name=emp_name,
+                major=major,
+                minor=minor,
+                provider_source="HIKVISION_WEBHOOK",
+                card_no=card_no,
+                serial_no=serial_no,
+                auth_type=auth_desc,
+                received_at=received_at,
+                time_offset_seconds=offset_seconds,
+                access_granted=is_granted,
+            )
+
+            return {"statusCode": 1, "statusString": "OK", "employee_id": effective_id, "gate": gate_name}
 
         except Exception as e:
             logger.error(f"[WEBHOOK PUSH] Error processing webhook payload: {e}")
@@ -211,23 +341,27 @@ class HikvisionProvider(IdentityEventProvider):
         return None
 
     def _parse_json_dict(self, data: dict) -> dict:
-        acs = data.get("AccessControllerEvent") or data.get("AcsEvent") or data
+        acs = data.get("AccessControllerEvent") or data.get("AcsEvent") or data.get("EventNotificationAlert") or data
         emp_id = str(acs.get("employeeNoString") or acs.get("employeeNo") or acs.get("cardNo") or "")
-        emp_name = str(acs.get("name") or acs.get("employeeName") or "")
+        emp_name = str(acs.get("name") or acs.get("employeeName") or acs.get("userName") or "")
+        card_no = str(acs.get("cardNo") or acs.get("cardReaderNo") or "")
         major = int(acs.get("majorEventType") or acs.get("major") or data.get("majorEventType") or 5)
         minor = int(acs.get("subEventType") or acs.get("minor") or data.get("subEventType") or 0)
         ev_time = str(acs.get("time") or acs.get("dateTime") or data.get("dateTime") or "")
         device_name = str(acs.get("deviceName") or data.get("deviceName") or "")
-        device_ip = str(data.get("ipAddress") or "")
+        device_ip = str(data.get("ipAddress") or acs.get("ipAddress") or "")
+        serial_no = str(acs.get("serialNo") or acs.get("eventID") or "")
 
         return {
             "employee_id": emp_id,
             "employee_name": emp_name,
+            "card_no": card_no,
             "major": major,
             "minor": minor,
             "time": ev_time,
             "device_name": device_name,
             "ip": device_ip,
+            "serial_no": serial_no,
         }
 
     def _parse_xml_string(self, xml_text: str) -> dict:
@@ -241,7 +375,8 @@ class HikvisionProvider(IdentityEventProvider):
             return ""
 
         emp_id = find_text("employeeNoString") or find_text("employeeNo") or find_text("cardNo")
-        emp_name = find_text("name") or find_text("employeeName")
+        emp_name = find_text("name") or find_text("employeeName") or find_text("userName")
+        card_no = find_text("cardNo")
         major_str = find_text("majorEventType") or find_text("major")
         major = int(major_str) if major_str.isdigit() else 5
         minor_str = find_text("subEventType") or find_text("minor")
@@ -249,15 +384,18 @@ class HikvisionProvider(IdentityEventProvider):
         ev_time = find_text("time") or find_text("dateTime")
         device_name = find_text("deviceName")
         device_ip = find_text("ipAddress")
+        serial_no = find_text("serialNo") or find_text("eventID")
 
         return {
             "employee_id": emp_id,
             "employee_name": emp_name,
+            "card_no": card_no,
             "major": major,
             "minor": minor,
             "time": ev_time,
             "device_name": device_name,
             "ip": device_ip,
+            "serial_no": serial_no,
         }
 
     def _resolve_door_name(self, ip: str, name: str) -> str:
@@ -346,42 +484,71 @@ class HikvisionProvider(IdentityEventProvider):
                     events_list = data.get("AcsEvent", {}).get("InfoList", [])
 
                     new_seen_keys: Set[str] = set()
-                    new_events_count = 0
+                    poll_received_at = datetime.now(timezone.utc)
 
                     for ev in events_list:
                         emp_id = (ev.get("employeeNoString") or str(ev.get("employeeNo") or "")).strip()
-                        major = ev.get("major", 0)
-                        minor = ev.get("minor", 0)
+                        card_no = str(ev.get("cardNo") or "")
+                        serial_no = str(ev.get("serialNo") or "")
+                        major = int(ev.get("major", 0))
+                        minor = int(ev.get("minor", 0))
                         ev_time = ev.get("time", "")
-                        ev_name = ev.get("name", "")
+                        ev_name = ev.get("name", "") or "Unknown"
 
-                        event_key = f"{ev_time}|{emp_id}|{major}|{minor}"
+                        event_key = f"{ev_time}|{emp_id}|{card_no}|{major}|{minor}|{serial_no}"
                         new_seen_keys.add(event_key)
 
                         if event_key in seen_event_keys:
                             continue
 
-                        if major != 5 or minor not in VALID_MINOR_EVENTS or not emp_id:
+                        if major != 5 or minor not in VALID_MINOR_EVENTS or (not emp_id and not card_no):
                             continue
 
-                        # Age check: Skip historical events
-                        if ev_time:
-                            try:
-                                ev_dt = datetime.fromisoformat(ev_time)
-                                ev_dt_utc = ev_dt.astimezone(timezone.utc)
-                                if (datetime.now(timezone.utc) - ev_dt_utc).total_seconds() > MAX_EVENT_AGE_SECONDS:
-                                    continue
-                            except Exception:
-                                pass
+                        effective_id = emp_id if emp_id and emp_id != "N/A" else card_no
 
-                        new_events_count += 1
-                        self._process_event(emp_id, name, ev_time, ev_name, major, minor, provider_source="HIKVISION_POLL")
+                        # Parse device timestamp and compute time offset
+                        ev_dt_utc, ev_time_str = _parse_device_timestamp(ev_time)
+                        offset_seconds = (poll_received_at - ev_dt_utc).total_seconds()
+
+                        # Age check: Skip historical events
+                        if abs(offset_seconds) > MAX_EVENT_AGE_SECONDS:
+                            continue
+
+                        is_exit = "out" in name.lower() or "exit" in name.lower()
+                        direction = "EXIT" if is_exit else "ENTRY"
+                        auth_desc, is_granted = HIKVISION_EVENT_MAP.get((major, minor), (f"Access Event [{major}:{minor}]", True))
+
+                        Console.acs(
+                            timestamp=ev_time,
+                            status="GRANTED" if is_granted else "DENIED",
+                            direction=direction,
+                            emp_id=effective_id,
+                            emp_name=ev_name,
+                            card_no=card_no,
+                            door=f"{name} ({ip})",
+                            auth_type=auth_desc,
+                            major=major,
+                            minor=minor,
+                        )
+
+                        self._process_event(
+                            emp_id=effective_id,
+                            gate_name=name,
+                            ev_time=ev_time_str,
+                            ev_name=ev_name,
+                            major=major,
+                            minor=minor,
+                            provider_source="HIKVISION_POLL",
+                            card_no=card_no,
+                            serial_no=serial_no,
+                            auth_type=auth_desc,
+                            received_at=poll_received_at,
+                            time_offset_seconds=offset_seconds,
+                            access_granted=is_granted,
+                        )
 
                     seen_event_keys = new_seen_keys
                     last_poll_time = begin
-
-                    if new_events_count > 0:
-                        logger.info(f"[{name}] Safety-net poller processed {new_events_count} event(s)")
 
                 except requests.exceptions.ConnectionError as e:
                     err_msg = f"Connection refused ({ip})"
@@ -407,23 +574,35 @@ class HikvisionProvider(IdentityEventProvider):
     # Unified Event Processor (for both Webhook and Polling)
     # ------------------------------------------------------------------
 
-    def _process_event(self, emp_id: str, gate_name: str, ev_time: str, ev_name: str, major: int, minor: int, provider_source: str = "HIKVISION"):
+    def _process_event(
+        self,
+        emp_id: str,
+        gate_name: str,
+        ev_time: str,
+        ev_name: str,
+        major: int,
+        minor: int,
+        provider_source: str = "HIKVISION",
+        card_no: str = "",
+        serial_no: str = "",
+        auth_type: str = "",
+        received_at: Optional[datetime] = None,
+        time_offset_seconds: Optional[float] = None,
+        access_granted: bool = True,
+    ):
         """
         Process an access control event and dispatch directly to the correlation engine.
         """
         try:
-            is_exit = "out" in gate_name.lower()
+            is_exit = "out" in gate_name.lower() or "exit" in gate_name.lower()
             ev_type = "EXIT" if is_exit else "ENTRY"
 
-            try:
-                event_ts = datetime.fromisoformat(ev_time)
-                event_ts_utc = event_ts.astimezone(timezone.utc)
-            except (ValueError, TypeError):
-                event_ts_utc = datetime.now(timezone.utc)
+            event_ts_utc, _ = _parse_device_timestamp(ev_time)
+            now_actual = received_at or datetime.now(timezone.utc)
 
             # Drop stale events from historical replay
-            age = (datetime.now(timezone.utc) - event_ts_utc).total_seconds()
-            if age > MAX_EVENT_AGE_SECONDS:
+            age = (now_actual - event_ts_utc).total_seconds()
+            if abs(age) > MAX_EVENT_AGE_SECONDS:
                 return
 
             matched_door = None
@@ -451,6 +630,15 @@ class HikvisionProvider(IdentityEventProvider):
                 employee_name=ev_name,
                 event_type=ev_type,
                 timestamp=event_ts_utc,
+                device_event_time=ev_time,
+                received_at=now_actual,
+                time_offset_seconds=time_offset_seconds if time_offset_seconds is not None else round(age, 3),
+                auth_type=auth_type or "Access Verification",
+                major_event=major,
+                minor_event=minor,
+                serial_no=serial_no,
+                card_no=card_no,
+                access_granted=access_granted,
                 entry_gate=gate_name,
                 provider=self.PROVIDER_NAME,
                 correlation_status="WAITING_FOR_TRACK",
@@ -462,9 +650,6 @@ class HikvisionProvider(IdentityEventProvider):
 
             # Instantly register event with the correlation engine
             self.callback_engine.register_identity_event(event)
-
-            direction = "EXIT" if is_exit else "ENTRY"
-            logger.info(f"[{gate_name}] Registered {direction} for {emp_id} ({ev_name}) via {provider_source}")
 
         except Exception as e:
             logger.error(f"[{gate_name}] Error processing event: {e}")

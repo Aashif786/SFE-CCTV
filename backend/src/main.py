@@ -64,6 +64,11 @@ logging.getLogger("uvicorn.access").addFilter(QuietAccessLogFilter())
 Base.metadata.create_all(bind=engine)
 
 # Ensure new columns exist on tables
+from .console import Console
+
+# Initialize sticky status bar console
+Console.start_status_bar()
+
 try:
     from sqlalchemy import text
     with engine.connect() as conn:
@@ -74,17 +79,24 @@ try:
         conn.execute(text('ALTER TABLE employee_daily_summary ADD COLUMN IF NOT EXISTS productivity_score FLOAT DEFAULT 100.0 NOT NULL;'))
         conn.execute(text('ALTER TABLE identity_events ADD COLUMN IF NOT EXISTS allowed_cameras TEXT;'))
         conn.execute(text('ALTER TABLE identity_events ADD COLUMN IF NOT EXISTS matched_camera_id TEXT;'))
+        conn.execute(text('ALTER TABLE identity_events ADD COLUMN IF NOT EXISTS device_event_time TEXT;'))
+        conn.execute(text('ALTER TABLE identity_events ADD COLUMN IF NOT EXISTS received_at TIMESTAMP;'))
+        conn.execute(text('ALTER TABLE identity_events ADD COLUMN IF NOT EXISTS time_offset_seconds FLOAT;'))
+        conn.execute(text('ALTER TABLE identity_events ADD COLUMN IF NOT EXISTS auth_type TEXT;'))
+        conn.execute(text('ALTER TABLE identity_events ADD COLUMN IF NOT EXISTS card_no TEXT;'))
+        conn.execute(text('ALTER TABLE identity_events ADD COLUMN IF NOT EXISTS access_granted BOOLEAN DEFAULT TRUE;'))
         conn.execute(text('ALTER TABLE worker_sessions ADD COLUMN IF NOT EXISTS persistent_track_id VARCHAR;'))
         conn.commit()
+    Console.system("DATABASE", "PostgreSQL database schema synchronized")
 
 except Exception as _mig_err:
-    print(f"[Startup] Table migration check warning: {_mig_err}")
+    Console.error("DATABASE", f"Table migration warning: {_mig_err}")
 
 # Close any stale active worker sessions left over from previous runs
 with SessionLocal() as db:
     stale_sessions = db.query(WorkerSessionDB).filter(WorkerSessionDB.status == "ACTIVE").all()
     if stale_sessions:
-        print(f"[Startup] Found {len(stale_sessions)} stale active sessions. Closing them...")
+        Console.system("STARTUP", f"Closing {len(stale_sessions)} stale session(s) from previous run")
         for s in stale_sessions:
             s.status = "CLOSED"
             s.end_time = datetime.now(timezone.utc).replace(tzinfo=None)
@@ -94,7 +106,7 @@ with SessionLocal() as db:
 # ---------------------------------------------------------------------------
 # Direct Service Initialization (Guaranteed Startup)
 # ---------------------------------------------------------------------------
-print("[Startup] Initializing CALVISION services...")
+Console.system("STARTUP", "Initializing CALVISION core services...")
 seed_cameras()
 stream_manager.start_all_enabled()
 background_tracker.start()

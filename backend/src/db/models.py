@@ -98,6 +98,12 @@ class IdentityEventDB(Base):
     employee_name = Column(String, nullable=True)
     event_type = Column(String, nullable=False, default="ENTRY")  # ENTRY | EXIT (future)
     timestamp = Column(DateTime, nullable=False, index=True)
+    device_event_time = Column(String, nullable=True)             # ACS device timestamp string
+    received_at = Column(DateTime, nullable=True)                 # Server receipt timestamp
+    time_offset_seconds = Column(Float, nullable=True)            # Latency/offset in seconds
+    auth_type = Column(String, nullable=True)                     # E.g. Face Recognition, Card Swipe
+    card_no = Column(String, nullable=True)
+    access_granted = Column(Boolean, default=True, nullable=True)
     entry_gate = Column(String, nullable=False)
     provider = Column(String, nullable=False)  # REST_SIMULATOR | RFID | NFC | MQTT …
     correlation_status = Column(String, nullable=False, default="WAITING_FOR_TRACK")

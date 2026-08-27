@@ -6,7 +6,7 @@ import {
 } from "lucide-react";
 import ConfigImportModal from "@/components/ConfigImportModal";
 
-const API = "http://localhost:8000";
+const API = "http://localhost:8001";
 
 // Helper functions for movement sensitivity scaling (retained from original)
 function sliderToSensitivity(slider: number): number {

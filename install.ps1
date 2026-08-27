@@ -210,14 +210,14 @@ if (-not $DbReady) {
     Write-Host "[OK] PostgreSQL container is healthy and ready." -ForegroundColor Green
 }
 
-# 8. Configure Windows Firewall rule for Backend (port 8000)
-Write-Host "[INFO] Checking Windows Firewall rule for port 8000..." -ForegroundColor Yellow
+# 8. Configure Windows Firewall rule for Backend (port 8001)
+Write-Host "[INFO] Checking Windows Firewall rule for port 8001..." -ForegroundColor Yellow
 try {
-    $FirewallRuleName = "CALVISION Backend (port 8000)"
+    $FirewallRuleName = "CALVISION Backend (port 8001)"
     $ExistingRule = Get-NetFirewallRule -DisplayName $FirewallRuleName -ErrorAction SilentlyContinue
     if (-not $ExistingRule) {
-        New-NetFirewallRule -DisplayName $FirewallRuleName -Direction Inbound -Protocol TCP -LocalPort 8000 -Action Allow | Out-Null
-        Write-Host "[OK] Firewall rule added for port 8000." -ForegroundColor Green
+        New-NetFirewallRule -DisplayName $FirewallRuleName -Direction Inbound -Protocol TCP -Localport 8001 -Action Allow | Out-Null
+        Write-Host "[OK] Firewall rule added for port 8001." -ForegroundColor Green
     } else {
         Write-Host "[OK] Firewall rule already exists." -ForegroundColor Green
     }

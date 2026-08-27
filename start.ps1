@@ -20,25 +20,26 @@ if (-not (Test-Path ".env") -and -not (Test-Path "backend\.env")) {
     exit 1
 }
 
-# 2. Cleanup existing process on port 8000
-Write-Host "[INFO] Checking port 8000..." -ForegroundColor Yellow
+# 2. Cleanup existing backend process on port 8001 (if any)
+Write-Host "[INFO] Checking port 8001 for lingering backend processes..." -ForegroundColor Yellow
 try {
     $Killed = $false
-    $Connections = Get-NetTCPConnection -LocalPort 8000 -ErrorAction SilentlyContinue
+    $Connections = Get-NetTCPConnection -LocalPort 8001 -ErrorAction SilentlyContinue
     foreach ($Conn in $Connections) {
         $PidToKill = $Conn.OwningProcess
-        if ($PidToKill -ne 0) {
-            Write-Host "Killing process $PidToKill on port 8000..."
-            & taskkill /F /T /PID $PidToKill 2>$null
-            $Killed = $true
+        if ($PidToKill -gt 4) {
+            $Proc = Get-Process -Id $PidToKill -ErrorAction SilentlyContinue
+            if ($Proc -and $Proc.ProcessName -notmatch "docker|wsl") {
+                Write-Host "Killing conflicting process $($Proc.ProcessName) (PID $PidToKill) on port 8001..."
+                & taskkill /F /PID $PidToKill 2>$null
+                $Killed = $true
+            }
         }
     }
     if ($Killed) {
-        Start-Sleep -Seconds 2
+        Start-Sleep -Seconds 1
     }
 } catch {}
-
-
 
 # 3. Start PostgreSQL
 if (-not (Get-Command "docker" -ErrorAction SilentlyContinue)) {
@@ -69,10 +70,21 @@ if (-not (Test-Path $ComposeFile)) {
 }
 
 Write-Host "[INFO] Starting database..." -ForegroundColor Yellow
+
+# Clean up any lingering container using port 5433
+try {
+    docker rm -f worker_monitor_db 2>$null
+} catch {}
+
 docker compose -f $ComposeFile up -d db
 if ($LASTEXITCODE -ne 0) {
-    Write-Host "[ERROR] PostgreSQL could not be started by Docker Compose." -ForegroundColor Red
-    exit 1
+    Write-Host "[WARN] Retrying database container startup..." -ForegroundColor Yellow
+    Start-Sleep -Seconds 2
+    docker compose -f $ComposeFile up -d db
+    if ($LASTEXITCODE -ne 0) {
+        Write-Host "[ERROR] PostgreSQL could not be started by Docker Compose." -ForegroundColor Red
+        exit 1
+    }
 }
 
 Write-Host "[INFO] Waiting for PostgreSQL to become healthy..." -ForegroundColor Yellow
@@ -125,7 +137,7 @@ try {
 $env:DATABASE_URL = "postgresql+pg8000://postgres:password@127.0.0.1:5433/worker_monitor"
 
 # 4. Start Backend Service
-Write-Host "[INFO] Starting CALVISION backend on port 8000..." -ForegroundColor Yellow
+Write-Host "[INFO] Starting CALVISION backend on port 8001..." -ForegroundColor Yellow
 
 $PythonPath = "$PWD\backend\venv\Scripts\python.exe"
 if (-not (Test-Path $PythonPath)) {
@@ -135,18 +147,17 @@ if (-not (Test-Path $PythonPath)) {
 
 Write-Host "=========================================" -ForegroundColor Cyan
 Write-Host "[OK] CALVISION Backend is running!" -ForegroundColor Green
-Write-Host "   - Backend API: http://localhost:8000"
-Write-Host "   - API Docs:    http://localhost:8000/docs"
-Write-Host "   - Frontend:    Run 'npm run dev' in the frontend\ folder" -ForegroundColor Yellow
+Write-Host "   - Backend API: http://localhost:8001"
+Write-Host "   - API Docs:    http://localhost:8001/docs"
+Write-Host "   - Frontend:    Run 'npm run dev' in the frontend\ folder (http://localhost:3001)" -ForegroundColor Yellow
 Write-Host "Press Ctrl+C to stop the backend." -ForegroundColor Yellow
 Write-Host "=========================================" -ForegroundColor Cyan
 
 Push-Location (Join-Path $ProjectRoot "backend")
 try {
-    & $PythonPath -m uvicorn src.main:app --host 0.0.0.0 --port 8000
+    & $PythonPath -m uvicorn src.main:app --host 0.0.0.0 --port 8001
 } finally {
     Pop-Location
     Write-Host ""
     Write-Host "[INFO] CALVISION backend stopped." -ForegroundColor Yellow
 }
-

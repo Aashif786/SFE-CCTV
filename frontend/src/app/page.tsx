@@ -117,7 +117,7 @@ export default function Dashboard() {
 
   const getApiBase = () => {
     const host = typeof window !== "undefined" ? window.location.hostname : "localhost";
-    return `http://${host}:8000`;
+    return `http://${host}:8001`;
   };
 
   const fetchDashboardData = useCallback(async () => {

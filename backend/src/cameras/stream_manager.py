@@ -21,6 +21,7 @@ import cv2
 import numpy as np
 
 from ..config import env_settings, config
+from ..console import Console
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -102,14 +103,14 @@ class StreamManager:
             )
             cs._thread = t
             t.start()
-            print(f"[StreamManager] ▶ Started stream for camera {camera_id}")
+            Console.stream("STARTING", f"RTSP stream initialized", camera_id=str(camera_id))
 
     def stop_stream(self, camera_id: int) -> None:
         with self._global_lock:
             cs = self._streams.pop(camera_id, None)
             if cs:
                 self._do_stop(cs)
-                print(f"[StreamManager] ⏹ Stopped stream for camera {camera_id}")
+                Console.stream("STOPPED", f"Stream terminated", camera_id=str(camera_id))
 
     def restart_stream(self, camera_id: int, rtsp_url: str) -> None:
         self.stop_stream(camera_id)
@@ -135,16 +136,16 @@ class StreamManager:
                     )
                     self.start_stream(cam.id, rtsp_url)
                 except Exception as e:
-                    print(f"[StreamManager] ❌ Failed to start camera {cam.id} ({cam.name}): {e}")
+                    Console.error("STREAM", f"Failed to start camera {cam.id} ({cam.name}): {e}")
 
-        print(f"[StreamManager] 🟢 Started {len(self._streams)} camera stream(s)")
+        Console.system("STREAM", f"Started {len(self._streams)} active RTSP camera stream(s)")
 
     def stop_all(self) -> None:
         with self._global_lock:
             for cs in list(self._streams.values()):
                 self._do_stop(cs)
             self._streams.clear()
-        print("[StreamManager] ⏹ All streams stopped")
+        Console.system("STREAM", "All camera streams stopped")
 
     def restart_all_active(self) -> None:
         """Restarts all active streams to apply new global settings immediately."""
@@ -325,7 +326,7 @@ class StreamManager:
 
                 cs.state = StreamState.ONLINE
                 cs.error_message = ""
-                print(f"[StreamManager] 🟢 Camera {cs.camera_id} ONLINE")
+                Console.stream("ONLINE", f"RTSP stream connected", camera_id=str(cs.camera_id))
 
                 consecutive_failures = 0
                 last_jpeg_time = 0.0
@@ -409,10 +410,10 @@ class StreamManager:
                 cs.error_message = err_str
                 if "401" in err_str or "Unauthorized" in err_str.lower() or "auth" in err_str.lower():
                     cs.state = StreamState.AUTH_FAILED
-                    print(f"[StreamManager] 🔐 Camera {cs.camera_id} AUTH_FAILED: {err_str}")
+                    Console.stream("AUTH_FAIL", f"Authentication failed: {err_str}", camera_id=str(cs.camera_id))
                 else:
                     cs.state = StreamState.OFFLINE
-                    print(f"[StreamManager] 🔴 Camera {cs.camera_id} OFFLINE: {err_str}")
+                    Console.stream("OFFLINE", f"{err_str}", camera_id=str(cs.camera_id))
                 cs.fps = 0.0
 
             finally:
@@ -434,10 +435,7 @@ class StreamManager:
                     _backoff_delay = _BACKOFF_MAX
 
                 wait_secs = min(_backoff_delay, _BACKOFF_MAX)
-                print(
-                    f"[StreamManager] 🔁 Camera {cs.camera_id} reconnect attempt "
-                    f"{cs.reconnect_count} — waiting {wait_secs:.0f}s (backoff)"
-                )
+                Console.stream("RETRY", f"Attempt {cs.reconnect_count} — waiting {wait_secs:.0f}s (backoff)", camera_id=str(cs.camera_id))
                 cs._stop_event.wait(timeout=wait_secs)
 
                 # Double the backoff for next potential failure

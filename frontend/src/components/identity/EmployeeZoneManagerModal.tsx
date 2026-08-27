@@ -33,7 +33,7 @@ export default function EmployeeZoneManagerModal({ isOpen, onClose, employeeId, 
 
   const getApiBase = () => {
     const host = typeof window !== "undefined" ? window.location.hostname : "localhost";
-    return `http://${host}:8000`;
+    return `http://${host}:8001`;
   };
 
   const fetchData = useCallback(async () => {
@@ -44,12 +44,12 @@ export default function EmployeeZoneManagerModal({ isOpen, onClose, employeeId, 
     try {
       let zonesRes = await fetch(`${api}/api/zones`).catch(() => null);
       if (!zonesRes || !zonesRes.ok) {
-        zonesRes = await fetch(`http://localhost:8000/api/zones`).catch(() => null);
+        zonesRes = await fetch(`http://localhost:8001/api/zones`).catch(() => null);
       }
 
       let empZonesRes = await fetch(`${api}/api/identity/employees/${employeeId}/zones`).catch(() => null);
       if (!empZonesRes || !empZonesRes.ok) {
-        empZonesRes = await fetch(`http://localhost:8000/api/identity/employees/${employeeId}/zones`).catch(() => null);
+        empZonesRes = await fetch(`http://localhost:8001/api/identity/employees/${employeeId}/zones`).catch(() => null);
       }
 
       let zoneList: ZoneItem[] = [];

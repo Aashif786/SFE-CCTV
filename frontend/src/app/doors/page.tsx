@@ -7,7 +7,7 @@ import {
 } from "lucide-react";
 import ConfigImportModal from "@/components/ConfigImportModal";
 
-const API = "http://localhost:8000";
+const API = "http://localhost:8001";
 
 interface DoorStatus {
   ip: string;
@@ -72,7 +72,7 @@ export default function DoorConfigsPage() {
   const [importModalOpen, setImportModalOpen] = useState(false);
 
   const handleExportDoors = () => {
-    const apiBase = typeof window === "undefined" ? "http://localhost:8000" : `http://${window.location.hostname}:8000`;
+    const apiBase = typeof window === "undefined" ? "http://localhost:8001" : `http://${window.location.hostname}:8001`;
     const url = `${apiBase}/api/identity/doors/export`;
     const link = document.createElement("a");
     link.href = url;

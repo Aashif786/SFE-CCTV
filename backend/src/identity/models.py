@@ -51,6 +51,15 @@ class IdentityEvent(BaseModel):
     employee_name: Optional[str] = None
     event_type: Literal["ENTRY", "EXIT"] = "ENTRY"
     timestamp: datetime
+    device_event_time: Optional[str] = None         # Raw timestamp recorded by Hikvision ACS terminal
+    received_at: Optional[datetime] = None          # Real actual server reception timestamp
+    time_offset_seconds: Optional[float] = None     # Latency / drift: (received_at - device_event_time)
+    auth_type: Optional[str] = None                 # e.g. "Face Recognition (Authorized)", "Card Swipe"
+    major_event: Optional[int] = None               # Hikvision major code (e.g. 5)
+    minor_event: Optional[int] = None               # Hikvision minor code (e.g. 75)
+    serial_no: Optional[str] = None                 # ACS punch sequence / serial number
+    card_no: Optional[str] = None                   # RFID / NFC card number if available
+    access_granted: bool = True                     # Access permission status
     entry_gate: str
     provider: str           # "REST_SIMULATOR" | "RFID" | "NFC" | "MQTT" …
     correlation_status: Literal["WAITING_FOR_TRACK", "MATCHED", "EXPIRED"] = "WAITING_FOR_TRACK"

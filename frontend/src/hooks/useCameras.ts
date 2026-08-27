@@ -77,7 +77,7 @@ export interface TestResult {
 
 function getApiBase(): string {
   const host = typeof window !== "undefined" ? window.location.hostname : "localhost";
-  return `http://${host}:8000`;
+  return `http://${host}:8001`;
 }
 
 // ---------------------------------------------------------------------------

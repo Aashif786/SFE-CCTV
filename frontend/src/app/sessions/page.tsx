@@ -7,7 +7,7 @@ import {
 
 const getApiBase = () => {
   const host = typeof window !== "undefined" ? window.location.hostname : "localhost";
-  return `http://${host}:8000`;
+  return `http://${host}:8001`;
 };
 
 // ── Types ─────────────────────────────────────────────────────────────────
@@ -77,22 +77,22 @@ export default function SessionMonitorPage() {
     try {
       let sRes = await fetch(`${api}/api/identity/sessions`).catch(() => null);
       if (!sRes || !sRes.ok) {
-        sRes = await fetch(`http://localhost:8000/api/identity/sessions`).catch(() => null);
+        sRes = await fetch(`http://localhost:8001/api/identity/sessions`).catch(() => null);
       }
 
       let pRes = await fetch(`${api}/api/identity/pending`).catch(() => null);
       if (!pRes || !pRes.ok) {
-        pRes = await fetch(`http://localhost:8000/api/identity/pending`).catch(() => null);
+        pRes = await fetch(`http://localhost:8001/api/identity/pending`).catch(() => null);
       }
 
       let hRes = await fetch(`${api}/api/identity/history`).catch(() => null);
       if (!hRes || !hRes.ok) {
-        hRes = await fetch(`http://localhost:8000/api/identity/history`).catch(() => null);
+        hRes = await fetch(`http://localhost:8001/api/identity/history`).catch(() => null);
       }
 
       let eRes = await fetch(`${api}/api/identity/employees`).catch(() => null);
       if (!eRes || !eRes.ok) {
-        eRes = await fetch(`http://localhost:8000/api/identity/employees`).catch(() => null);
+        eRes = await fetch(`http://localhost:8001/api/identity/employees`).catch(() => null);
       }
 
       if (sRes && sRes.ok) setSessions(await sRes.json());
@@ -131,7 +131,7 @@ export default function SessionMonitorPage() {
       }).catch(() => null);
 
       if (!res || !res.ok) {
-        res = await fetch(`http://localhost:8000/api/identity/manual-correlate`, {
+        res = await fetch(`http://localhost:8001/api/identity/manual-correlate`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({

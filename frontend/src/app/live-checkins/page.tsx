@@ -6,7 +6,7 @@ import {
   CheckCircle2, AlertCircle, Loader2, Server
 } from "lucide-react";
 
-const API = "http://localhost:8000";
+const API = "http://localhost:8001";
 
 interface DoorStatus {
   ip: string;

@@ -32,7 +32,7 @@ import {
   RotateCcw,
 } from "lucide-react";
 
-const API = "http://localhost:8000";
+const API = "http://localhost:8001";
 
 // ── Types ────────────────────────────────────────────────────────────────────
 

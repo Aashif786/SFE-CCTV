@@ -24,7 +24,7 @@ export default function HistoryPage() {
   useEffect(() => {
     const fetchHistory = async () => {
       try {
-        const res = await fetch("http://localhost:8000/api/history");
+        const res = await fetch("http://localhost:8001/api/history");
         if (res.ok) {
           const logs: Log[] = await res.json();
           

@@ -14,7 +14,7 @@ import {
   FileUp,
 } from "lucide-react";
 
-const API = typeof window === "undefined" ? "http://localhost:8000" : `http://${window.location.hostname}:8000`;
+const API = typeof window === "undefined" ? "http://localhost:8001" : `http://${window.location.hostname}:8001`;
 
 interface ConfigImportModalProps {
   isOpen: boolean;

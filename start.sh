@@ -30,8 +30,8 @@ if [ ! -d frontend/node_modules ]; then
     (cd frontend && npm install)
 fi
 
-# 4. Clean up existing processes on ports 3000 and 8000 if running
-for PORT in 8000 3000; do
+# 4. Clean up existing processes on ports 3001 and 8001 if running
+for PORT in 8001 3001; do
     PID=$(lsof -t -i:$PORT 2>/dev/null || true)
     if [ -n "$PID" ]; then
         echo "🧹 Cleaning up existing process on port $PORT (PID: $PID)..."
@@ -52,7 +52,7 @@ export DATABASE_URL="${DATABASE_URL:-postgresql+pg8000://postgres:password@127.0
 
 # 6. Start Backend Natively
 echo "🐍 Starting Backend API server in the background..."
-(cd backend && ./venv/bin/uvicorn src.main:app --reload --host 0.0.0.0 --port 8000) &
+(cd backend && ./venv/bin/uvicorn src.main:app --reload --host 0.0.0.0 --port 8001) &
 BACKEND_PID=$!
 
 # 7. Start Frontend
@@ -75,8 +75,8 @@ trap cleanup SIGINT SIGTERM
 
 echo "========================================="
 echo "✅ System is running."
-echo "   - Frontend: http://localhost:3000"
-echo "   - Backend API: http://localhost:8000"
+echo "   - Frontend: http://localhost:3001"
+echo "   - Backend API: http://localhost:8001"
 echo "Press Ctrl+C to stop."
 echo "========================================="
 

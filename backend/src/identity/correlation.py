@@ -48,6 +48,7 @@ from ..config import env_settings
 from ..db.database import SessionLocal
 from ..db.models import IdentityEventDB
 from .session_manager import worker_session_manager
+from ..console import Console
 
 _db_executor = concurrent.futures.ThreadPoolExecutor(max_workers=2, thread_name_prefix="identity_db")
 
@@ -168,7 +169,15 @@ class CorrelationEngine:
                 self._history.append(event)
                 self._persist_identity_event(event)
                 worker_session_manager.close_sessions_for_employee(event.employee_id)
-                print(f"[Identity] Immediate EXIT recorded for employee={event.employee_id} at {event.entry_gate} (no exit cameras configured)")
+                Console.identity(
+                    status="CLOSED",
+                    direction="EXIT",
+                    emp_id=event.employee_id,
+                    emp_name=event.employee_name or "Unknown",
+                    location=event.entry_gate,
+                    details="Direct exit (no cameras configured)",
+                    timestamp=getattr(event, "device_event_time", None) or event.timestamp.isoformat()
+                )
                 return
 
             # -- Portal-constrained path (Bi-Directional) -------------------------
@@ -198,8 +207,15 @@ class CorrelationEngine:
                     self._history.append(event)
                     self._persist_identity_event(event)
 
-                    print(f"[Identity] [PORTAL-MATCHED] Bi-directional Portal Match! Employee {event.employee_id} "
-                          f"matched with recent crossing at portal={portal_id} Track={c_track} Camera={c_cam} | Delay: {crossing_delay:.1f}s")
+                    Console.identity(
+                        status="MATCHED",
+                        direction=event.event_type,
+                        emp_id=event.employee_id,
+                        emp_name=event.employee_name or "Unknown",
+                        location=f"Portal {portal_id}",
+                        details=f"Track: {c_track} | Cam: {c_cam} | Delay: {crossing_delay:.1f}s",
+                        timestamp=getattr(event, "device_event_time", None) or event.timestamp.isoformat()
+                    )
 
                     if event.event_type == "ENTRY":
                         worker_session_manager.bind_employee_to_track(
@@ -219,8 +235,15 @@ class CorrelationEngine:
                     self._history.append(prev)
                     self._update_identity_event_expired(prev)
                 self._portal_pending[portal_id] = event
-                print(f"[Identity] [PORTAL-QUEUED] {event.event_type} event for employee={event.employee_id} "
-                      f"waiting at portal={portal_id} (window={event_window}s)")
+                Console.identity(
+                    status="QUEUED",
+                    direction=event.event_type,
+                    emp_id=event.employee_id,
+                    emp_name=event.employee_name or "Unknown",
+                    location=f"Portal {portal_id}",
+                    details=f"Waiting for polygon crossing | Window: {event_window:.1f}s",
+                    timestamp=getattr(event, "device_event_time", None) or event.timestamp.isoformat()
+                )
                 self._persist_identity_event(event)
                 return
 
@@ -247,8 +270,16 @@ class CorrelationEngine:
                 self._history.append(event)
             else:
                 self._pending.append(event)
-                cams_desc = f"allowed_cams={event.allowed_cameras}" if event.allowed_cameras else "all cameras"
-                print(f"[Identity] [QUEUED] Queued {event.event_type} event for employee={event.employee_id} gate={event.entry_gate} [{cams_desc}, window={event_window}s]")
+                cams_desc = f"Cams: {event.allowed_cameras}" if event.allowed_cameras else "All Cams"
+                Console.identity(
+                    status="QUEUED",
+                    direction=event.event_type,
+                    emp_id=event.employee_id,
+                    emp_name=event.employee_name or "Unknown",
+                    location=event.entry_gate,
+                    details=f"{cams_desc} | Window: {event_window:.1f}s",
+                    timestamp=getattr(event, "device_event_time", None) or event.timestamp.isoformat()
+                )
 
         self._persist_identity_event(event)
 
@@ -260,13 +291,26 @@ class CorrelationEngine:
                     camera_id=matched_track.camera_id,
                     correlation_delay=matched_delay,
                 )
-                print(f"[Identity] [MATCHED] Bi-directional Match! Employee {event.employee_id} "
-                      f"(Gate {event.entry_gate}) matched on Camera {matched_track.camera_id} "
-                      f"Track {matched_track.track_id} | Delay: {matched_delay:.1f}s")
+                Console.identity(
+                    status="MATCHED",
+                    direction="ENTRY",
+                    emp_id=event.employee_id,
+                    emp_name=event.employee_name or "Unknown",
+                    location=f"Camera {matched_track.camera_id}",
+                    details=f"Track: {matched_track.track_id} | Delay: {matched_delay:.1f}s",
+                    timestamp=getattr(event, "device_event_time", None) or event.timestamp.isoformat()
+                )
             elif event.event_type == "EXIT":
                 worker_session_manager.close_sessions_for_employee(event.employee_id)
-                print(f"[Identity] [EXIT] Bi-directional Exit Match! Employee {event.employee_id} "
-                      f"(Gate {event.entry_gate}) matched on Exit Camera {matched_track.camera_id} | Delay: {matched_delay:.1f}s")
+                Console.identity(
+                    status="MATCHED",
+                    direction="EXIT",
+                    emp_id=event.employee_id,
+                    emp_name=event.employee_name or "Unknown",
+                    location=f"Exit Cam {matched_track.camera_id}",
+                    details=f"Track: {matched_track.track_id} | Delay: {matched_delay:.1f}s",
+                    timestamp=getattr(event, "device_event_time", None) or event.timestamp.isoformat()
+                )
             self._update_identity_event_matched(event)
 
     # ------------------------------------------------------------------
@@ -403,19 +447,29 @@ class CorrelationEngine:
             )
             portal_info = (f" | Portal: {matched_event.portal_id} ({matched_event.portal_role})"
                            if getattr(matched_event, "portal_id", None) else "")
-            print(
-                f"[Identity] [CORRELATED] Correlated Door ENTRY ({matched_event.entry_gate}) -> "
-                f"Employee {matched_event.employee_id} -> Camera {camera_event.camera_id} "
-                f"(Track {camera_event.track_id}){portal_info} | Delay: {matched_delay:.1f}s"
+            portal_info = (f" | Portal: {matched_event.portal_id}"
+                           if getattr(matched_event, "portal_id", None) else "")
+            Console.identity(
+                status="MATCHED",
+                direction="ENTRY",
+                emp_id=matched_event.employee_id,
+                emp_name=matched_event.employee_name or "Unknown",
+                location=f"Camera {camera_event.camera_id}",
+                details=f"Track: {camera_event.track_id}{portal_info} | Delay: {matched_delay:.1f}s",
+                timestamp=getattr(matched_event, "device_event_time", None) or matched_event.timestamp.isoformat()
             )
             self._update_identity_event_matched(matched_event)
             return session
         else:
             worker_session_manager.close_sessions_for_employee(matched_event.employee_id)
-            print(
-                f"[Identity] [EXIT] Correlated Door EXIT ({matched_event.entry_gate}) -> "
-                f"Employee {matched_event.employee_id} on Exit Camera {camera_event.camera_id} "
-                f"(Track {camera_event.track_id}) | Delay: {matched_delay:.1f}s"
+            Console.identity(
+                status="MATCHED",
+                direction="EXIT",
+                emp_id=matched_event.employee_id,
+                emp_name=matched_event.employee_name or "Unknown",
+                location=f"Exit Cam {camera_event.camera_id}",
+                details=f"Track: {camera_event.track_id} | Delay: {matched_delay:.1f}s",
+                timestamp=getattr(matched_event, "device_event_time", None) or matched_event.timestamp.isoformat()
             )
             self._update_identity_event_matched(matched_event)
             return None
@@ -451,7 +505,15 @@ class CorrelationEngine:
                 self._update_identity_event_expired(ev)
                 if ev.event_type == "EXIT":
                     worker_session_manager.close_sessions_for_employee(ev.employee_id)
-                print(f"[Identity] [EXPIRED] Expired unmatched {ev.event_type} event for employee={ev.employee_id} (age={delay:.1f}s > window={ev_window}s)")
+                Console.identity(
+                    status="EXPIRED",
+                    direction=ev.event_type,
+                    emp_id=ev.employee_id,
+                    emp_name=ev.employee_name or "Unknown",
+                    location=ev.entry_gate,
+                    details=f"Unmatched (age: {delay:.1f}s > {ev_window:.1f}s)",
+                    timestamp=getattr(ev, "device_event_time", None) or ev.timestamp.isoformat()
+                )
             else:
                 still_pending.append(ev)
         self._pending = still_pending
@@ -470,8 +532,15 @@ class CorrelationEngine:
             ev.correlation_status = "EXPIRED"
             self._history.append(ev)
             self._update_identity_event_expired(ev)
-            print(f"[Identity] [PORTAL-EXPIRED] Portal event for employee={ev.employee_id} "
-                  f"at portal={portal_id} expired without a track entering the polygon")
+            Console.identity(
+                status="EXPIRED",
+                direction=ev.event_type,
+                emp_id=ev.employee_id,
+                emp_name=ev.employee_name or "Unknown",
+                location=f"Portal {portal_id}",
+                details="Expired without polygon crossing",
+                timestamp=getattr(ev, "device_event_time", None) or ev.timestamp.isoformat()
+            )
 
     def _expire_stale_tracks(self, reference_time: datetime) -> None:
         """Drop anonymous tracks from the queue if they are older than the window."""
@@ -495,6 +564,12 @@ class CorrelationEngine:
                         employee_name=event.employee_name,
                         event_type=event.event_type,
                         timestamp=event.timestamp,
+                        device_event_time=getattr(event, "device_event_time", None),
+                        received_at=getattr(event, "received_at", None),
+                        time_offset_seconds=getattr(event, "time_offset_seconds", None),
+                        auth_type=getattr(event, "auth_type", None),
+                        card_no=getattr(event, "card_no", None),
+                        access_granted=getattr(event, "access_granted", True),
                         entry_gate=event.entry_gate,
                         provider=event.provider,
                         correlation_status=event.correlation_status,

@@ -599,7 +599,7 @@ A `movement_score` of `0.05` roughly corresponds to a tracked joint moving ~5% o
 
 **How to update at runtime (no server restart needed):**
 ```bash
-curl -X POST http://localhost:8000/api/settings \
+curl -X POST http://localhost:8001/api/settings \
   -H "Content-Type: application/json" \
   -d '{"idle_threshold_seconds": 10, "movement_sensitivity": 0.03, "confidence_threshold": 0.5}'
 ```
@@ -672,7 +672,7 @@ Zones are stored in PostgreSQL (`workstation_zones` table) and fetched per-camer
 ```bash
 # Set zone for camera "assembly_line_a"
 # Coordinates: x_min, y_min, x_max, y_max (0.0 to 1.0, normalised to frame size)
-curl -X POST http://localhost:8000/api/zones/assembly_line_a \
+curl -X POST http://localhost:8001/api/zones/assembly_line_a \
   -H "Content-Type: application/json" \
   -d '{"x_min": 0.2, "y_min": 0.1, "x_max": 0.8, "y_max": 0.9}'
 ```

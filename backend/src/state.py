@@ -135,12 +135,13 @@ def preload_model_cache() -> None:
     from .config import config as _cfg
     target_model = getattr(_cfg, "yolo_model", "yolo11m-pose.pt")
     pt_path = get_model_filepath(target_model)
-    print("[Startup] 🔥 Pre-warming YOLO model into GPU cache…")
+    from .console import Console
+    Console.system("STARTUP", "Pre-warming YOLO model into GPU cache...")
     try:
         _load_pt_model(pt_path)
-        print("[Startup] ✅ YOLO model pre-warm complete — per-camera detectors will init instantly.")
+        Console.system("READY", "YOLO model pre-warm complete — detectors initialized")
     except Exception as e:
-        print(f"[Startup] ⚠️  Model pre-warm failed (detectors will still init on first use): {e}")
+        Console.error("SYSTEM", f"Model pre-warm warning (lazy init): {e}")
 
 
 def get_or_create_detector(camera_id: str | int) -> WorkerDetector:

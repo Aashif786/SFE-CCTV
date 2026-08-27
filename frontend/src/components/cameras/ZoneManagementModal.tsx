@@ -55,7 +55,7 @@ export default function ZoneManagementModal({
     try {
       const host =
         typeof window !== "undefined" ? window.location.hostname : "localhost";
-      const res = await fetch(`http://${host}:8000/api/camera-zones/${camera.id}`);
+      const res = await fetch(`http://${host}:8001/api/camera-zones/${camera.id}`);
       if (res.ok) {
         const data = await res.json();
         setZones(data.zones || []);
@@ -101,7 +101,7 @@ export default function ZoneManagementModal({
 
       const host =
         typeof window !== "undefined" ? window.location.hostname : "localhost";
-      const res = await fetch(`http://${host}:8000/api/camera-zones/${camera.id}/upload`, {
+      const res = await fetch(`http://${host}:8001/api/camera-zones/${camera.id}/upload`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: text,
@@ -139,7 +139,7 @@ export default function ZoneManagementModal({
   const handleExport = () => {
     const host =
       typeof window !== "undefined" ? window.location.hostname : "localhost";
-    window.open(`http://${host}:8000/api/camera-zones/${camera.id}/export`, "_blank");
+    window.open(`http://${host}:8001/api/camera-zones/${camera.id}/export`, "_blank");
   };
 
   const handleClearAll = async () => {
@@ -150,7 +150,7 @@ export default function ZoneManagementModal({
     try {
       const host =
         typeof window !== "undefined" ? window.location.hostname : "localhost";
-      const res = await fetch(`http://${host}:8000/api/camera-zones/${camera.id}`, {
+      const res = await fetch(`http://${host}:8001/api/camera-zones/${camera.id}`, {
         method: "DELETE",
       });
       if (res.ok) {
@@ -174,7 +174,7 @@ export default function ZoneManagementModal({
       const host =
         typeof window !== "undefined" ? window.location.hostname : "localhost";
       const res = await fetch(
-        `http://${host}:8000/api/camera-zones/${camera.id}/zone/${zoneId}`,
+        `http://${host}:8001/api/camera-zones/${camera.id}/zone/${zoneId}`,
         { method: "DELETE" }
       );
       if (res.ok) {

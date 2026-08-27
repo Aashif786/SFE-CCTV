@@ -9,7 +9,7 @@ import PortalPolygonEditor, { type PortalShape } from "@/components/cameras/Port
 type Facility = { id: string; cameras: { id: string; portals: PortalShape[] }[] };
 type Layout = { facilities: Facility[]; connections: any[] };
 
-const apiBase = () => typeof window === "undefined" ? "http://localhost:8000" : `http://${window.location.hostname}:8000`;
+const apiBase = () => typeof window === "undefined" ? "http://localhost:8001" : `http://${window.location.hostname}:8001`;
 
 export default function PortalMappingPage() {
   const { cameras, loading: camerasLoading } = useCameras();

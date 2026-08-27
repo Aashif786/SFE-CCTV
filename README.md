@@ -286,7 +286,7 @@ run-frontend  # Starts Next.js frontend
 ```
 
 ### Accessing the Dashboard
-Navigate to **`http://localhost:3000`** in your web browser.
+Navigate to **`http://localhost:3001`** in your web browser.
 
 ---
 

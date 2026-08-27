@@ -113,12 +113,12 @@ export default function CameraWidget({ cameraId, name }: { cameraId: string; nam
     if (nextShowDebug && !isUsingClip) {
       try {
         const host = typeof window !== "undefined" ? window.location.hostname : "localhost";
-        const res = await fetch(`http://${host}:8000/api/test_clips`);
+        const res = await fetch(`http://${host}:8001/api/test_clips`);
         if (res.ok) {
           const clips = await res.json();
           if (Array.isArray(clips) && clips.length > 0) {
             const firstClip = clips[0];
-            const url = `http://${host}:8000/test_clips/${firstClip}?t=${Date.now()}`;
+            const url = `http://${host}:8001/test_clips/${firstClip}?t=${Date.now()}`;
             if (videoRef.current && videoRef.current.srcObject) {
               const stream = videoRef.current.srcObject as MediaStream;
               stream.getTracks().forEach(t => t.stop());
@@ -140,7 +140,7 @@ export default function CameraWidget({ cameraId, name }: { cameraId: string; nam
     setCheckInStatus(null);
     try {
       const host = typeof window !== "undefined" ? window.location.hostname : "localhost";
-      const res = await fetch(`http://${host}:8000/api/identity/entry`, {
+      const res = await fetch(`http://${host}:8001/api/identity/entry`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ employeeId: employeeId.trim(), entryGate }),

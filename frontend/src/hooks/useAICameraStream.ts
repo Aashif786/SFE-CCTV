@@ -4,7 +4,7 @@ import { useEffect, useRef, useState, useCallback } from "react";
 /**
  * Receive-only WebSocket hook for server-side AI camera detection.
  *
- * Connects to `ws://host:8000/ws/camera/{cameraId}`. The backend reads
+ * Connects to `ws://host:8001/ws/camera/{cameraId}`. The backend reads
  * frames from the RTSP stream buffer and runs YOLO tracking — the client
  * never sends frames. This hook receives detection JSON and exposes it
  * for rendering overlays on the MJPEG <img>.
@@ -125,7 +125,7 @@ export function useAICameraStream(
     let reconnectTimer: NodeJS.Timeout | null = null;
     const host =
       typeof window !== "undefined" ? window.location.hostname : "localhost";
-    const wsUrl = `ws://${host}:8000/ws/camera/${cameraId}`;
+    const wsUrl = `ws://${host}:8001/ws/camera/${cameraId}`;
     const ws = new WebSocket(wsUrl);
     wsRef.current = ws;
 

@@ -115,7 +115,7 @@ export default function ZoneAnalyticsPage() {
       }
 
       // Fetch summary
-      const sumRes = await fetch(`http://${host}:8000/api/zone-analytics/summary?${queryParams.toString()}`);
+      const sumRes = await fetch(`http://${host}:8001/api/zone-analytics/summary?${queryParams.toString()}`);
       if (sumRes.ok) {
         const sumData = await sumRes.json();
         setSummary(sumData.summary);
@@ -136,7 +136,7 @@ export default function ZoneAnalyticsPage() {
       visitParams.append("limit", String(pageSize));
       visitParams.append("offset", String(page * pageSize));
 
-      const visitsRes = await fetch(`http://${host}:8000/api/zone-analytics/visits?${visitParams.toString()}`);
+      const visitsRes = await fetch(`http://${host}:8001/api/zone-analytics/visits?${visitParams.toString()}`);
       if (visitsRes.ok) {
         const visitsData = await visitsRes.json();
         setVisits(visitsData.visits || []);

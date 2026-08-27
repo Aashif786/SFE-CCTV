@@ -62,7 +62,7 @@ export default function EmployeeTrackingPage() {
 
   const getApiBase = () => {
     const host = typeof window !== "undefined" ? window.location.hostname : "localhost";
-    return `http://${host}:8000`;
+    return `http://${host}:8001`;
   };
 
   const fetchData = useCallback(async () => {
@@ -72,10 +72,10 @@ export default function EmployeeTrackingPage() {
     try {
       let empRes = await fetch(`${api}/api/identity/employees`).catch(() => null);
       if (!empRes || !empRes.ok) {
-        empRes = await fetch(`http://localhost:8000/api/identity/employees`).catch(() => null);
+        empRes = await fetch(`http://localhost:8001/api/identity/employees`).catch(() => null);
       }
       if (!empRes || !empRes.ok) {
-        empRes = await fetch(`http://127.0.0.1:8000/api/identity/employees`).catch(() => null);
+        empRes = await fetch(`http://127.0.0.1:8001/api/identity/employees`).catch(() => null);
       }
 
       if (empRes && empRes.ok) {
@@ -87,7 +87,7 @@ export default function EmployeeTrackingPage() {
 
       let settingsRes = await fetch(`${api}/api/settings`).catch(() => null);
       if (!settingsRes || !settingsRes.ok) {
-        settingsRes = await fetch(`http://localhost:8000/api/settings`).catch(() => null);
+        settingsRes = await fetch(`http://localhost:8001/api/settings`).catch(() => null);
       }
 
       if (settingsRes && settingsRes.ok) {
@@ -129,7 +129,7 @@ export default function EmployeeTrackingPage() {
       }).catch(() => null);
 
       if (!res || !res.ok) {
-        res = await fetch(`http://localhost:8000/api/identity/employees/${empId}/tracking`, {
+        res = await fetch(`http://localhost:8001/api/identity/employees/${empId}/tracking`, {
           method: "PUT",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ is_tracked: nextTracked }),
@@ -158,7 +158,7 @@ export default function EmployeeTrackingPage() {
         method: "DELETE",
       }).catch(() => null);
       if (!res || !res.ok) {
-        res = await fetch(`http://localhost:8000/api/identity/employees/${empId}`, {
+        res = await fetch(`http://localhost:8001/api/identity/employees/${empId}`, {
           method: "DELETE",
         }).catch(() => null);
       }
@@ -194,7 +194,7 @@ export default function EmployeeTrackingPage() {
       }).catch(() => null);
 
       if (!res || !res.ok) {
-        res = await fetch(`http://localhost:8000/api/identity/employees`, {
+        res = await fetch(`http://localhost:8001/api/identity/employees`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
@@ -255,7 +255,7 @@ export default function EmployeeTrackingPage() {
     try {
       let res = await fetch(`${api}/api/identity/employees/sync`, { method: "POST" }).catch(() => null);
       if (!res || !res.ok) {
-        res = await fetch(`http://localhost:8000/api/identity/employees/sync`, { method: "POST" }).catch(() => null);
+        res = await fetch(`http://localhost:8001/api/identity/employees/sync`, { method: "POST" }).catch(() => null);
       }
       if (res && res.ok) {
         const data = await res.json();

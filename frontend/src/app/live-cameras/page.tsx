@@ -135,7 +135,7 @@ function useSystemResources(intervalMs: number = 1000) {
 
     async function fetchResources() {
       try {
-        const res = await fetch(`http://${host}:8000/api/system/resources`);
+        const res = await fetch(`http://${host}:8001/api/system/resources`);
         if (res.ok) {
           setResources(await res.json());
         }

@@ -133,7 +133,7 @@ export default function CameraManagementPage() {
   const [importModalOpen, setImportModalOpen] = useState(false);
 
   const handleExport = () => {
-    const apiBase = typeof window === "undefined" ? "http://localhost:8000" : `http://${window.location.hostname}:8000`;
+    const apiBase = typeof window === "undefined" ? "http://localhost:8001" : `http://${window.location.hostname}:8001`;
     const url = `${apiBase}/api/cameras/export`;
     const link = document.createElement("a");
     link.href = url;

@@ -15,7 +15,7 @@ export default function AlertsPage() {
 
   const fetchAlerts = async () => {
     try {
-      const res = await fetch("http://localhost:8000/api/alerts");
+      const res = await fetch("http://localhost:8001/api/alerts");
       if (res.ok) {
         const data = await res.json();
         setAlerts(data);
@@ -33,7 +33,7 @@ export default function AlertsPage() {
 
   const resolveAlert = async (id: number) => {
     try {
-      await fetch(`http://localhost:8000/api/alerts/${id}/resolve`, {
+      await fetch(`http://localhost:8001/api/alerts/${id}/resolve`, {
         method: 'PUT'
       });
       fetchAlerts();

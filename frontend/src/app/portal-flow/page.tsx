@@ -80,7 +80,7 @@ type CanvasEdge = {
 };
 
 const apiBase = () =>
-  typeof window === "undefined" ? "http://localhost:8000" : `http://${window.location.hostname}:8000`;
+  typeof window === "undefined" ? "http://localhost:8001" : `http://${window.location.hostname}:8001`;
 
 export default function PortalFlowPage() {
   const { cameras, loading: camerasLoading } = useCameras();

@@ -99,7 +99,7 @@ export function useCameraWebSocket({
       if (!isMounted) return;
 
       const host = typeof window !== "undefined" ? window.location.hostname : "localhost";
-      const wsInstance = new WebSocket(`ws://${host}:8000/ws`);
+      const wsInstance = new WebSocket(`ws://${host}:8001/ws`);
       ws = wsInstance;
       wsRef.current = wsInstance;
 

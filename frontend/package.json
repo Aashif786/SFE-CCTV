@@ -3,11 +3,11 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "dev": "next dev --turbo",
-    "dev:webpack": "next dev",
+    "dev": "next dev -p 3001 --turbo",
+    "dev:webpack": "next dev -p 3001",
     "build": "rm -rf .next tsconfig.tsbuildinfo && next build",
     "clean": "rm -rf .next tsconfig.tsbuildinfo",
-    "start": "next start",
+    "start": "next start -p 3001",
     "lint": "next lint"
   },
   "dependencies": {
