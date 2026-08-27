@@ -201,6 +201,7 @@ export default function LiveCamerasPage() {
   const [aiOrder, setAiOrder] = useState<number[]>([]);
 
   // Drag state
+  const [expandedCameraId, setExpandedCameraId] = useState<number | null>(null);
   const [isDragging, setIsDragging] = useState(false);
   const [dragSource, setDragSource] = useState<"cctv" | "ai" | null>(null);
   const [dragOverPanel, setDragOverPanel] = useState<"cctv" | "ai" | null>(null);
@@ -210,7 +211,6 @@ export default function LiveCamerasPage() {
   // Same-panel reorder insertion tracking
   const [dragOverCardId, setDragOverCardId] = useState<number | null>(null);
   const dragInsertBeforeRef = useRef<boolean>(true);
-  const [expandedCameraId, setExpandedCameraId] = useState<number | null>(null);
 
   // Toasts
   const [toasts, setToasts] = useState<Toast[]>([]);
@@ -340,7 +340,7 @@ export default function LiveCamerasPage() {
         setDragPosition({ x: e.clientX, y: e.clientY });
       }, 0);
     },
-    [cameras]
+    [cameras, expandedCameraId]
   );
 
   const handleDragEnd = useCallback(() => {
