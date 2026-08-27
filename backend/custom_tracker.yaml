@@ -1,6 +1,6 @@
 # Auto-generated BoT-SORT tracker configuration
 tracker_type: botsort
-track_high_thresh: 0.38
+track_high_thresh: 0.3
 track_low_thresh: 0.1
 new_track_thresh: 0.36
 track_buffer: 120
