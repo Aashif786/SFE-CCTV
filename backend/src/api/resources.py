@@ -1,8 +1,9 @@
 """
 System Resources API — Real-time CPU, Memory, and GPU utilization.
 
-Uses high-performance zero-overhead native Windows PDH GPU sampling and
-background caching to serve metrics instantly with 0ms latency.
+Uses high-performance zero-overhead native Windows PDH GPU sampling (on Windows)
+or nvidia-smi / CUDA (on Linux/macOS/NVIDIA systems) and background caching
+to serve metrics instantly with 0ms latency.
 """
 
 from __future__ import annotations
@@ -13,8 +14,8 @@ import shutil
 import subprocess
 import threading
 import time
+import sys
 import ctypes
-from ctypes import wintypes
 
 from fastapi import APIRouter
 
@@ -36,7 +37,7 @@ _cached_resources = {
     "disk_percent": 0.0,
     "gpu": {
         "available": True,
-        "name": "Intel(R) HD Graphics 530",
+        "name": "Default Graphics",
         "utilization_percent": 0.0,
         "memory_used_mb": 128,
         "memory_total_mb": 1024,
@@ -56,43 +57,58 @@ except Exception:
     _HAS_CUDA = False
 
 
-class PDH_FMT_COUNTERVALUE_ITEM_DOUBLE(ctypes.Structure):
-    _fields_ = [
-        ("szName", wintypes.LPWSTR),
-        ("CStatus", wintypes.DWORD),
-        ("doubleValue", ctypes.c_double),
-    ]
+# Native Windows PDH Structures (Windows Only)
+if sys.platform == "win32":
+    try:
+        from ctypes import wintypes
+
+        class PDH_FMT_COUNTERVALUE_ITEM_DOUBLE(ctypes.Structure):
+            _fields_ = [
+                ("szName", wintypes.LPWSTR),
+                ("CStatus", wintypes.DWORD),
+                ("doubleValue", ctypes.c_double),
+            ]
+    except Exception:
+        PDH_FMT_COUNTERVALUE_ITEM_DOUBLE = None
+else:
+    PDH_FMT_COUNTERVALUE_ITEM_DOUBLE = None
 
 
 class WindowsGPUSampler:
     """Zero-overhead native Windows PDH sampler for Intel/AMD/NVIDIA GPUs."""
 
     def __init__(self):
-        self.pdh = getattr(ctypes.windll, "pdh", None)
-        self.hQuery = wintypes.HANDLE()
-        self.hCounter = wintypes.HANDLE()
+        self.pdh = None
+        self.hQuery = None
+        self.hCounter = None
         self.is_valid = False
 
-        if self.pdh is not None:
+        if sys.platform == "win32" and hasattr(ctypes, "windll") and PDH_FMT_COUNTERVALUE_ITEM_DOUBLE is not None:
             try:
-                res = self.pdh.PdhOpenQueryW(None, 0, ctypes.byref(self.hQuery))
-                if res == 0:
-                    res2 = self.pdh.PdhAddEnglishCounterW(
-                        self.hQuery,
-                        "\\GPU Engine(*)\\Utilization Percentage",
-                        0,
-                        ctypes.byref(self.hCounter),
-                    )
-                    if res2 == 0:
-                        self.pdh.PdhCollectQueryData(self.hQuery)
-                        self.is_valid = True
+                self.pdh = getattr(ctypes.windll, "pdh", None)
+                if self.pdh is not None:
+                    from ctypes import wintypes
+                    self.hQuery = wintypes.HANDLE()
+                    self.hCounter = wintypes.HANDLE()
+                    res = self.pdh.PdhOpenQueryW(None, 0, ctypes.byref(self.hQuery))
+                    if res == 0:
+                        res2 = self.pdh.PdhAddEnglishCounterW(
+                            self.hQuery,
+                            "\\GPU Engine(*)\\Utilization Percentage",
+                            0,
+                            ctypes.byref(self.hCounter),
+                        )
+                        if res2 == 0:
+                            self.pdh.PdhCollectQueryData(self.hQuery)
+                            self.is_valid = True
             except Exception:
                 self.is_valid = False
 
     def sample_utilization(self) -> float:
-        if not self.is_valid:
+        if not self.is_valid or self.pdh is None or PDH_FMT_COUNTERVALUE_ITEM_DOUBLE is None:
             return 0.0
         try:
+            from ctypes import wintypes
             self.pdh.PdhCollectQueryData(self.hQuery)
             dwBufferSize = wintypes.DWORD(0)
             dwItemCount = wintypes.DWORD(0)
@@ -136,7 +152,7 @@ def _fetch_gpu_stats() -> dict:
     """Fetch live GPU stats via native Windows PDH, nvidia-smi, or CUDA."""
     result = {
         "available": True,
-        "name": "Intel(R) HD Graphics 530",
+        "name": "System GPU",
         "utilization_percent": 0.0,
         "memory_used_mb": 128,
         "memory_total_mb": 1024,

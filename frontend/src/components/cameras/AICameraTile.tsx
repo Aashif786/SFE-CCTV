@@ -205,115 +205,134 @@ export default function AICameraTile({ camera, onRefresh, onExpandChange }: AICa
     if (zones && zones.length > 0) {
       zones.forEach((z) => {
         if (!z.points || z.points.length < 3) return;
+        if (z.enabled === false) return;
+
+        // Check if points are in pixel coordinates or normalized
+        const maxPx = Math.max(...z.points.map((pt) => pt[0]));
+        const maxPy = Math.max(...z.points.map((pt) => pt[1]));
+        const isPixel = maxPx > 1.0 || maxPy > 1.0;
+
+        const canvasPoints: [number, number][] = z.points.map(([px, py]) => [
+          isPixel ? px : px * cw,
+          isPixel ? py : py * ch,
+        ]);
 
         ctx.beginPath();
-        const startX = z.points[0][0] * cw;
-        const startY = z.points[0][1] * ch;
-        ctx.moveTo(startX, startY);
-
-        for (let i = 1; i < z.points.length; i++) {
-          ctx.lineTo(z.points[i][0] * cw, z.points[i][1] * ch);
+        ctx.moveTo(canvasPoints[0][0], canvasPoints[0][1]);
+        for (let i = 1; i < canvasPoints.length; i++) {
+          ctx.lineTo(canvasPoints[i][0], canvasPoints[i][1]);
         }
         ctx.closePath();
 
-        ctx.fillStyle = hexToRgba(z.color, 0.12);
+        // Semi-transparent fill & border
+        ctx.fillStyle = hexToRgba(z.color, 0.18);
         ctx.fill();
-
-        ctx.strokeStyle = hexToRgba(z.color, 0.6);
-        ctx.lineWidth = 1.5;
-        ctx.setLineDash([4, 4]);
+        ctx.strokeStyle = z.color;
+        ctx.lineWidth = 2;
+        ctx.setLineDash([6, 4]);
         ctx.stroke();
         ctx.setLineDash([]);
 
         // Zone Name Label Tag
-        if (z.points.length > 0) {
-          const labelX = z.points[0][0] * cw + 4;
-          const labelY = z.points[0][1] * ch + 14;
-
-          ctx.font = "bold 9px monospace";
-          ctx.fillStyle = "rgba(0, 0, 0, 0.65)";
-          const textMetrics = ctx.measureText(z.name);
-          ctx.fillRect(labelX - 2, labelY - 9, textMetrics.width + 6, 12);
-
-          ctx.fillStyle = z.color || "#3B82F6";
-          ctx.fillText(z.name, labelX + 1, labelY);
-        }
+        const firstPt = canvasPoints[0];
+        ctx.font = "bold 11px Arial";
+        const tagText = z.name;
+        const tagWidth = ctx.measureText(tagText).width + 12;
+        ctx.fillStyle = z.color;
+        ctx.fillRect(firstPt[0], firstPt[1], tagWidth, 18);
+        ctx.fillStyle = "#ffffff";
+        ctx.fillText(tagText, firstPt[0] + 6, firstPt[1] + 13);
       });
     }
 
     // ── 1. Draw single camera-assigned zone (fallback/deprecated) ───────────
     if (zone && zone.length === 4 && (!zones || zones.length === 0)) {
       const [zx1, zy1, zx2, zy2] = zone;
-      if (zx1 > 0 || zy1 > 0 || zx2 < 1 || zy2 < 1) {
-        ctx.strokeStyle = "rgba(16, 185, 129, 0.4)";
-        ctx.lineWidth = 1.5;
-        ctx.setLineDash([4, 4]);
-        ctx.strokeRect(zx1 * cw, zy1 * ch, (zx2 - zx1) * cw, (zy2 - zy1) * ch);
+      const px = zx1 * cw;
+      const py = zy1 * ch;
+      const pw = (zx2 - zx1) * cw;
+      const ph = (zy2 - zy1) * ch;
+      if (zx1 > 0.001 || zy1 > 0.001 || zx2 < 0.999 || zy2 < 0.999) {
+        ctx.strokeStyle = "rgba(251,191,36,0.6)";
+        ctx.lineWidth = 2;
+        ctx.setLineDash([8, 6]);
+        ctx.strokeRect(px, py, pw, ph);
         ctx.setLineDash([]);
+        ctx.fillStyle = "rgba(251,191,36,0.08)";
+        ctx.fillRect(px, py, pw, ph);
+        ctx.fillStyle = "rgba(251,191,36,0.85)";
+        ctx.font = "11px Arial";
+        ctx.fillText("Workstation", px + 6, py + 16);
       }
     }
 
     if (detections.length === 0) return;
 
+    // Draw each tracked person
     detections.forEach((det: AIDetection) => {
       const colour = det.activity_colour || "#10b981";
-      const [x1, y1, x2, y2] = det.box;
-
-      const px1 = x1 * cw;
-      const py1 = y1 * ch;
-      const px2 = x2 * cw;
-      const py2 = y2 * ch;
-      const boxW = px2 - px1;
-      const boxH = py2 - py1;
-
-      // Dynamic scales based on canvas resolution
-      const isExpandedView = cw > 700;
-      const lineW = isExpandedView ? 2.5 : 1.5;
-      const fontSz = isExpandedView ? 11 : 9;
-      const dotR = isExpandedView ? 3 : 2;
-      const hipR = isExpandedView ? 5 : 3.5;
-
-      // Draw bounding box
-      ctx.strokeStyle = colour;
-      ctx.lineWidth = lineW;
-      ctx.strokeRect(px1, py1, boxW, boxH);
-
-      // Label text
-      const activityStr =
-        det.activity === "idle"
+      const actLabel =
+        det.activity === "idle" && det.idle_seconds > 0
           ? `Idle ${Math.floor(det.idle_seconds)}s`
           : ACTIVITY_LABEL[det.activity] ?? det.activity;
 
-      const identityStr = det.identity?.employee_id
+      const empId = det.identity?.employee_id
         ? `👤 ${det.identity.employee_id}`
-        : `Track-${det.track_id}`;
+        : null;
 
-      const labelText = `${identityStr} · ${activityStr}`;
+      const [bx1n, by1n, bx2n, by2n] = det.box;
+      const bx1 = bx1n * cw;
+      const by1 = by1n * ch;
+      const bx2 = bx2n * cw;
+      const by2 = by2n * ch;
 
-      // Bounding box header label background
-      ctx.font = `bold ${fontSz}px sans-serif`;
-      const textMetrics = ctx.measureText(labelText);
-      const labelW = textMetrics.width + 10;
-      const labelH = fontSz + 6;
+      const personH = by2 - by1;
+      const personW = bx2 - bx1;
+      const personScale = Math.max(0.2, Math.min(1.0, personH / 360));
+      const lineW = Math.max(0.5, 2.0 * personScale);
+      const dotR = Math.max(1.0, 4.0 * personScale);
+      const boxW = Math.max(1.0, 2.5 * personScale);
+      const hipR = Math.max(2.0, 6.0 * personScale);
+      const fontSize = Math.max(8, Math.round(11 * personScale));
+      const pillH = Math.max(16, Math.round(22 * personScale));
 
+      // Bounding box
+      ctx.strokeStyle = colour;
+      ctx.lineWidth = boxW;
+      ctx.strokeRect(bx1, by1, personW, personH);
+
+      // Activity pill
+      const pillLabel = empId
+        ? `${empId} · ${actLabel}`
+        : `Track-${det.track_id} · ${actLabel}`;
+      ctx.font = `bold ${fontSize}px Arial`;
+      const pillW = ctx.measureText(pillLabel).width + 12;
       ctx.fillStyle = colour;
-      ctx.fillRect(px1, Math.max(0, py1 - labelH), labelW, labelH);
-
+      ctx.fillRect(bx1, by1 - pillH, pillW, pillH);
       ctx.fillStyle = "#ffffff";
-      ctx.fillText(labelText, px1 + 5, Math.max(fontSz, py1 - 3));
+      ctx.fillText(pillLabel, bx1 + 6, by1 - pillH / 3);
 
-      // Draw skeleton keypoints & connections if available
-      if (det.keypoints && det.keypoints.length >= 17) {
-        const pts = det.keypoints.map(([kx, ky]) => [kx * cw, ky * ch]);
+      // Zone Dwell Badge on top of bounding box if person is in a zone
+      if (det.zone_status) {
+        const zoneTag = `📍 ${det.zone_status.zone_name} (${det.zone_status.formatted_dwell})`;
+        ctx.font = `bold ${Math.max(8, fontSize - 1)}px Arial`;
+        const zPillW = ctx.measureText(zoneTag).width + 10;
+        const zPillH = Math.max(14, pillH - 2);
+        ctx.fillStyle = det.zone_status.zone_color || "#3B82F6";
+        ctx.fillRect(bx1, by1 - pillH - zPillH - 2, zPillW, zPillH);
+        ctx.fillStyle = "#ffffff";
+        ctx.fillText(zoneTag, bx1 + 5, by1 - pillH - 5);
+      }
 
-        // Connection lines
+      // Skeleton
+      if (det.keypoints && det.keypoints.length > 0) {
+        const pts = det.keypoints.map(([px, py]) => [px * cw, py * ch]);
+
         ctx.strokeStyle = colour;
-        ctx.lineWidth = Math.max(1, lineW - 0.5);
-        CONNECTIONS.forEach(([i, j]) => {
-          const p1 = pts[i];
-          const p2 = pts[j];
-          const kp1 = det.keypoints![i];
-          const kp2 = det.keypoints![j];
+        ctx.lineWidth = lineW;
+        CONNECTIONS.forEach(([i1, i2]) => {
+          const kp1 = det.keypoints![i1];
+          const kp2 = det.keypoints![i2];
           if (
             kp1 &&
             kp2 &&
@@ -323,8 +342,8 @@ export default function AICameraTile({ camera, onRefresh, onExpandChange }: AICa
             kp2[1] > 0.01
           ) {
             ctx.beginPath();
-            ctx.moveTo(p1[0], p1[1]);
-            ctx.lineTo(p2[0], p2[1]);
+            ctx.moveTo(pts[i1][0], pts[i1][1]);
+            ctx.lineTo(pts[i2][0], pts[i2][1]);
             ctx.stroke();
           }
         });
