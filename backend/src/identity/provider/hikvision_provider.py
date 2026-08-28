@@ -305,6 +305,7 @@ class HikvisionProvider(IdentityEventProvider):
                 received_at=received_at,
                 time_offset_seconds=offset_seconds,
                 access_granted=is_granted,
+                device_ip=device_ip,
             )
 
             return {"statusCode": 1, "statusString": "OK", "employee_id": effective_id, "gate": gate_name}
@@ -545,6 +546,7 @@ class HikvisionProvider(IdentityEventProvider):
                             received_at=poll_received_at,
                             time_offset_seconds=offset_seconds,
                             access_granted=is_granted,
+                            device_ip=ip,
                         )
 
                     seen_event_keys = new_seen_keys
@@ -589,6 +591,7 @@ class HikvisionProvider(IdentityEventProvider):
         received_at: Optional[datetime] = None,
         time_offset_seconds: Optional[float] = None,
         access_granted: bool = True,
+        device_ip: str = "",
     ):
         """
         Process an access control event and dispatch directly to the correlation engine.
@@ -599,6 +602,30 @@ class HikvisionProvider(IdentityEventProvider):
 
             event_ts_utc, _ = _parse_device_timestamp(ev_time)
             now_actual = received_at or datetime.now(timezone.utc)
+
+            # Record in backend latency monitor with sub-ms accuracy
+            try:
+                from ..latency_monitor import latency_monitor
+                latency_ms = (now_actual - event_ts_utc).total_seconds() * 1000.0
+                latency_monitor.record_punch(
+                    device_timestamp_raw=ev_time,
+                    device_timestamp_utc=event_ts_utc,
+                    received_at_utc=now_actual,
+                    latency_ms=latency_ms,
+                    employee_id=emp_id,
+                    employee_name=ev_name,
+                    card_no=card_no,
+                    door_name=gate_name,
+                    device_ip=device_ip,
+                    auth_type=auth_type,
+                    source=provider_source,
+                    direction=ev_type,
+                    access_granted=access_granted,
+                    major=major,
+                    minor=minor,
+                )
+            except Exception as _l_err:
+                logger.debug(f"Latency monitor record failed: {_l_err}")
 
             # Drop stale events from historical replay
             age = (now_actual - event_ts_utc).total_seconds()

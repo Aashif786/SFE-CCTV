@@ -224,23 +224,30 @@ async def websocket_endpoint(websocket: WebSocket):
                     else:
                         exposed_track_id = origin_parts[-1] if len(origin_parts) == 2 else origin_key
 
+                b_list = [
+                    round(float(p["box"][0]), 5),
+                    round(float(p["box"][1]), 5),
+                    round(float(p["box"][2]), 5),
+                    round(float(p["box"][3]), 5),
+                ]
+                employee_id = worker_session.employee_id if worker_session else None
+                act_display = activity.replace("_", " ").title()
                 detections_out.append({
                     "track_id": exposed_track_id,
+                    "employee_id": employee_id,
+                    "status": act_display,
+                    "bbox": b_list,
                     "activity": activity,
                     "activity_colour": ACTIVITY_COLOUR.get(activity, "#6b7280"),
+                    "activity_display_name": act_display,
                     "movement_score": round(p["movement_score"], 5),
                     "confidence": round(p["confidence"], 3),
                     "idle_seconds": round(idle_sec, 1),
                     "worker_position": list(p["worker_pos"]) if p["worker_pos"] else None,
                     "keypoints": keypoints_to_send,
-                    "box": [
-                        round(float(p["box"][0]), 5),
-                        round(float(p["box"][1]), 5),
-                        round(float(p["box"][2]), 5),
-                        round(float(p["box"][3]), 5),
-                    ],
+                    "box": b_list,
                     "identity": {
-                        "employee_id": worker_session.employee_id if worker_session else None,
+                        "employee_id": employee_id,
                         "session_id": worker_session.session_id if worker_session else None,
                         "correlation_delay": worker_session.correlation_delay_seconds if worker_session else None,
                     },

@@ -36,6 +36,9 @@ const ACTIVITY_DOT: Record<string, string> = {
 // ── Per-track detection shape ────────────────────────────────────────────
 interface Detection {
   track_id: number;
+  employee_id?: string | null;
+  status?: string;
+  bbox?: [number, number, number, number];
   activity: string;
   activity_colour: string;
   movement_score: number;
@@ -44,11 +47,11 @@ interface Detection {
   worker_position: [number, number] | null;
   keypoints: [number, number][];
   box: [number, number, number, number];
-  identity: {
+  identity?: {
     employee_id: string | null;
     session_id: string | null;
     correlation_delay: number | null;
-  };
+  } | null;
 }
 
 export default function CameraWidget({ cameraId, name }: { cameraId: string; name: string }) {
@@ -297,8 +300,8 @@ export default function CameraWidget({ cameraId, name }: { cameraId: string; nam
                     background: det.activity_colour + "15",
                   }}
                 >
-                  {det.identity.employee_id
-                    ? `👤 ${det.identity.employee_id}`
+                  {(det.employee_id || det.identity?.employee_id)
+                    ? `👤 ${det.employee_id || det.identity?.employee_id}`
                     : `❓ Track-${det.track_id}`}
                 </span>
               ))}

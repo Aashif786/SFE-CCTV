@@ -58,7 +58,8 @@
     "username": "admin",
     "password": "",
     "cameras": [
-      15
+      15,
+      17
     ],
     "portal_id": "main-facility:15:to-ext-way",
     "portal_role": "START",

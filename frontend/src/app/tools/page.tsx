@@ -32,9 +32,11 @@ import {
   Check,
   Info,
   ShieldCheck,
+  Timer,
 } from "lucide-react";
 import CameraFormModal from "@/components/cameras/CameraFormModal";
 import ConfigImportModal from "@/components/ConfigImportModal";
+import PunchLatencyTool from "@/components/tools/PunchLatencyTool";
 import type { CameraFormData } from "@/hooks/useCameras";
 
 const API = typeof window === "undefined" ? "http://localhost:8001" : `http://${window.location.hostname}:8001`;
@@ -97,7 +99,7 @@ function deviceColor(type: string) {
 // Page Component
 // ---------------------------------------------------------------------------
 export default function ToolsPage() {
-  const [mainTab, setMainTab] = useState<"backup" | "scanner">("backup");
+  const [mainTab, setMainTab] = useState<"backup" | "scanner" | "latency">("backup");
 
   // Scanner states
   const [scanning, setScanning] = useState(false);
@@ -132,8 +134,14 @@ export default function ToolsPage() {
     setTimeout(() => setToast(null), 3500);
   };
 
-  // Fetch detected subnet and any existing scan results on mount
+  // Fetch detected subnet and any existing scan results on mount, and sync tab
   useEffect(() => {
+    if (typeof window !== "undefined") {
+      const tab = new URLSearchParams(window.location.search).get("tab");
+      if (tab === "latency" || tab === "scanner" || tab === "backup") {
+        setMainTab(tab);
+      }
+    }
     fetch(`${API}/api/tools/subnet`)
       .then((res) => res.json())
       .then((data) => {
@@ -374,6 +382,17 @@ export default function ToolsPage() {
           >
             <Radar className="w-4 h-4" />
             Network Device Scanner
+          </button>
+          <button
+            onClick={() => setMainTab("latency")}
+            className={`flex items-center gap-2 px-4 py-2 rounded-lg text-xs font-bold transition-all ${
+              mainTab === "latency"
+                ? "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border border-emerald-500/30 shadow-sm"
+                : "text-[hsl(var(--text-muted))] hover:text-[hsl(var(--text-primary))]"
+            }`}
+          >
+            <Timer className="w-4 h-4 text-emerald-500" />
+            ACS Punch Latency
           </button>
         </div>
       </div>
@@ -924,6 +943,11 @@ export default function ToolsPage() {
           )}
         </div>
       )}
+
+      {/* ========================================================================= */}
+      {/* TAB 3: ACS PUNCH LATENCY & BENCHMARK                                      */}
+      {/* ========================================================================= */}
+      {mainTab === "latency" && <PunchLatencyTool />}
 
       {/* Add Camera Modal */}
       <CameraFormModal

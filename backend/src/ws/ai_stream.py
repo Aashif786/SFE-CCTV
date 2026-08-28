@@ -487,11 +487,21 @@ async def camera_ai_endpoint(websocket: WebSocket, camera_id: int):
                         timestamp=now_time,
                     )
 
+                    b_list = [
+                        round(float(p["box"][0]), 5),
+                        round(float(p["box"][1]), 5),
+                        round(float(p["box"][2]), 5),
+                        round(float(p["box"][3]), 5),
+                    ]
+                    act_display = classifier.get_display_name(activity)
                     detections_out.append({
                         "track_id": exposed_track_id,
+                        "employee_id": employee_id,
+                        "status": act_display,
+                        "bbox": b_list,
                         "activity": activity,
                         "activity_colour": activity_colour,
-                        "activity_display_name": classifier.get_display_name(activity),
+                        "activity_display_name": act_display,
                         "movement_score": round(p["movement_score"], 5),
                         "confidence": round(p["confidence"], 3),
                         "idle_seconds": round(idle_sec, 1),
@@ -499,12 +509,7 @@ async def camera_ai_endpoint(websocket: WebSocket, camera_id: int):
                         "foot_position": [round(foot_x, 4), round(foot_y, 4)],
                         "zone_status": zone_status,
                         "keypoints": keypoints_to_send,
-                        "box": [
-                            round(float(p["box"][0]), 5),
-                            round(float(float(p["box"][1])), 5),
-                            round(float(p["box"][2]), 5),
-                            round(float(p["box"][3]), 5),
-                        ],
+                        "box": b_list,
                         "identity": {
                             "employee_id": employee_id,
                             "session_id": worker_session.session_id if worker_session else None,

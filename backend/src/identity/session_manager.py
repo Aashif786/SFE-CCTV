@@ -365,9 +365,36 @@ class WorkerSessionManager:
     # Alias for backward compatibility
     try_rebind_absent = try_rebind_recent
 
-    def get_by_track(self, track_id: str) -> Optional[WorkerSession]:
-        """Look up the active WorkerSession for a given track ID. O(1)."""
-        return self._sessions.get(track_id)
+    def get_by_track(self, track_id: str | int) -> Optional[WorkerSession]:
+        """Look up the active WorkerSession for a given track ID with prefix normalization."""
+        if track_id is None:
+            return None
+        raw_key = str(track_id).strip()
+        # 1. Direct lookup
+        session = self._sessions.get(raw_key)
+        if session is not None:
+            return session
+
+        # 2. Camera prefix normalization (e.g. "ai-1:75" vs "1:75" vs "cam1:75" vs "75")
+        if ":" in raw_key:
+            cam_part, num_part = raw_key.rsplit(":", 1)
+            norm_cam = cam_part.replace("ai-", "").replace("cam-", "").replace("cam", "")
+            for k, s in self._sessions.items():
+                if ":" in k:
+                    k_cam, k_num = k.rsplit(":", 1)
+                    k_norm_cam = k_cam.replace("ai-", "").replace("cam-", "").replace("cam", "")
+                    if k_norm_cam == norm_cam and k_num == num_part:
+                        return s
+                elif k == num_part:
+                    return s
+        else:
+            # Numeric/suffix match (e.g. searching "75" matches "1:75" or "ai-1:75")
+            for k, s in self._sessions.items():
+                if k == raw_key or k.endswith(f":{raw_key}"):
+                    return s
+                if s.persistent_track_id and (s.persistent_track_id == raw_key or s.persistent_track_id.endswith(f":{raw_key}")):
+                    return s
+        return None
 
     def get_all_active(self) -> list[WorkerSession]:
         """Return all currently ACTIVE sessions."""

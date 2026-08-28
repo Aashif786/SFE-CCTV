@@ -46,4 +46,4 @@ backend/models/
 test_clips/
 
 # Local tools and utility scripts
-tools/
+/tools/

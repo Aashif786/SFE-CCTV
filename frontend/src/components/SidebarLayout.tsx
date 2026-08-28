@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import Link from 'next/link';
 import {
   LayoutDashboard, History, Settings, Bell,
@@ -33,8 +33,16 @@ export default function SidebarLayout({ children }: { children: React.ReactNode 
   ];
 
   const miscLinks = [
-    { href: "/tools",               icon: Package,            label: "Tools & Backup" },
+    { href: "/tools",               icon: Package,            label: "Tools & Backup", tab: "backup" },
+    { href: "/tools?tab=latency",   icon: Clock,              label: "Punch Latency",  tab: "latency" },
   ];
+
+  const [currentTab, setCurrentTab] = useState<string | null>(null);
+  useEffect(() => {
+    if (typeof window !== "undefined") {
+      setCurrentTab(new URLSearchParams(window.location.search).get("tab"));
+    }
+  }, [pathname]);
 
   return (
     <div className="flex h-screen overflow-hidden bg-[hsl(var(--bg-page))]">
@@ -87,12 +95,18 @@ export default function SidebarLayout({ children }: { children: React.ReactNode 
             <p className="px-4 pb-2 text-[10px] font-bold uppercase tracking-widest text-[hsl(var(--text-muted))]">
               Miscellaneous
             </p>
-            {miscLinks.map(({ href, icon: Icon, label }) => {
-              const isActive = pathname === href;
+            {miscLinks.map(({ href, icon: Icon, label, tab }) => {
+              const isActive =
+                pathname === "/tools"
+                  ? tab === "latency"
+                    ? currentTab === "latency"
+                    : currentTab !== "latency"
+                  : pathname === href;
               return (
                 <Link
                   key={href}
                   href={href}
+                  onClick={() => setCurrentTab(tab)}
                   className={`flex items-center gap-3 px-4 py-3 rounded-lg transition-all duration-150 ${
                     isActive
                       ? 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 font-semibold border border-emerald-500/20'

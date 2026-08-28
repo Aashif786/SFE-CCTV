@@ -2,6 +2,9 @@ import { useEffect, useRef, useState } from "react";
 
 export interface Detection {
   track_id: number;
+  employee_id?: string | null;
+  status?: string;
+  bbox?: [number, number, number, number];
   activity: string;
   activity_colour?: string;
   idle_seconds?: number;
@@ -222,9 +225,10 @@ export function useCameraWebSocket({
           const dets: Detection[] = data.detections ?? [];
           dets.forEach((det) => {
             const colour = det.activity_colour ?? "#6b7280";
-            const label  = ACTIVITY_LABEL[det.activity] ?? det.activity;
-            const empId  = det.identity?.employee_id;
-            const [bx1n, by1n, bx2n, by2n] = det.box;
+            const label  = ACTIVITY_LABEL[det.activity] ?? det.status ?? det.activity;
+            const rawEmpId = det.employee_id || det.identity?.employee_id || null;
+            const empId  = rawEmpId ? rawEmpId.trim() : null;
+            const [bx1n, by1n, bx2n, by2n] = det.bbox ?? det.box;
             const bx1 = bx1n * canvas.width;
             const by1 = by1n * canvas.height;
             const bx2 = bx2n * canvas.width;

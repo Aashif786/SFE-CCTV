@@ -44,7 +44,10 @@ _enable_windows_vt()
 CLR_RESET  = "\033[0m"
 CLR_BOLD   = "\033[1m"
 CLR_DIM    = "\033[2m"
-CLR_BORDER = "\033[38;5;242m"  # Subtle slate-gray box border
+CLR_BORDER = "\033[38;5;242m"  # Subtle slate-gray divider
+
+# White highlight background for selected text effect
+BG_SELECT  = "\033[48;5;255m"  # High-contrast bright white highlight
 
 
 # ── Badge Formatters (Fixed Visual Widths) ────────────────────────────────────
@@ -146,46 +149,46 @@ class Console:
         return cpu, gpu, ram
 
     @classmethod
-    def _render_panel(cls) -> Tuple[str, str, str]:
-        """Constructs the 3-line framed status dashboard panel."""
-        cols = shutil.get_terminal_size((80, 24)).columns
+    def _render_status_bar(cls) -> str:
+        """
+        Constructs a single-line status bar styled like selected terminal text:
+        continuous bright white background highlight with crisp, colorful metric values.
+        """
         now_str = datetime.now().strftime("%H:%M:%S")
         cpu, gpu, ram = cls._get_system_metrics()
 
-        box_w = max(60, min(cols, 100))
-        inner_w = box_w - 2
+        # Foreground colors tuned for high contrast and readability on white background
+        c_cpu = "\033[38;5;196;1m" if cpu > 85 else ("\033[38;5;166;1m" if cpu > 65 else "\033[38;5;28;1m")
+        c_gpu = "\033[38;5;196;1m" if gpu > 85 else ("\033[38;5;166;1m" if gpu > 70 else "\033[38;5;24;1m")
+        c_ram = "\033[38;5;196;1m" if ram > 85 else ("\033[38;5;166;1m" if ram > 75 else "\033[38;5;28;1m")
 
-        # Metric color thresholds
-        c_cpu = "\033[1;31m" if cpu > 85 else ("\033[1;33m" if cpu > 65 else "\033[1;32m")
-        c_gpu = "\033[1;31m" if gpu > 85 else ("\033[1;33m" if gpu > 70 else "\033[1;36m")
-        c_ram = "\033[1;31m" if ram > 85 else ("\033[1;33m" if ram > 75 else "\033[1;32m")
+        # Status badge background color
+        st_lower = cls._status_text.lower()
+        if any(w in st_lower for w in ("online", "ready", "success")):
+            st_bg = "48;5;28;38;5;255;1"   # Emerald green badge, white text
+        elif any(w in st_lower for w in ("offline", "error", "fail", "denied")):
+            st_bg = "48;5;160;38;5;255;1"  # Crimson red badge, white text
+        elif any(w in st_lower for w in ("starting", "retry", "warn", "sync")):
+            st_bg = "48;5;208;38;5;255;1"  # Amber badge, white text
+        else:
+            st_bg = "48;5;24;38;5;255;1"   # Blue badge, white text
 
-        top = f"{CLR_BORDER}┌" + ("─" * inner_w) + f"┐{CLR_RESET}"
-        bot = f"{CLR_BORDER}└" + ("─" * inner_w) + f"┘{CLR_RESET}"
+        div = "\033[38;5;244m │ "
 
-        # Segment contents (ANSI-formatted)
-        seg_brand = "  \033[1;36m● CALVISION\033[0m   "
-        seg_time  = f"{CLR_BORDER}│\033[0m  \033[1;37m{now_str}\033[0m  "
-        seg_cpu   = f"{CLR_BORDER}│\033[0m  CPU {c_cpu}{int(round(cpu)):2d}%\033[0m  "
-        seg_gpu   = f"{CLR_BORDER}│\033[0m  GPU {c_gpu}{int(round(gpu)):2d}%\033[0m  "
-        seg_ram   = f"{CLR_BORDER}│\033[0m  RAM {c_ram}{int(round(ram)):2d}%\033[0m  "
-        seg_stat  = f"{CLR_BORDER}│\033[0m  \033[48;5;28;37;1m {cls._status_text} \033[0m  "
-
-        # Plaintext equivalents for visual width calculation
-        vis_brand = "  ● CALVISION   "
-        vis_time  = f"│  {now_str}  "
-        vis_cpu   = f"│  CPU {int(round(cpu)):2d}%  "
-        vis_gpu   = f"│  GPU {int(round(gpu)):2d}%  "
-        vis_ram   = f"│  RAM {int(round(ram)):2d}%  "
-        vis_stat  = f"│   {cls._status_text}   "
-
-        raw_content = seg_brand + seg_time + seg_cpu + seg_gpu + seg_ram + seg_stat
-        vis_total = len(vis_brand + vis_time + vis_cpu + vis_gpu + vis_ram + vis_stat)
-
-        pad = " " * max(0, inner_w - vis_total)
-        mid = f"{CLR_BORDER}│\033[0m{raw_content}{pad}{CLR_BORDER}│{CLR_RESET}"
-
-        return top, mid, bot
+        # Continuous white highlight strip (like selected terminal text) with colored text
+        bar = (
+            f"\033[38;5;235;1m{now_str} "
+            f"{div}"
+            f"\033[38;5;240;1mCPU {c_cpu}{int(round(cpu)):2d}% "
+            f"{div}"
+            f"\033[38;5;240;1mGPU {c_gpu}{int(round(gpu)):2d}% "
+            f"{div}"
+            f"\033[38;5;240;1mRAM {c_ram}{int(round(ram)):2d}% "
+            f"{div}"
+            f"\033[{st_bg}m {cls._status_text} {BG_SELECT} {CLR_RESET}"
+            # f"\n"
+        )
+        return bar
 
     @classmethod
     def _status_bar_worker(cls):
@@ -193,28 +196,27 @@ class Console:
             try:
                 if sys.stdout.isatty():
                     with cls._lock:
-                        if cls._panel_rendered:
-                            top, mid, bot = cls._render_panel()
-                            # Move cursor up 2 lines to start of box, clear each line, and redraw in place
-                            sys.stdout.write(f"\033[2A\r\033[K{top}\n\033[K{mid}\n\033[K{bot}")
-                            sys.stdout.flush()
+                        bar = cls._render_status_bar()
+                        sys.stdout.write(f"\r\033[K{bar}")
+                        sys.stdout.flush()
+                        cls._panel_rendered = True
             except Exception:
                 pass
             time.sleep(1.0)
 
     @classmethod
     def write(cls, line: str):
-        """Prints a log line cleanly above the sticky bottom status dashboard."""
+        """Prints a log line cleanly above the sticky bottom status bar."""
         cls.start_status_bar()
         with cls._lock:
             if sys.stdout.isatty():
-                top, mid, bot = cls._render_panel()
+                bar = cls._render_status_bar()
                 if cls._panel_rendered:
-                    # Move cursor up 2 lines and clear to bottom of screen
-                    sys.stdout.write("\033[2A\r\033[J")
+                    # Clear current status bar line
+                    sys.stdout.write("\r\033[K")
                 
-                sys.stdout.write(f"{line}\n")
-                sys.stdout.write(f"{top}\n{mid}\n{bot}")
+                # Write log line and redraw the sticky status bar below it
+                sys.stdout.write(f"{line}\n{bar}")
                 sys.stdout.flush()
                 cls._panel_rendered = True
             else:

@@ -30,6 +30,9 @@ export interface ZoneStatus {
 
 export interface AIDetection {
   track_id: number;
+  employee_id?: string | null;
+  status?: string;
+  bbox?: [number, number, number, number];
   activity: string;
   activity_colour: string;
   activity_display_name?: string;
@@ -41,11 +44,11 @@ export interface AIDetection {
   zone_status?: ZoneStatus | null;
   keypoints: [number, number][];
   box: [number, number, number, number];
-  identity: {
+  identity?: {
     employee_id: string | null;
     session_id: string | null;
     correlation_delay: number | null;
-  };
+  } | null;
 }
 
 export type AIStreamStatus =

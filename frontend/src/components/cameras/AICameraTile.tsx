@@ -276,11 +276,10 @@ export default function AICameraTile({ camera, onRefresh, onExpandChange }: AICa
           ? `Idle ${Math.floor(det.idle_seconds)}s`
           : ACTIVITY_LABEL[det.activity] ?? det.activity;
 
-      const empId = det.identity?.employee_id
-        ? `👤 ${det.identity.employee_id}`
-        : null;
+      const rawEmpId = det.employee_id || det.identity?.employee_id || null;
+      const empId = rawEmpId ? rawEmpId.trim() : null;
 
-      const [bx1n, by1n, bx2n, by2n] = det.box;
+      const [bx1n, by1n, bx2n, by2n] = det.bbox ?? det.box;
       const bx1 = bx1n * cw;
       const by1 = by1n * ch;
       const bx2 = bx2n * cw;
@@ -572,8 +571,8 @@ export default function AICameraTile({ camera, onRefresh, onExpandChange }: AICa
                     background: det.activity_colour + "15",
                   }}
                 >
-                  {det.identity?.employee_id
-                    ? `👤 ${det.identity.employee_id}`
+                  {(det.employee_id || det.identity?.employee_id)
+                    ? `👤 ${det.employee_id || det.identity?.employee_id}`
                     : `T-${det.track_id}`}
                 </span>
               ))}

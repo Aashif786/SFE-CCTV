@@ -147,11 +147,6 @@ class CorrelationEngine:
         Accept a new IdentityEvent from any provider and queue it for correlation.
         Persists the event to database asynchronously.
         """
-        # Reject historical backlog replays older than 30 seconds
-        event_age = abs((_utcnow() - _to_utc(event.timestamp)).total_seconds())
-        if event_age > 30.0:
-            return
-
         enrich_door_event_config(event)
         event_window = event.correlation_window_seconds or self._window
         portal_id = getattr(event, "portal_id", None) or ""
